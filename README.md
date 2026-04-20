@@ -8,19 +8,16 @@ A complete tree-walking interpreter for the Luna programming language, written i
 Luna Source File
        |
        v
-  Python Lexer (lexer.py)
+   C Lexer (lexer.c)
        |
        v
-  Python Parser (parser.py)
+   C Parser (parser.c)
        |
        v
-  AST to JSON (run_luna.py)
+   C Interpreter (luna)
        |
        v
-  C Interpreter (luna)
-       |
-       v
-  Program Execution
+   Program Execution
 ```
 
 ## Files
@@ -42,16 +39,11 @@ Luna Source File
 
 - **Makefile** - Build configuration for Linux/macOS/Windows
 
-### Driver
-
-- **run_luna.py** - Python driver that lexes, parses, and runs programs
-
 ## Building
 
 ### Requirements
 
 - GCC or Clang C compiler
-- Python 3.x (for the driver)
 - Make (optional, for convenience)
 
 ### Build Commands
@@ -75,12 +67,8 @@ gcc *.o -o luna.exe -lm
 ### Running a Luna Program
 
 ```bash
-# Using the Python driver (recommended)
-python run_luna.py program.luna
-
-# Using the C interpreter directly with JSON
-python -c "from run_luna import ast_to_dict; import json; ..." > ast.json
-./luna --json ast.json
+# Using the C interpreter
+./luna program.luna
 ```
 
 ### Example Luna Program
