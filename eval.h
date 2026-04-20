@@ -21,6 +21,7 @@ typedef struct {
 
 Value evaluate_expr(Environment *env, Expr *expr);
 Value evaluate_binary(Environment *env, Expr *expr);
+Value evaluate_binary_op(Environment *env, const char *op, Value left, Value right);
 Value evaluate_unary(Environment *env, Expr *expr);
 Value evaluate_call(Environment *env, Expr *expr);
 Value evaluate_field_access(Environment *env, Expr *expr);

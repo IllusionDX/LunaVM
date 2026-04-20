@@ -175,8 +175,9 @@ ObjStruct *new_struct(const char *name, int field_count) {
     strct->obj.next = NULL;
     strct->struct_name = strdup(name);
     strct->field_count = field_count;
+    strct->field_names = (char **)calloc(field_count, sizeof(char *));
     strct->fields = (Value *)calloc(field_count, sizeof(Value));
-    if (!strct->fields) {
+    if (!strct->fields || !strct->field_names) {
         fprintf(stderr, "Out of memory\n");
         exit(1);
     }
@@ -619,10 +620,27 @@ Value instance_get_field(ObjInstance *inst, const char *name) {
     return make_null();
 }
 
+Value struct_get_field(ObjStruct *strct, const char *name) {
+    for (int i = 0; i < strct->field_count; i++) {
+        if (strct->field_names[i] && strcmp(strct->field_names[i], name) == 0) {
+            return strct->fields[i];
+        }
+    }
+    return make_null();
+}
+
 void instance_set_field(ObjInstance *inst, const char *name, Value value) {
     /* Update existing field */
     for (int i = 0; i < inst->field_count; i++) {
         if (inst->field_names[i] && strcmp(inst->field_names[i], name) == 0) {
+            /* Release old value */
+            if (inst->fields[i].type == VAL_OBJ && inst->fields[i].as.obj) {
+                release_obj(inst->fields[i].as.obj);
+            }
+            /* Retain new value */
+            if (value.type == VAL_OBJ && value.as.obj) {
+                retain_obj(value.as.obj);
+            }
             inst->fields[i] = value;
             return;
         }
@@ -632,6 +650,10 @@ void instance_set_field(ObjInstance *inst, const char *name, Value value) {
         inst->field_capacity = inst->field_capacity < 4 ? 4 : inst->field_capacity * 2;
         inst->field_names = (char **)realloc(inst->field_names, inst->field_capacity * sizeof(char *));
         inst->fields = (Value *)realloc(inst->fields, inst->field_capacity * sizeof(Value));
+    }
+    /* Retain new value */
+    if (value.type == VAL_OBJ && value.as.obj) {
+        retain_obj(value.as.obj);
     }
     inst->field_names[inst->field_count] = strdup(name);
     inst->fields[inst->field_count] = value;

@@ -7,6 +7,7 @@
 #include <string.h>
 #include <math.h>
 #include "eval.h"
+#include "value.h"
 
 /* ============== Forward declarations ============== */
 
@@ -107,7 +108,7 @@ Value evaluate_expr(Environment *env, Expr *expr) {
                 FieldInit *field = &expr->data.struct_literal.fields[i];
                 Value field_value = evaluate_expr(env, field->value);
                 
-                /* Find field index by name - simplified version */
+                strct->field_names[i] = strdup(field->name);
                 strct->fields[i] = field_value;
                 if (field_value.type == VAL_OBJ) {
                     retain_obj(field_value.as.obj);
@@ -394,6 +395,91 @@ Value evaluate_binary(Environment *env, Expr *expr) {
     if (strcmp(op, ">>") == 0) {
         if (is_integer(left) && is_integer(right)) {
             return make_int((int32_t)(value_to_int64(left) >> value_to_int64(right)));
+        }
+    }
+    
+    fprintf(stderr, "Unknown or invalid binary operator: %s\n", op);
+    return make_null();
+}
+
+Value evaluate_binary_op(Environment *env, const char *op, Value left, Value right) {
+    (void)env;
+    
+    if (strcmp(op, "+") == 0) {
+        if (left.type == VAL_OBJ && left.as.obj->type == OBJ_STRING) {
+            char *left_str = value_to_string(left);
+            char *right_str = value_to_string(right);
+            int len = (int)strlen(left_str) + (int)strlen(right_str);
+            char *result = (char *)malloc(len + 1);
+            strcpy(result, left_str);
+            strcat(result, right_str);
+            ObjString *str = new_string(result, len);
+            free(left_str);
+            free(right_str);
+            free(result);
+            return make_obj((Object *)str);
+        }
+        
+        if (is_numeric(left) && is_numeric(right)) {
+            if (left.type == VAL_DOUBLE || right.type == VAL_DOUBLE) {
+                return make_double(value_to_double(left) + value_to_double(right));
+            }
+            if (left.type == VAL_FLOAT || right.type == VAL_FLOAT) {
+                return make_float((float)(value_to_double(left) + value_to_double(right)));
+            }
+            if (left.type == VAL_LONG || right.type == VAL_LONG) {
+                return make_long(value_to_int64(left) + value_to_int64(right));
+            }
+            return make_int(left.as.integer + right.as.integer);
+        }
+    }
+    
+    if (strcmp(op, "-") == 0) {
+        if (is_numeric(left) && is_numeric(right)) {
+            if (left.type == VAL_DOUBLE || right.type == VAL_DOUBLE) {
+                return make_double(value_to_double(left) - value_to_double(right));
+            }
+            if (left.type == VAL_FLOAT || right.type == VAL_FLOAT) {
+                return make_float((float)(value_to_double(left) - value_to_double(right)));
+            }
+            if (left.type == VAL_LONG || right.type == VAL_LONG) {
+                return make_long(value_to_int64(left) - value_to_int64(right));
+            }
+            return make_int(left.as.integer - right.as.integer);
+        }
+    }
+    
+    if (strcmp(op, "*") == 0) {
+        if (is_numeric(left) && is_numeric(right)) {
+            if (left.type == VAL_DOUBLE || right.type == VAL_DOUBLE) {
+                return make_double(value_to_double(left) * value_to_double(right));
+            }
+            if (left.type == VAL_FLOAT || right.type == VAL_FLOAT) {
+                return make_float((float)(value_to_double(left) * value_to_double(right)));
+            }
+            if (left.type == VAL_LONG || right.type == VAL_LONG) {
+                return make_long(value_to_int64(left) * value_to_int64(right));
+            }
+            return make_int(left.as.integer * right.as.integer);
+        }
+    }
+    
+    if (strcmp(op, "/") == 0) {
+        if (is_numeric(left) && is_numeric(right)) {
+            double divisor = value_to_double(right);
+            if (divisor == 0.0) {
+                fprintf(stderr, "Division by zero\n");
+                return make_null();
+            }
+            if (left.type == VAL_DOUBLE || right.type == VAL_DOUBLE) {
+                return make_double(value_to_double(left) / divisor);
+            }
+            if (left.type == VAL_FLOAT || right.type == VAL_FLOAT) {
+                return make_float((float)(value_to_double(left) / divisor));
+            }
+            if (is_integer(left) && is_integer(right)) {
+                return make_int((int32_t)(value_to_int64(left) / value_to_int64(right)));
+            }
         }
     }
     

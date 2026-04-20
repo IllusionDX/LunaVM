@@ -161,14 +161,7 @@ Value evaluate_field_access(Environment *env, Expr *expr) {
     /* Handle struct fields */
     if (obj.type == VAL_OBJ && obj.as.obj->type == OBJ_STRUCT) {
         ObjStruct *strct = (ObjStruct *)obj.as.obj;
-
-        /* Look up field by name - simplified */
-        /* In a real implementation, we'd have proper field mapping */
-        for (int i = 0; i < strct->field_count; i++) {
-            /* We'd check field names here */
-            /* For now, return the field value */
-            return strct->fields[i];
-        }
+        return struct_get_field(strct, field);
     }
 
     /* Handle enum value access (e.g., Status.PENDING) */
@@ -275,27 +268,106 @@ Value evaluate_assignment(Environment *env, Expr *expr) {
         Expr *target = expr->data.compound_assign.target;
         const char *op = expr->data.compound_assign.operator;
         
-        /* Apply operation via binary evaluator */
-        Expr bin_expr;
-        bin_expr.kind = EXPR_BINARY;
-        
-        bin_expr.data.binary.left = target;
-        bin_expr.data.binary.right = expr->data.compound_assign.value;
-        
-        if (strcmp(op, "+=") == 0) bin_expr.data.binary.operator = "+";
-        else if (strcmp(op, "-=") == 0) bin_expr.data.binary.operator = "-";
-        else if (strcmp(op, "*=") == 0) bin_expr.data.binary.operator = "*";
-        else if (strcmp(op, "/=") == 0) bin_expr.data.binary.operator = "/";
-        else return make_null();
-        
-        Value result = evaluate_binary(env, &bin_expr);
-        
-        /* Store result */
         if (target->kind == EXPR_IDENTIFIER) {
-            set_variable(env, target->data.identifier.name, result);
+            const char *name = target->data.identifier.name;
+            Value current = get_variable_value(env, name);
+            Value right = evaluate_expr(env, expr->data.compound_assign.value);
+            
+            Value result;
+            if (strcmp(op, "+=") == 0) {
+                result = evaluate_binary_op(env, "+", current, right);
+            } else if (strcmp(op, "-=") == 0) {
+                result = evaluate_binary_op(env, "-", current, right);
+            } else if (strcmp(op, "*=") == 0) {
+                result = evaluate_binary_op(env, "*", current, right);
+            } else if (strcmp(op, "/=") == 0) {
+                result = evaluate_binary_op(env, "/", current, right);
+            } else {
+                return make_null();
+            }
+            
+            set_variable(env, name, result);
+            return result;
         }
         
-        return result;
+        if (target->kind == EXPR_FIELD_ACCESS) {
+            Value obj = evaluate_expr(env, target->data.field_access.obj);
+            const char *field = target->data.field_access.field;
+            
+            if (obj.type == VAL_OBJ && obj.as.obj->type == OBJ_INSTANCE) {
+                ObjInstance *inst = (ObjInstance *)obj.as.obj;
+                Value current = instance_get_field(inst, field);
+                Value right = evaluate_expr(env, expr->data.compound_assign.value);
+                
+                Value result;
+                if (strcmp(op, "+=") == 0) {
+                    result = evaluate_binary_op(env, "+", current, right);
+                } else if (strcmp(op, "-=") == 0) {
+                    result = evaluate_binary_op(env, "-", current, right);
+                } else if (strcmp(op, "*=") == 0) {
+                    result = evaluate_binary_op(env, "*", current, right);
+                } else if (strcmp(op, "/=") == 0) {
+                    result = evaluate_binary_op(env, "/", current, right);
+                } else {
+                    return make_null();
+                }
+                
+                instance_set_field(inst, field, result);
+                return result;
+            }
+        }
+        
+        if (target->kind == EXPR_INDEX_ACCESS) {
+            Value obj = evaluate_expr(env, target->data.index_access.obj);
+            Value index = evaluate_expr(env, target->data.index_access.index);
+            
+            if (obj.type == VAL_OBJ && obj.as.obj->type == OBJ_LIST && index.type == VAL_INT) {
+                ObjList *list = (ObjList *)obj.as.obj;
+                Value current = list_get(list, index.as.integer);
+                Value right = evaluate_expr(env, expr->data.compound_assign.value);
+                
+                Value result;
+                if (strcmp(op, "+=") == 0) {
+                    result = evaluate_binary_op(env, "+", current, right);
+                } else if (strcmp(op, "-=") == 0) {
+                    result = evaluate_binary_op(env, "-", current, right);
+                } else if (strcmp(op, "*=") == 0) {
+                    result = evaluate_binary_op(env, "*", current, right);
+                } else if (strcmp(op, "/=") == 0) {
+                    result = evaluate_binary_op(env, "/", current, right);
+                } else {
+                    return make_null();
+                }
+                
+                list_set(list, index.as.integer, result);
+                return result;
+            }
+            
+            if (obj.type == VAL_OBJ && obj.as.obj->type == OBJ_MAP) {
+                ObjMap *map = (ObjMap *)obj.as.obj;
+                Value current = map_get(map, index);
+                Value right = evaluate_expr(env, expr->data.compound_assign.value);
+                
+                Value result;
+                if (strcmp(op, "+=") == 0) {
+                    result = evaluate_binary_op(env, "+", current, right);
+                } else if (strcmp(op, "-=") == 0) {
+                    result = evaluate_binary_op(env, "-", current, right);
+                } else if (strcmp(op, "*=") == 0) {
+                    result = evaluate_binary_op(env, "*", current, right);
+                } else if (strcmp(op, "/=") == 0) {
+                    result = evaluate_binary_op(env, "/", current, right);
+                } else {
+                    return make_null();
+                }
+                
+                map_set(map, index, result);
+                return result;
+            }
+        }
+        
+        fprintf(stderr, "Invalid compound assignment target\n");
+        return make_null();
     }
     
     return make_null();

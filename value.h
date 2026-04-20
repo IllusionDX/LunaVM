@@ -97,6 +97,7 @@ typedef struct {
 typedef struct {
     Object obj;
     char *struct_name;
+    char **field_names;  /* parallel array of field names */
     Value *fields;
     int field_count;
 } ObjStruct;
@@ -210,6 +211,7 @@ int map_length(ObjMap *map);
 
 Value instance_get_field(ObjInstance *inst, const char *name);
 void instance_set_field(ObjInstance *inst, const char *name, Value value);
+Value struct_get_field(ObjStruct *strct, const char *name);
 
 /* ============== Hashing ============== */
 
