@@ -86,6 +86,9 @@ typedef struct MapEntry {
 
 typedef struct Expr {
     ExprKind kind;
+    Type *inferred_type;
+    int field_offset;
+    bool needs_retain;
     union {
         struct {
             char *value;
@@ -122,6 +125,8 @@ typedef struct Expr {
         struct {
             Expr *obj;
             char *field;
+            int field_index;
+            int field_offset;
         } field_access;
         struct {
             Expr *obj;
@@ -197,6 +202,9 @@ typedef struct CatchClause {
 
 typedef struct Stmt {
     StmtKind kind;
+    Type *inferred_type;
+    bool needs_retain;
+    bool needs_release;
     union {
         struct {
             Expr *expression;
@@ -275,6 +283,7 @@ typedef struct EnumVariant {
 
 typedef struct Decl {
     DeclKind kind;
+    int *field_offsets;
     union {
         struct {
             char *name;

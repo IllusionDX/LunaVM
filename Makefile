@@ -19,12 +19,12 @@ endif
 # Source files
 SOURCES = main.c value.c environment.c ast_free.c \
     eval_expr.c eval_call.c eval_stmt.c eval_decl.c \
-    lexer.c parser.c
+    lexer.c parser.c analyzer.c
 
 OBJECTS = $(SOURCES:.c=.o)
 
 # Header files
-HEADERS = ast.h value.h environment.h eval.h lexer.h parser.h
+HEADERS = ast.h value.h environment.h eval.h lexer.h parser.h analyzer.h
 
 # Default target
 all: $(TARGET)

@@ -1,6 +1,6 @@
 /* Main entry point for standalone Luna interpreter.
  * Can read Luna source files and execute them.
- * 
+ *
  * Usage:
  *   luna <source_file.luna>
  *   luna --version
@@ -14,14 +14,17 @@
 #include "eval.h"
 #include "lexer.h"
 #include "parser.h"
+#include "analyzer.h"
 
 static void print_usage(const char *program) {
     fprintf(stderr, "Usage: %s [options] <source_file>\n", program);
     fprintf(stderr, "\nOptions:\n");
+    fprintf(stderr, "  -u          Unbuffered stdout/stderr\n");
     fprintf(stderr, "  --version   Show version information\n");
     fprintf(stderr, "  --help      Show this help message\n");
     fprintf(stderr, "\nExamples:\n");
     fprintf(stderr, "  %s program.luna    # Run Luna source file\n", program);
+    fprintf(stderr, "  %s -u program.luna # Run with unbuffered output\n", program);
 }
 
 static char *read_file(const char *path) {
@@ -42,7 +45,7 @@ static char *read_file(const char *path) {
         return NULL;
     }
 
-    size_t bytes_read = fread(buffer, sizeof(char), file_size, file);
+    size_t bytes_read = fread(buffer, 1, file_size, file);
     buffer[bytes_read] = '\0';
     fclose(file);
 
@@ -50,20 +53,18 @@ static char *read_file(const char *path) {
 }
 
 static int execute_native_program(const char *source) {
-    /* Create lexer and tokenize */
     Lexer *lexer = lexer_new(source);
     TokenList *tokens = lexer_tokenize(lexer);
-    
+
     if (!tokens) {
         fprintf(stderr, "Lexer error: Failed to tokenize source\n");
         lexer_free(lexer);
         return 1;
     }
-    
-    /* Create parser and parse */
+
     Parser *parser = parser_new(tokens);
     Program *program = parser_parse(parser);
-    
+
     if (!program || parser->had_error) {
         fprintf(stderr, "Parser error: Failed to parse source\n");
         parser_free(parser);
@@ -71,29 +72,58 @@ static int execute_native_program(const char *source) {
         lexer_free(lexer);
         return 1;
     }
-    
-    /* Execute the program */
+
+    Analyzer *analyzer = analyzer_new();
+    AnalyzerResult result = analyze_program(analyzer, program);
+
+    if (result != ANALYZER_OK) {
+        fprintf(stderr, "Semantic error at line %d: %s\n",
+                analyzer_get_error_line(analyzer),
+                analyzer_get_error(analyzer));
+        analyzer_free(analyzer);
+        free_program(program);
+        parser_free(parser);
+        token_list_free(tokens);
+        lexer_free(lexer);
+        return 1;
+    }
+
+    analyzer_free(analyzer);
+
     execute_program(program);
-    
-    /* Cleanup */
+
     free_program(program);
     parser_free(parser);
     token_list_free(tokens);
     lexer_free(lexer);
-    
+
     return 0;
 }
 
 int main(int argc, char *argv[]) {
+    int unbuffered = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-u") == 0) {
+            unbuffered = 1;
+        }
+    }
+
+    if (unbuffered) {
+        setvbuf(stdout, NULL, _IONBF, 0);
+        setvbuf(stderr, NULL, _IONBF, 0);
+    }
+
     if (argc < 2) {
         print_usage(argv[0]);
         return 1;
     }
 
-    /* Check for options */
     int file_idx = 1;
 
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-u") == 0) continue;
+
         if (strcmp(argv[i], "--version") == 0) {
             printf("Luna interpreter v1.0.0\n");
             printf("Tree-walking interpreter with ARC memory management\n");
@@ -117,13 +147,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Read source file */
     char *source = read_file(argv[file_idx]);
     if (!source) {
         return 1;
     }
 
-    /* Execute using native lexer/parser */
     int result = execute_native_program(source);
     free(source);
     return result;
