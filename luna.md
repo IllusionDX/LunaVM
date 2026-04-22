@@ -422,9 +422,9 @@ Luna is designed to be simple and flexible. The dynamic typing model allows rapi
 ## Roadmap
 
 ### V2
-- Coroutines / async
 - Array slicing and comprehensions
 
 ### V3
+- Coroutines / async
 - JIT compiler
 - Type specialization from hints
