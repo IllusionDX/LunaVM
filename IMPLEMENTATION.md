@@ -44,12 +44,13 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 | 3 | Uint | unsigned integer |
 | 4 | Float | 32-bit floating point |
 | 5 | Double | 64-bit floating point |
-| 6 | String | UTF-8 string |
-| 7 | List | dynamic array |
-| 8 | Dict | key-value map |
-| 9 | Object | class instance |
-| 10 | Function | function closure |
-| 11 | Native | C/native function |
+| 6 | NaN | Not-a-Number (IEEE 754) |
+| 7 | String | UTF-8 string |
+| 8 | List | dynamic array |
+| 9 | Dict | key-value map |
+| 10 | Object | class instance |
+| 11 | Function | function closure |
+| 12 | Native | C/native function |
 
 ### Bytecode Instruction Set
 

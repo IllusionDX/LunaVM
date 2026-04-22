@@ -53,6 +53,7 @@ var name: string = "Luna"        # with hint
 |------|-------------|---------|
 | `float` | 32-bit IEEE-754 | `var f = 3.14` |
 | `double` | 64-bit IEEE-754 | `var d = 3.14159` |
+| `NaN` | Not-a-Number (IEEE 754) | `var n = 0/0` |
 
 **Other:**
 
