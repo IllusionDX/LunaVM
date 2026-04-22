@@ -162,7 +162,18 @@ def compute(x, y):
 
 ### Pass by Reference
 
-Use `&` to explicitly pass primitive types by reference:
+Objects and collections (lists, dicts) are automatically passed by reference:
+
+```luna
+def add_item(list):
+    list.add(99)
+
+var items = [1, 2, 3]
+add_item(items)
+print(items)  # [1, 2, 3, 99] - modified!
+```
+
+Use `&` to explicitly pass primitives by reference:
 
 ```luna
 def increment(&count):
