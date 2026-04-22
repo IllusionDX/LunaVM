@@ -66,7 +66,8 @@ var name: string = "Luna"        # with hint
 |------|-------------|---------|
 | `float32` | 32-bit IEEE-754 | `var f: float32 = 3.14` |
 | `float64` | 64-bit IEEE-754 | `var d = 3.14159265359` |
-| `float` | alias for float64 | `var f = 3.14` |
+| `float` | alias for float32 | `var f = 3.14` |
+| `double` | alias for float64 | `var d = 3.14159` |
 
 **Other:**
 

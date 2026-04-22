@@ -44,7 +44,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 | 5 | Int32 | 32-bit signed |
 | 6 | Int64 | 64-bit signed |
 | 7 | Uint | platform-dependent unsigned |
-| 8 | Uint8 | 8-bit unsigned (byte) |
+| 8 | Uint8 | 8-bit unsigned |
 | 9 | Uint16 | 16-bit unsigned |
 | 10 | Uint32 | 32-bit unsigned |
 | 11 | Uint64 | 64-bit unsigned |
