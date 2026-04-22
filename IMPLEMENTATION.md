@@ -47,51 +47,120 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 | 8 | Function | function closure |
 | 9 | Native | C/native function |
 
-### Instructions
+### Bytecode Instruction Set
 
-**Stack Operations:**
-- `push` - push constant to stack
-- `pop` - pop value
-- `dup` - duplicate top of stack
-- `swap` - swap top two values
+```
+Format: [opcode: 1 byte][ra: 1 byte][rb: 1 byte][imm: 4 bytes]
+```
 
-**Register Operations:**
-- `load` - load from register
-- `store` - store to register
-- `load_fast` - load local (optimized)
+Register-based: operations read from `ra`, `rb`, write to `ra`.
 
-**Control Flow:**
-- `jmp` - unconditional jump
-- `jz` / `jnz` - conditional jump
-- `call` - call function
-- `ret` - return from function
+#### Constants & Loading
 
-**Arithmetic:**
-- `add`, `sub`, `mul`, `div`, `mod`
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `LOADK` | rd, #const | Load constant from constant pool to rd |
+| `LOADNULL` | rd | Load null to rd |
+| `LOADTRUE` | rd | Load true to rd |
+| `LOADFALSE` | rd | Load false to rd |
+| `LOADI` | rd, imm | Load immediate int to rd |
+| `LOADF` | rd, imm | Load immediate float to rd |
+| `MOVE` | rd, rs | Move rs to rd |
 
-**Comparison:**
-- `eq`, `neq`, `lt`, `gt`, `lte`, `gte`
+#### Register Operations
 
-**Logical:**
-- `and`, `or`, `not`
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `COPY` | rd, rs | Copy rs to rd (full ref) |
+| `SWAP` | rs, rt | Swap values in rs and rt |
 
-**Object Operations:**
-- `new` - create object
-- `index_get` - list/dict index read
-- `index_set` - list/dict index write
-- `member_get` - object member read
-- `member_set` - object member write
-- `invoke` - method call
+#### Arithmetic
+
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `ADD` | rd, rs, rt | rd = rs + rt |
+| `SUB` | rd, rs, rt | rd = rs - rt |
+| `MUL` | rd, rs, rt | rd = rs * rt |
+| `DIV` | rd, rs, rt | rd = rs / rt |
+| `MOD` | rd, rs, rt | rd = rs % rt |
+| `NEG` | rd, rs | rd = -rs |
+| `BAND` | rd, rs, rt | rd = rs & rt |
+| `BOR` | rd, rs, rt | rd = rs \| rt |
+| `BXOR` | rd, rs, rt | rd = rs ^ rt |
+| `BNOT` | rd, rs | rd = ~rs |
+| `SHL` | rd, rs, rt | rd = rs << rt |
+| `SHR` | rd, rs, rt | rd = rs >> rt |
+
+#### Comparison
+
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `EQ` | rd, rs, rt | rd = (rs == rt) |
+| `NE` | rd, rs, rt | rd = (rs != rt) |
+| `LT` | rd, rs, rt | rd = (rs < rt) |
+| `LE` | rd, rs, rt | rd = (rs <= rt) |
+| `GT` | rd, rs, rt | rd = (rs > rt) |
+| `GE` | rd, rs, rt | rd = (rs >= rt) |
+
+#### Logical
+
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `NOT` | rd, rs | rd = not rs |
+| `JMP` | pc | Unconditional jump |
+| `JZ` | rs, pc | Jump if rs is falsy |
+| `JNZ` | rs, pc | Jump if rs is truthy |
+
+#### Functions
+
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `CALL` | ra, fn, nargs | Call function with nargs (args in ra...ra+nargs-1) |
+| `RET` | rd | Return value from function |
+| `ENTER` | nlocals, nstack | Enter function, allocate locals |
+| `LEAVE` | | Exit function |
+
+#### Object Operations
+
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `NEW` | rd, class | Create new instance |
+| `NEWDICT` | rd | Create new dict |
+| `NEWLIST` | rd, size | Create new list |
+| `INDEXGET` | rd, rs, rt | rd = rs[rt] |
+| `INDEXSET` | rs, rt, val | rs[rt] = val |
+| `MEMBERGET` | rd, rs, #field | rd = rs.field |
+| `MEMBERSET` | rs, #field, val | rs.field = val |
+| `INVOKE` | rd, rs, #method, nargs | rd = rs.method(...args) |
+| `SUPER` | rd, base, #method, nargs | Call parent method |
+
+#### Closures & Scope
+
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `CLOSURE` | rd, fn | Create closure |
+| `GETGLOBAL` | rd, #name | Get global variable |
+| `SETGLOBAL` | #name, rs | Set global variable |
+| `GETUPVAL` | rd, upindex | Get upvalue |
+| `SETUPVAL` | upindex, rs | Set upvalue |
+
+#### Exceptions
+
+| Opcode | Args | Description |
+|--------|------|-------------|
+| `THROW` | rs | Throw exception |
+| `TRY` | pc | Setup try catch |
+| `ENDTRY` | | End try block |
 
 ### Instruction Format
 
 ```
-[opcode: 1 byte][a: 1 byte][b: 2 bytes]
+Format: [opcode: 1 byte][ra: 1 byte][rb: 1 byte][imm: 4 bytes]
 ```
 
-- Single-byte opcode
-- Optional operands a, b (register indices or immediate values)
-- 4-byte aligned for fast dispatch
+- Single-byte opcode (256 instructions max)
+- Two register indices (ra, rb), one immediate/displacement
+- 8-byte total for alignment (optional)
 
 ### VM Components
 
