@@ -426,5 +426,5 @@ Luna is designed to be simple and flexible. The dynamic typing model allows rapi
 - Array slicing and comprehensions
 
 ### V3
-- Register-based JIT compiler
+- JIT compiler
 - Type specialization from hints
