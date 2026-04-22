@@ -27,9 +27,9 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 
 ### Architecture
 
-- Stack-based for portability
+- Register-based for performance
 - Fixed instruction width for fast dispatch
-- Register-mapped local variables
+- Local register window per frame
 - Tagged value representation
 
 ### Value Types
@@ -116,12 +116,12 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 
 ## JIT Roadmap
 
-### V1: Interpreter
-- Stack-based bytecode
+### V1: Register VM Interpreter
+- Register-based bytecode
 - Simple dispatch loop
 
-### V2: Optimized Bytecode
-- Register allocator
+### V2: Optimized VM
+- Advanced register allocator
 - Inline caches
 - Fast path detection
 
