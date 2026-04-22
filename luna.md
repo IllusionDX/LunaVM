@@ -337,6 +337,30 @@ comment
 """
 ```
 
+### Import
+
+```luna
+import math              # import entire module
+from math import sin     # import specific
+from math import *      # import all
+```
+
+### Error Handling
+
+```luna
+try:
+    var result = divide(10, 0)
+catch e:
+    print("Error: " + e)
+
+try:
+    risky()
+catch e:
+    print("Error: " + e)
+finally:
+    cleanup()
+```
+
 ---
 
 ## Naming Conventions
@@ -379,7 +403,7 @@ main()
 | **Typing** | Dynamic with optional hints |
 | **Declarations** | `var`, `let`, `const` |
 | **Collections** | Lists (dynamic), Dicts |
-| **Module/import** | `import module` |
+| **Module/import** | `import x`, `from x import y`, `from x import *` |
 | **Error handling** | Exceptions |
 | **Semicolon insertion** | Auto-insert like Go |
 | **Loop control** | `break`, `continue` |
