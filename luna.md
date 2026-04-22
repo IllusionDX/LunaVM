@@ -416,3 +416,15 @@ main()
 ## Notes
 
 Luna is designed to be simple and flexible. The dynamic typing model allows rapid development while optional type hints provide documentation and optimization opportunities.
+
+---
+
+## Roadmap
+
+### V2
+- Coroutines / async
+- Array slicing and comprehensions
+
+### V3
+- Register-based JIT compiler
+- Type specialization from hints
