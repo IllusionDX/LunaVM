@@ -40,34 +40,19 @@ var name: string = "Luna"        # with hint
 |------|-------------|---------|
 | `bool` | true or false | `var active = true` |
 
-**Integer (Signed):**
+**Integer:**
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `int8` | 8-bit signed | `var b: int8 = 127` |
-| `int16` | 16-bit signed | `var s: int16 = 32767` |
-| `int32` | 32-bit signed | `var i: int32 = 2147483647` |
-| `int64` | 64-bit signed | `var n: int64 = 9223372036854775807` |
-| `int` | platform-dependent | `var x = 42` |
-
-**Integer (Unsigned):**
-
-| Type | Description | Example |
-|------|-------------|---------|
-| `uint8` | 8-bit unsigned | `var b: uint8 = 255` |
-| `uint16` | 16-bit unsigned | `var w: uint16 = 65535` |
-| `uint32` | 32-bit unsigned | `var u: uint32 = 4294967295` |
-| `uint64` | 64-bit unsigned | `var q: uint64 = 18446744073709551615` |
-| `uint` | platform-dependent | `var u = 42` |
+| `int` | signed integer | `var n = 42` |
+| `uint` | unsigned integer | `var u = 42` |
 
 **Float:**
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `float32` | 32-bit IEEE-754 | `var f: float32 = 3.14` |
-| `float64` | 64-bit IEEE-754 | `var d = 3.14159265359` |
-| `float` | alias for float32 | `var f = 3.14` |
-| `double` | alias for float64 | `var d = 3.14159` |
+| `float` | 32-bit IEEE-754 | `var f = 3.14` |
+| `double` | 64-bit IEEE-754 | `var d = 3.14159` |
 
 **Other:**
 
@@ -75,6 +60,8 @@ var name: string = "Luna"        # with hint
 |------|-------------|---------|
 | `string` | UTF-8 string | `var name = "Luna"` |
 | `null` | null value | `var player = null` |
+
+> V1 types above. Granular types (int8, int16, int32, int64, uint8, etc.) available in V2+.
 
 ### Collections
 
