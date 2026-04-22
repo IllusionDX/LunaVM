@@ -73,8 +73,6 @@ var name: string = "Luna"        # with hint
 | Type | Description | Example |
 |------|-------------|---------|
 | `string` | UTF-8 string | `var name = "Luna"` |
-| `byte` | alias for uint8 | `var b: byte = 0xFF` |
-| `rune` | alias for int32 (Unicode) | `var c: rune = 'A'` |
 | `null` | null value | `var player = null` |
 
 ### Collections
