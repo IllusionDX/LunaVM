@@ -1,86 +1,103 @@
 # Luna Programming Language
 
 ## Overview
-Luna is a statically-typed systems programming language with indentation-based syntax and C-style type declarations.
+Luna is a dynamically-typed programming language with indentation-based syntax.
 
 ## Design Principles
 
-- **Strong static typing** - Types are enforced at compile time, not optional hints
+- **Dynamic typing** - Types inferred at runtime, optional hints for documentation/optimization
 - **Indentation-based blocks** - No braces; structure is determined by whitespace
-- **C-style familiarity** - Prefix types, familiar keywords, readable syntax
-- **Minimal ceremony** - Semicolons optional, type inference where obvious
-- **V1: Python-style interpreter** - Like GDScript; v2 will move to VM+JIT
+- **Minimal syntax** - Clean, readable, low ceremony
+- **Flexible** - Objects like JavaScript, collections like Python
 
 ---
 
 ## Syntax Specifications
 
-### Collections
+### Variable Declarations
 
-Luna provides two collection types: fixed-size arrays and dynamic lists.
-
-**Fixed arrays** - size is part of the type, allocated on stack or contiguous memory:
+Three declaration keywords:
 
 ```luna
-int[5] numbers = [1, 2, 3, 4, 5]     # size known at compile time
-int[] inferred = [10, 20, 30]       # size inferred from literal
-string[3] names = ["Luna", "Sol", "Terra"]
+var count = 0                    # function/module scope mutable
+let result = calculate()          # block scope mutable
+const VERSION = "1.0.0"           # immutable constant
 ```
 
-Array size is immutable after creation. Arrays are accessed with zero-based indexing:
+**Type hints** are optional:
 
 ```luna
-int first = numbers[0]              # get element
-numbers[2] = 100                  # set element
-int len = numbers.length            # get size (read-only)
+var x = 5                       # no hint
+var x: int = 5                  # with hint
+var name: string = "Luna"        # with hint
 ```
-
-**Dynamic lists** - growable, heap-allocated, like Java's ArrayList:
-
-```luna
-list<int> scores = [100, 200, 300]    # can grow and shrink
-scores.add(400)                       # append to end
-scores.insert(1, 150)                 # insert at index
-int removed = scores.remove(2)       # remove and return element at index
-scores.pop()                          # remove and return last element
-scores.clear()                        # remove all elements
-int len = scores.length               # get current size
-```
-
-Both collections are type-safe. You cannot add a `float` to a `list<int>` or `float[]`.
-
-**Choosing between them:**
-- Use **arrays** when size is known and fixed (performance, memory efficiency)
-- Use **lists** when you need to add/remove elements dynamically
 
 ### Base Types
 
-Luna provides the following primitive types:
-
 | Type | Description | Example |
 |------|-------------|---------|
-| `int` | Signed 32-bit integer | `int x = 42` |
-| `long` | Signed 64-bit integer | `long count = 1000000` |
-| `float` | 32-bit floating point | `float pi = 3.14` |
-| `double` | 64-bit floating point | `double precise = 3.14159265359` |
-| `bool` | Boolean true/false | `bool active = true` |
-| `byte` | Unsigned 8-bit integer (0-255) | `byte flags = 0xFF` |
-| `char` | Single Unicode character | `char c = 'A'` |
-| `string` | UTF-8 string | `string name = "Luna"` |
-| `void` | No value (return type only) | `def f() -> void:` |
-| `null` | Null reference | `Player p = null` |
+| `int` | Signed integer | `var n = 42` |
+| `float` | Floating point | `var f = 3.14` |
+| `bool` | Boolean true/false | `var active = true` |
+| `string` | UTF-8 string | `var name = "Luna"` |
+| `null` | Null value | `var player = null` |
 
-**Null rules (v1):** Classes and reference types can be assigned `null`. Value types (`int`, `float`, `bool`, structs) cannot be null.
+All other types are objects (lists, dicts, classes, functions, etc.).
+
+### Collections
+
+**Lists** - Dynamic arrays:
 
 ```luna
-Player p = null      # OK - class is reference type
-int x = null        # Error - value type cannot be null
-Vector2 v = null    # Error - struct is value type
+var numbers = [1, 2, 3, 4, 5]
+var names = ["Luna", "Sol", "Terra"]
+var mixed = [1, "hello", true]
+
+numbers.add(6)                   # append
+numbers.insert(0, 0)            # insert at index
+var removed = numbers.pop()        # remove and return last
+var removed = numbers.remove(2)   # remove and return at index
+numbers.clear()                 # clear all
+var len = numbers.length        # get size
 ```
 
-### Escape Sequences
+**Dicts** - Key-value maps (like Python/JavaScript objects):
 
-Strings support standard escape sequences:
+```luna
+var config = {
+    "gravity": 9.8,
+    "theme": "Neon-Tundra",
+    "spawn_points": [[0, 0], [100, 50], [200, -10]]
+}
+
+var theme = config["theme"]       # read
+config["difficulty"] = "hard"   # write
+var exists = config.has("theme")   # key check
+config.remove("theme")          # delete key
+var keys = config.keys()       # all keys
+var vals = config.values()     # all values
+```
+
+**Bracket notation** for dynamic keys:
+
+```luna
+var key = "player_name"
+var player_data[key] = "Hero"
+```
+
+### Operators
+
+**Arithmetic:** `+`, `-`, `*`, `/`, `%` (modulo)
+
+**Comparison:** `==`, `!=`, `<`, `>`, `<=`, `>=`
+
+**Logical:** `and`, `or`, `not`
+
+**Assignment:** `=`, `+=`, `-=`, `*=`, `/=`
+
+**Bitwise:** `&`, `|`, `^`, `<<`, `>>`, `~`
+
+### Escape Sequences
 
 | Escape | Meaning |
 |--------|---------|
@@ -91,154 +108,84 @@ Strings support standard escape sequences:
 | `\t` | Tab |
 | `\r` | Carriage return |
 
-```luna
-string path = "C:\\Users\\Luna"
-string msg = "Hello\nWorld"
-```
-
-### Types
-
-Types are written prefix-style, before the identifier:
-
-```luna
-int x = 5
-float y = 3.14
-string name = "Luna"
-bool active = true
-```
-
-Complex types follow the same pattern:
-
-```luna
-map<string, int> data
-Pair<int, float> coordinates
-```
-
-### Variable Declarations
-
-Explicit types (C-style):
-
-```luna
-int count = 0
-float total = 0.0
-```
-
-Type inference with `var`:
-
-```luna
-var count = 0           # inferred as int
-var name = "Alice"      # inferred as string
-var items = [1, 2, 3]  # inferred as list<int>
-```
-
-Use `const` for immutable values:
-
-```luna
-const float PI = 3.14159
-const string GREETING = "Hello, Luna"
-```
-
-`const` and `var` variables must be initialized at declaration time.
-
 ### Functions
 
-Functions are declared with `def`, return type follows the `->` arrow:
+Functions are declared with `def`, return type is optional:
 
 ```luna
-def calculate_damage(int base, float crit) -> float:
-    float total = base * crit
-    return total
-```
+def calculate_damage(base, crit):
+    return base * crit
 
-**Colon requirement:** The colon `:` immediately follows the return type and introduces the indented block body.
-
-**Same-line bodies:** Simple one-liners may follow the colon (style-permitted but discouraged for complex logic):
-
-```luna
-def add(int a, int b) -> int: return a + b
-```
-
-**Multi-statement bodies:** Must be on new lines with consistent indentation:
-
-```luna
-def compute(int x, int y) -> int:
-    int a = x * 2
-    int b = y + 3
+def add(a, b) -> int:
     return a + b
+
+def greet(name) -> string:
+    return "Hello, " + name
 ```
 
-### Structs
+**Colon requirement:** The colon introduces the indented block body.
 
-Structs are value types (copied on assignment):
+**Same-line bodies:** Simple one-liners may follow the colon:
 
 ```luna
-struct Point:
-    int x
-    int y
-
-struct Config:
-    string name
-    int timeout
-    bool enabled
+def add(a, b): return a + b
 ```
 
-**Empty blocks:** Use the `pass` keyword:
+**Block bodies:** Must be on new lines with consistent indentation:
 
 ```luna
-struct Placeholder:
-    pass
+def compute(x, y):
+    var a = x * 2
+    var b = y + 3
+    return a + b
 ```
 
 ### Classes
 
-Classes are reference types (shared on assignment). Support single inheritance:
+Classes support single inheritance:
 
 ```luna
 class Entity:
-    string name
-    int health
+    var name
+    var hp: float
 
-    def _init(string name, int health):
+    def _init(name, health: float):
         self.name = name
-        self.health = health
+        self.hp = health
 
-    def take_damage(int amount) -> void:
-        self.health = self.health - amount
+    def take_damage(amount):
+        self.hp = self.hp - amount
 
     def is_alive() -> bool:
-        return self.health > 0
+        return self.hp > 0
 
 class Player extends Entity:
-    int score
+    var score
 
-    def _init(string name):
+    def _init(name):
         super(name, 100)
         self.score = 0
 
-    def add_score(int points) -> void:
+    def add_score(points):
         self.score = self.score + points
 ```
 
-**Constructor:** `def _init()` - called automatically by `new`
-**Parent constructor:** Call with `super(args)` as first statement in child constructor
-**Instantiation:** Use `new` keyword: `Player player = new Player("Hero")`
-**Self-reference:** Use `self` keyword for explicit field/method access
+**Instantiation:** Use `new` keyword:
 
-**Structs vs Classes:**
-- **Structs:** Value types, no inheritance, no methods (v1), stack-allocated
-- **Classes:** Reference types, single inheritance, methods, heap-allocated with ARC
+```luna
+var player = new Player("Hero")
+player.take_damage(25)
+```
 
-**Visibility (v1):** All methods and fields are public. Use underscore prefix (e.g., `_internal_method`) as a convention for internal APIs.
+**Self-reference:** Use `self` keyword.
 
 ### Enums
 
-Enums define a set of named constants. Values auto-increment from 0 unless specified:
-
 ```luna
 enum Status:
-    PENDING         # value = 0
-    RUNNING = 10    # value = 10
-    COMPLETED       # value = 11 (auto)
+    PENDING
+    RUNNING = 10
+    COMPLETED
 
 enum Color:
     RED = 0
@@ -246,68 +193,32 @@ enum Color:
     BLUE = 2
 ```
 
-Access enum values with dot notation: `Status.PENDING`, `Color.RED`
+Access: `Status.PENDING`, `Color.RED`
 
 ### Indentation Rules
 
 - **Tabs or spaces** - Choose one per file, never mix
-- **Consistency required** - Mixed tabs and spaces raise a compile-time error
-- **Four spaces recommended** - Standard, but any consistent indentation works
-- **Significant indentation** - Block level is determined by the indentation of the first statement in the block
+- **Four spaces recommended** - Standard
+- **Significant indentation** - Block level determined by whitespace
 
 ### Semicolons
 
-Semicolons are optional. Use them to separate multiple statements on one line:
+Semicolons are optional:
 
 ```luna
-int x = 5
-int y = 10
-
-# Or with semicolons:
-int x = 5; int y = 10
+var x = 5
+var y = 10
 ```
 
-**Auto-insertion:** Newlines after expression tokens are treated as implicit semicolons (Go-style).
-
-### Multi-line Expressions
-
-Expressions that span multiple lines must be wrapped in parentheses. Inside parentheses, newlines are ignored and expressions can span multiple lines:
+Or with semicolons:
 
 ```luna
-def long_calc() -> int:
-    int result = some_function(
-        arg1,
-        arg2,
-        arg3
-    )
-    return result
-
-def another() -> int:
-    int total = (
-        base +
-        bonus +
-        multiplier
-    )
-    return total
+var x = 5; var y = 10
 ```
-
-Parentheses make the continuation explicit and unambiguous with indentation-based blocks.
-
-### Operators
-
-**Arithmetic:** `+`, `-`, `*`, `/`, `%` (modulo)
-
-**Comparison:** `==`, `!=`, `<`, `>`, `<=`, `>=`
-
-**Logical:** `and`, `or`, `not` (word-based for readability)
-
-**Assignment:** `=`, `+=`, `-=`, `*=`, `/=`
-
-**Bitwise:** `&`, `|`, `^`, `<<`, `>>`, `~`
 
 ### Control Flow
 
-If statements:
+**If statements:**
 
 ```luna
 if damage > threshold:
@@ -315,7 +226,7 @@ if damage > threshold:
     reduce_health()
 ```
 
-While loops:
+**While loops:**
 
 ```luna
 while counter > 0:
@@ -323,14 +234,17 @@ while counter > 0:
     counter = counter - 1
 ```
 
-For loops:
+**For loops:**
 
 ```luna
+for item in items:
+    print(item)
+
 for i in range(0, 10):
     print(i)
 ```
 
-**Loop control:** `break` to exit early, `continue` to skip to next iteration
+**Loop control:** `break`, `continue`
 
 ```luna
 for i in range(0, 100):
@@ -341,7 +255,7 @@ for i in range(0, 100):
     print(i)
 ```
 
-Switch statements:
+**Switch statements:**
 
 ```luna
 switch status:
@@ -353,40 +267,31 @@ switch status:
         print("Done")
 ```
 
-- Use `case` for specific values
-- Use `default` for the catch-all (optional)
-- Falls through without breaks between cases
-
 ### Return Statements
 
-Explicit `return` keyword required (no implicit returns):
+Explicit `return` required:
 
 ```luna
-def square(int x) -> int:
+def square(x):
     return x * x
 ```
 
 ### Comments
 
-Single-line comments (implementation-defined):
+Single-line comments:
 
 ```luna
 # This is a comment
-int value = 42 # end-of-line comment
+var value = 42
 ```
 
-Multi-line comments with triple quotes:
+Multi-line comments:
 
 ```luna
 """
-This is a
-multi-line comment
+Multi-line
+comment
 """
-
-'''
-Also works with
-single quotes
-'''
 ```
 
 ---
@@ -394,26 +299,32 @@ single quotes
 ## Naming Conventions
 
 Functions and variables: `snake_case`
-Structs and types: `PascalCase`
-Constants: `UPPER_SNAKE_CASE` recommended
+Classes and types: `PascalCase`
+Constants: `UPPER_SNAKE_CASE`
 
 ---
 
 ## Example Program
 
 ```luna
-struct Vector2:
-    float x
-    float y
+const VERSION = "1.0.0"
 
-def magnitude(Vector2 v) -> float:
-    return sqrt(v.x * v.x + v.y * v.y)
+class Vector2:
+    var x
+    var y
 
-def main() -> int:
-    Vector2 pos = Vector2{x: 3.0, y: 4.0}
-    float len = magnitude(pos)
-    print(len)
-    return 0
+    def _init(x, y):
+        self.x = x
+        self.y = y
+
+    def magnitude():
+        return sqrt(self.x * self.x + self.y * self.y)
+
+def main():
+    var pos = new Vector2(3.0, 4.0)
+    print(pos.magnitude())
+
+main()
 ```
 
 ---
@@ -421,59 +332,20 @@ def main() -> int:
 ## Decisions
 
 | Feature | Decision |
-|--------|----------|
-| **Null handling** | `T?` nullable types (post-v1, requires generics) |
-| **Memory management** | ARC; v1 is Python-style interpreter (like GDScript), v2 moves to VM+JIT |
-| **Module/import** | `import module` (Python-style) |
-| **Generics syntax** | `map<string, int>` (lowercase types, consistent with base types) |
-| **Pattern matching** | Skip for v1 |
-| **Operator overloading** | Skip for v1 |
+|---------|----------|
+| **Typing** | Dynamic with optional hints |
+| **Declarations** | `var`, `let`, `const` |
+| **Collections** | Lists (dynamic), Dicts |
+| **Module/import** | `import module` |
 | **Error handling** | Exceptions |
-| **Semicolon insertion** | Auto-insert (Go-style): newline after expression token = implicit semicolon |
-| **Loop control** | `break`, `continue` keywords |
-| **For loop** | `for i in range(start, end):` (Python/GDScript style) |
-| **Enums** | `enum Name: VARIANTS` with optional explicit values |
-| **Switch** | `switch expr: case values: ... default:` |
-
----
-
-## Open Questions
-
-- Generic implementation details (v2)
-- Abstract classes/interfaces (skip for v1)
-- Build system / package manager
-- Standard library scope
+| **Semicolon insertion** | Auto-insert like Go |
+| **Loop control** | `break`, `continue` |
+| **For loop** | `for x in iterable:` |
+| **Enums** | Keep |
+| **Switch** | Keep |
 
 ---
 
 ## Notes
 
-Luna prioritizes readability and familiar syntax while enforcing strong static typing. The indentation-based approach reduces visual noise compared to brace-delimited languages, while the prefix type declarations maintain C-family familiarity.
-
-## Implementation Notes / Gotchas
-
-### Struct Copy Semantics
-Since structs are value types, passing them to functions copies the entire struct. For large structs, this may be expensive. Consider using classes for large data structures, or passing by reference (post-v1 feature).
-
-**Example:**
-```luna
-struct Vector3:
-    float x
-    float y
-    float z
-
-def process(Vector3 v) -> void:  # v is a copy of the struct
-    v.x = 999                   # does not affect original
-```
-
-### Semicolon Auto-Insertion Rules
-Go-style semicolon insertion only inserts semicolons when a line ends with a token that could complete a statement. Tokens that prevent auto-insertion include:
-- Opening bracket: `(`, `[`, `{`
-- Binary operators: `+`, `-`, `*`, `/`, `==`, `and`, `or`, etc.
-- Comma: `,`
-- Period: `.` (for method chaining)
-
-**Always use parentheses for multi-line expressions** to avoid ambiguity.
-
-### Struct Literal Syntax
-The `Type{field: value}` syntax creates a new struct instance. This is a compile-time operation for structs (stack allocation), but a runtime operation for classes (heap allocation via `new`).
+Luna is designed to be simple and flexible. The dynamic typing model allows rapid development while optional type hints provide documentation and optimization opportunities.
