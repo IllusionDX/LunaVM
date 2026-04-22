@@ -34,15 +34,48 @@ var name: string = "Luna"        # with hint
 
 ### Base Types
 
+**Boolean:**
+
 | Type | Description | Example |
 |------|-------------|---------|
-| `int` | Signed integer | `var n = 42` |
-| `float` | Floating point | `var f = 3.14` |
-| `bool` | Boolean true/false | `var active = true` |
-| `string` | UTF-8 string | `var name = "Luna"` |
-| `null` | Null value | `var player = null` |
+| `bool` | true or false | `var active = true` |
 
-All other types are objects (lists, dicts, classes, functions, etc.).
+**Integer (Signed):**
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `int8` | 8-bit signed | `var b: int8 = 127` |
+| `int16` | 16-bit signed | `var s: int16 = 32767` |
+| `int32` | 32-bit signed | `var i: int32 = 2147483647` |
+| `int64` | 64-bit signed | `var n: int64 = 9223372036854775807` |
+| `int` | platform-dependent | `var x = 42` |
+
+**Integer (Unsigned):**
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `uint8` | 8-bit unsigned | `var b: uint8 = 255` |
+| `uint16` | 16-bit unsigned | `var w: uint16 = 65535` |
+| `uint32` | 32-bit unsigned | `var u: uint32 = 4294967295` |
+| `uint64` | 64-bit unsigned | `var q: uint64 = 18446744073709551615` |
+| `uint` | platform-dependent | `var u = 42` |
+
+**Float:**
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `float32` | 32-bit IEEE-754 | `var f: float32 = 3.14` |
+| `float64` | 64-bit IEEE-754 | `var d = 3.14159265359` |
+| `float` | alias for float64 | `var f = 3.14` |
+
+**Other:**
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `string` | UTF-8 string | `var name = "Luna"` |
+| `byte` | alias for uint8 | `var b: byte = 0xFF` |
+| `rune` | alias for int32 (Unicode) | `var c: rune = 'A'` |
+| `null` | null value | `var player = null` |
 
 ### Collections
 

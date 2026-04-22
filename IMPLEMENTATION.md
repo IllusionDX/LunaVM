@@ -38,15 +38,24 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 |-----|------|-------------|
 | 0 | Null | null value |
 | 1 | Bool | true/false |
-| 2 | Int | 32-bit signed integer |
-| 3 | Float | 32-bit floating point |
-| 4 | Double | 64-bit floating point |
-| 5 | String | UTF-8 string |
-| 6 | List | dynamic array |
-| 7 | Dict | key-value map |
-| 8 | Object | class instance |
-| 9 | Function | function closure |
-| 10 | Native | C/native function |
+| 2 | Int | platform-dependent signed |
+| 3 | Int8 | 8-bit signed |
+| 4 | Int16 | 16-bit signed |
+| 5 | Int32 | 32-bit signed |
+| 6 | Int64 | 64-bit signed |
+| 7 | Uint | platform-dependent unsigned |
+| 8 | Uint8 | 8-bit unsigned (byte) |
+| 9 | Uint16 | 16-bit unsigned |
+| 10 | Uint32 | 32-bit unsigned |
+| 11 | Uint64 | 64-bit unsigned |
+| 12 | Float32 | 32-bit floating point |
+| 13 | Float64 | 64-bit floating point |
+| 14 | String | UTF-8 string |
+| 15 | List | dynamic array |
+| 16 | Dict | key-value map |
+| 17 | Object | class instance |
+| 18 | Function | function closure |
+| 19 | Native | C/native function |
 
 ### Bytecode Instruction Set
 
