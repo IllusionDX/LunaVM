@@ -160,6 +160,18 @@ def compute(x, y):
     return a + b
 ```
 
+### Pass by Reference
+
+Use `&` to explicitly pass primitive types by reference:
+
+```luna
+def increment(&count):
+    count = count + 1
+
+var x = 5
+increment(&x)  # x = 6
+```
+
 ### Classes
 
 Classes support single inheritance:

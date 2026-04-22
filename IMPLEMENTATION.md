@@ -120,10 +120,12 @@ Register-based: operations read from `ra`, `rb`, write to `ra`.
 
 | Opcode | Args | Description |
 |--------|------|-------------|
-| `CALL` | ra, fn, nargs | Call function with nargs (args in ra...ra+nargs-1) |
+| `CALL` | ra, fn, nargs | Call function with nargs |
 | `RET` | rd | Return value from function |
 | `ENTER` | nlocals, nstack | Enter function, allocate locals |
 | `LEAVE` | | Exit function |
+| `REF` | rd, rs | Pass reference to rs |
+| `DEREF` | rd, rs | Dereference rs |
 
 #### Object Operations
 
