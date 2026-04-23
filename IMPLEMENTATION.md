@@ -248,8 +248,9 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.2-alpha` | Done | F-strings (`f"Hello {name}"`). |
 | `0.1.3-alpha` | Done | Scratch buffer optimization. Test suite reorganization. |
 | `0.1.4-alpha` | Done | Computed GOTO dispatch loop. |
-| `0.1.5-alpha` | **Current** | String interning. `clock()` builtin. |
-| `0.2.0` | Planned | Classes / enums solidified. Better error messages. |
+| `0.1.5-alpha` | Done | String interning. `clock()` builtin. |
+| `0.1.6-alpha` | **Current** | Anonymous function expressions (`def(): ...`). |
+| `0.2.0` | Planned | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. |
 | `0.3.0` | Planned | Modules and imports actually work. |
 | `0.4.0` | Planned | Standard library (strings, math, io, os). |
 | `0.5.0` | Planned | Package manager (`luna install`). |

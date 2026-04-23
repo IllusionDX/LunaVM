@@ -97,6 +97,18 @@ void free_expr(Expr *expr) {
         free(expr->data.new_expr.arguments);
         break;
 
+    case EXPR_FUNCTION:
+        if (expr->data.function.name) free(expr->data.function.name);
+        for (int i = 0; i < expr->data.function.param_count; i++) {
+            free(expr->data.function.params[i].name);
+        }
+        free(expr->data.function.params);
+        for (int i = 0; i < expr->data.function.body_count; i++) {
+            free_stmt(expr->data.function.body[i]);
+        }
+        free(expr->data.function.body);
+        break;
+
     default:
         break;
     }

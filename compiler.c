@@ -282,6 +282,9 @@ static void loop_pop(Compiler *c) {
 static void compile_expr_into(Compiler *c, Expr *expr, int target);
 static void compile_stmt(Compiler *c, Stmt *stmt);
 static void compile_decl(Compiler *c, Decl *decl);
+static int compile_function_value(Compiler *c, const char *name,
+                                   char **param_names, int param_count,
+                                   Stmt **body, int body_count);
 
 /* ============================================================ */
 /* Expressions                                                  */
@@ -596,6 +599,20 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             emit_ABx(c, OP_LOADK, (uint8_t)(target + nargs + 2), (uint16_t)mk);
             emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
         }
+        break;
+    }
+
+    case EXPR_FUNCTION: {
+        int param_count = expr->data.function.param_count;
+        char **pnames = malloc(sizeof(char*) * param_count);
+        for (int i = 0; i < param_count; i++)
+            pnames[i] = expr->data.function.params[i].name;
+        int fn_const = compile_function_value(c, expr->data.function.name,
+                                               pnames, param_count,
+                                               expr->data.function.body,
+                                               expr->data.function.body_count);
+        free(pnames);
+        emit_ABx(c, OP_CLOSURE, (uint8_t)target, (uint16_t)fn_const);
         break;
     }
 
@@ -937,13 +954,11 @@ static void compile_decl(Compiler *c, Decl *decl) {
     }
 }
 
-static void compile_function(Compiler *c, Decl *decl) {
-    const char *name = decl->data.function.name;
-    int param_count  = decl->data.function.param_count;
-
-    /* Create sub-chunk */
+static int compile_function_value(Compiler *c, const char *name,
+                                   char **param_names, int param_count,
+                                   Stmt **body, int body_count) {
     Chunk fn_chunk;
-    chunk_init(&fn_chunk, name);
+    chunk_init(&fn_chunk, name ? name : "");
 
     Compiler sub = {
         .chunk       = &fn_chunk,
@@ -960,31 +975,29 @@ static void compile_function(Compiler *c, Decl *decl) {
     scope_enter(&sub);
     emit_enter(&sub, (uint16_t)param_count);
 
-    /* Parameters as locals in regs 0..n-1 */
     for (int i = 0; i < param_count; i++) {
-        add_local(&sub, decl->data.function.params[i].name, i);
+        add_local(&sub, param_names[i], i);
     }
     sub.temp_base = param_count;
 
-    /* Body */
-    for (int i = 0; i < decl->data.function.body_count; i++) {
-        compile_stmt(&sub, decl->data.function.body[i]);
+    for (int i = 0; i < body_count; i++) {
+        compile_stmt(&sub, body[i]);
     }
 
-    /* Implicit return null */
     emit_loadnull(&sub, 0);
     emit_ret(&sub, 0);
 
     scope_exit(&sub);
 
-    /* Build ObjFunction */
-    ObjFunction *fn = new_function(name);
+    ObjFunction *fn = new_function(name ? name : "");
     fn->chunk       = malloc(sizeof(Chunk));
     *fn->chunk      = fn_chunk;
     fn->param_count = param_count;
-    fn->param_names = malloc(sizeof(char*) * param_count);
-    for (int i = 0; i < param_count; i++)
-        fn->param_names[i] = strdup(decl->data.function.params[i].name);
+    if (param_count > 0) {
+        fn->param_names = malloc(sizeof(char*) * param_count);
+        for (int i = 0; i < param_count; i++)
+            fn->param_names[i] = strdup(param_names[i]);
+    }
     fn->upvalue_count = sub.upvalue_count;
     if (sub.upvalue_count > 0) {
         fn->upvalue_descriptors = malloc(sizeof(UpvalueDesc) * sub.upvalue_count);
@@ -995,21 +1008,34 @@ static void compile_function(Compiler *c, Decl *decl) {
     }
 
     int fn_const = chunk_add_const(c->chunk, make_obj((Object*)fn));
+    release_obj((Object*)fn);
+    return fn_const;
+}
+
+static void compile_function(Compiler *c, Decl *decl) {
+    const char *name = decl->data.function.name;
+    int param_count  = decl->data.function.param_count;
+
+    char **pnames = malloc(sizeof(char*) * param_count);
+    for (int i = 0; i < param_count; i++)
+        pnames[i] = decl->data.function.params[i].name;
+
+    int fn_const = compile_function_value(c, name, pnames, param_count,
+                                          decl->data.function.body,
+                                          decl->data.function.body_count);
+    free(pnames);
+
     int r = alloc_reg(c);
 
     if (c->func_depth == 0) {
-        /* Top-level: create closure (no upvalues possible) and store global */
         emit_ABx(c, OP_CLOSURE, (uint8_t)r, (uint16_t)fn_const);
         int k = chunk_add_string(c->chunk, name);
         emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
         free_reg(c);
     } else {
-        /* Nested: create closure and store as local */
         add_local(c, name, r);
         emit_ABx(c, OP_CLOSURE, (uint8_t)r, (uint16_t)fn_const);
     }
-
-    release_obj((Object*)fn);
 }
 
 static void compile_class(Compiler *c, Decl *decl) {

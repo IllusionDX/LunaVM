@@ -18,6 +18,7 @@ static Stmt **parse_block(Parser *parser, int *count);
 static Expr *parse_expression(Parser *parser);
 static Expr *parse_assignment(Parser *parser);
 static Expr *parse_primary(Parser *parser);
+static Expr *parse_anonymous_function(Parser *parser);
 static Expr *parse_postfix(Parser *parser);
 static Expr *desugar_fstring(const char *template);
 
@@ -455,6 +456,9 @@ static Expr *parse_primary(Parser *parser) {
         expr->data.identifier.name = strdup(tok->value);
         return expr;
     }
+
+    case TOK_DEF:
+        return parse_anonymous_function(parser);
 
     default:
         fprintf(stderr, "Parse error at line %d: Unexpected token %s in expression\n",
@@ -1101,6 +1105,34 @@ static Decl *parse_function_declaration(Parser *parser) {
     decl->data.function.body = body;
     decl->data.function.body_count = body_count;
     return decl;
+}
+
+static Expr *parse_anonymous_function(Parser *parser) {
+    expect(parser, TOK_DEF, "Expected 'def'");
+
+    expect(parser, TOK_LPAREN, "Expected '(' after 'def'");
+    int param_count = 0;
+    FunctionParam *params = parse_parameters(parser, &param_count);
+    expect(parser, TOK_RPAREN, "Expected ')' after parameters");
+
+    if (match(parser, TOK_ARROW)) {
+        advance(parser);
+        skip_type_hint(parser);
+    }
+
+    expect(parser, TOK_COLON, "Expected ':' after anonymous function header");
+    expect_newline(parser);
+
+    int body_count = 0;
+    Stmt **body = parse_block(parser, &body_count);
+
+    Expr *expr = make_expr(EXPR_FUNCTION);
+    expr->data.function.name = NULL;
+    expr->data.function.params = params;
+    expr->data.function.param_count = param_count;
+    expr->data.function.body = body;
+    expr->data.function.body_count = body_count;
+    return expr;
 }
 
 static Decl *parse_class_declaration(Parser *parser) {

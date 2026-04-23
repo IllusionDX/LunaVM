@@ -14,6 +14,10 @@ typedef struct Decl Decl;
 
 /* ============== Expressions ============== */
 
+typedef struct FunctionParam {
+    char *name;
+} FunctionParam;
+
 typedef enum {
     EXPR_INTEGER,
     EXPR_FLOAT,
@@ -32,7 +36,8 @@ typedef enum {
     EXPR_TERNARY,
     EXPR_LIST_LITERAL,
     EXPR_DICT_LITERAL,
-    EXPR_NEW
+    EXPR_NEW,
+    EXPR_FUNCTION
 } ExprKind;
 
 typedef struct DictEntry {
@@ -110,6 +115,13 @@ typedef struct Expr {
             Expr **arguments;
             int arg_count;
         } new_expr;
+        struct {
+            char *name; /* optional, may be NULL for anonymous */
+            FunctionParam *params;
+            int param_count;
+            Stmt **body;
+            int body_count;
+        } function;
     } data;
 } Expr;
 
@@ -205,10 +217,6 @@ typedef enum {
     DECL_ENUM,
     DECL_IMPORT
 } DeclKind;
-
-typedef struct FunctionParam {
-    char *name;
-} FunctionParam;
 
 typedef struct ClassField {
     char *name;
