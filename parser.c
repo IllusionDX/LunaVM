@@ -110,9 +110,50 @@ static Expr *parse_list_literal(Parser *parser) {
     expect(parser, TOK_LBRACKET, "Expected '['");
     skip_whitespace_in_literal(parser);
 
+    /* Empty list */
+    if (match(parser, TOK_RBRACKET)) {
+        advance(parser);
+        Expr *expr = make_expr(EXPR_LIST_LITERAL);
+        expr->data.list_literal.elements = NULL;
+        expr->data.list_literal.element_count = 0;
+        return expr;
+    }
+
+    Expr *first = parse_expression(parser);
+    skip_whitespace_in_literal(parser);
+
+    /* List comprehension: [expr for x in iterable if cond] */
+    if (match(parser, TOK_FOR)) {
+        advance(parser);
+        Token *var_tok = expect(parser, TOK_IDENTIFIER, "Expected variable name after 'for'");
+        expect(parser, TOK_IN, "Expected 'in' after comprehension variable");
+        Expr *iterable = parse_expression(parser);
+        skip_whitespace_in_literal(parser);
+
+        Expr *condition = NULL;
+        if (match(parser, TOK_IF)) {
+            advance(parser);
+            condition = parse_expression(parser);
+            skip_whitespace_in_literal(parser);
+        }
+
+        expect(parser, TOK_RBRACKET, "Expected ']' after list comprehension");
+
+        Expr *expr = make_expr(EXPR_LIST_COMPREHENSION);
+        expr->data.list_comprehension.element = first;
+        expr->data.list_comprehension.variable = strdup(var_tok ? var_tok->value : "");
+        expr->data.list_comprehension.iterable = iterable;
+        expr->data.list_comprehension.condition = condition;
+        return expr;
+    }
+
+    /* Regular list literal */
     int capacity = 4;
     Expr **elements = (Expr **)malloc(capacity * sizeof(Expr *));
     int count = 0;
+    elements[count++] = first;
+    skip_whitespace_in_literal(parser);
+    if (match(parser, TOK_COMMA)) advance(parser);
 
     while (!match(parser, TOK_RBRACKET) && !match(parser, TOK_EOF)) {
         skip_whitespace_in_literal(parser);

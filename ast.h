@@ -37,7 +37,8 @@ typedef enum {
     EXPR_LIST_LITERAL,
     EXPR_DICT_LITERAL,
     EXPR_NEW,
-    EXPR_FUNCTION
+    EXPR_FUNCTION,
+    EXPR_LIST_COMPREHENSION
 } ExprKind;
 
 typedef struct DictEntry {
@@ -122,6 +123,12 @@ typedef struct Expr {
             Stmt **body;
             int body_count;
         } function;
+        struct {
+            Expr *element;
+            char *variable;
+            Expr *iterable;
+            Expr *condition; /* optional, may be NULL */
+        } list_comprehension;
     } data;
 } Expr;
 

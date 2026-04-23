@@ -109,6 +109,14 @@ void free_expr(Expr *expr) {
         free(expr->data.function.body);
         break;
 
+    case EXPR_LIST_COMPREHENSION:
+        free_expr(expr->data.list_comprehension.element);
+        free(expr->data.list_comprehension.variable);
+        free_expr(expr->data.list_comprehension.iterable);
+        if (expr->data.list_comprehension.condition)
+            free_expr(expr->data.list_comprehension.condition);
+        break;
+
     default:
         break;
     }

@@ -569,6 +569,71 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         break;
     }
 
+    case EXPR_LIST_COMPREHENSION: {
+        emit_ABC(c, OP_NEWLIST, (uint8_t)target, 0, 0);
+
+        int iter = target + 4;
+        int len  = target + 5;
+        int i    = target + 6;
+        int var  = target + 7;
+        int cond = target + 8;
+
+        int saved_base = c->temp_base;
+        c->temp_base = target + 9;
+
+        compile_expr_into(c, expr->data.list_comprehension.iterable, iter);
+
+        int lk = chunk_add_string(c->chunk, "length");
+        if (lk > 255) {
+            int temp = alloc_reg(c);
+            emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)lk);
+            emit_ABC(c, OP_INDEXGET, (uint8_t)len, (uint8_t)iter, (uint8_t)temp);
+            free_reg(c);
+        } else {
+            emit_ABC(c, OP_MEMBERGET, (uint8_t)len, (uint8_t)iter, (uint8_t)lk);
+        }
+
+        emit_loadi(c, (uint8_t)i, 0);
+
+        scope_enter(c);
+        add_local(c, expr->data.list_comprehension.variable, var);
+
+        int loop_start = c->chunk->count;
+
+        emit_ABC(c, OP_LT, (uint8_t)cond, (uint8_t)i, (uint8_t)len);
+        int end_jump = emit_jump(c, OP_JZ, (uint8_t)cond);
+
+        emit_ABC(c, OP_INDEXGET, (uint8_t)var, (uint8_t)iter, (uint8_t)i);
+
+        int skip_jump = -1;
+        if (expr->data.list_comprehension.condition) {
+            compile_expr_into(c, expr->data.list_comprehension.condition, cond);
+            skip_jump = emit_jump(c, OP_JZ, (uint8_t)cond);
+        }
+
+        /* INVOKE convention: dest at target+2, method name at dest+1 (target+3), arg at obj+2 (target+2) */
+        compile_expr_into(c, expr->data.list_comprehension.element, target + 2);
+
+        int mk = chunk_add_string(c->chunk, "add");
+        emit_ABx(c, OP_LOADK, (uint8_t)(target + 3), (uint16_t)mk);
+        emit_ABC(c, OP_INVOKE, (uint8_t)(target + 2), (uint8_t)target, 1);
+
+        if (skip_jump >= 0) patch_jump(c, skip_jump);
+
+        int one = target + 9;
+        emit_loadi(c, (uint8_t)one, 1);
+        emit_ABC(c, OP_ADD, (uint8_t)i, (uint8_t)i, (uint8_t)one);
+
+        int sbx = loop_start - (c->chunk->count + 1);
+        emit_AsBx(c, OP_JMP, 0, sbx);
+
+        patch_jump(c, end_jump);
+
+        scope_exit(c);
+        c->temp_base = saved_base;
+        break;
+    }
+
     case EXPR_DICT_LITERAL: {
         emit_ABC(c, OP_NEWDICT, (uint8_t)target, 0, 0);
         for (int i = 0; i < expr->data.dict_literal.entry_count; i++) {
@@ -765,8 +830,14 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
 
         int len = alloc_reg(c);
         int lk = chunk_add_string(c->chunk, "length");
-        emit_ABx(c, OP_LOADK, (uint8_t)len, (uint16_t)lk);
-        emit_ABC(c, OP_MEMBERGET, (uint8_t)len, (uint8_t)iter, (uint8_t)len);
+        if (lk > 255) {
+            int temp = alloc_reg(c);
+            emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)lk);
+            emit_ABC(c, OP_INDEXGET, (uint8_t)len, (uint8_t)iter, (uint8_t)temp);
+            free_reg(c);
+        } else {
+            emit_ABC(c, OP_MEMBERGET, (uint8_t)len, (uint8_t)iter, (uint8_t)lk);
+        }
 
         int i = alloc_reg(c);
         emit_loadi(c, (uint8_t)i, 0);
