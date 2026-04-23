@@ -91,6 +91,16 @@ static Value do_cmp(Value L, Value R, OpCode op) {
         double a=to_f64(L),b=to_f64(R);
         switch(op){case OP_LT:return make_bool(a<b);case OP_LE:return make_bool(a<=b);case OP_GT:return make_bool(a>b);case OP_GE:return make_bool(a>=b);default:break;}
     }
+    /* Fast path: interned string equality is pointer comparison */
+    if (L.type == VAL_OBJ && R.type == VAL_OBJ && L.as.obj && R.as.obj &&
+        L.as.obj->type == OBJ_STRING && R.as.obj->type == OBJ_STRING) {
+        bool same = L.as.obj == R.as.obj;
+        switch(op){
+            case OP_EQ: return make_bool(same);
+            case OP_NE: return make_bool(!same);
+            default: break;
+        }
+    }
     switch(op){
         case OP_EQ: return make_bool(values_equal(L,R));
         case OP_NE: return make_bool(!values_equal(L,R));
@@ -128,6 +138,7 @@ void vm_free(VM *vm) {
         free(tf);
     }
     close_upvalues(vm, 0);
+    value_free_intern_table();
 }
 
 /* ============================================================ */

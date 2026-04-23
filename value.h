@@ -244,6 +244,7 @@ char *value_to_string(Value v);     /* caller must free() */
 void retain_obj(Object *obj);
 void release_obj(Object *obj);
 void free_object(Object *obj);
+void value_free_intern_table(void);
 
 /* ============================================================ */
 /* List operations                                               */

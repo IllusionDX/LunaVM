@@ -51,10 +51,79 @@ uint32_t hash_value(Value v) {
 }
 
 /* ============================================================ */
+/* String interning                                              */
+/* ============================================================ */
+
+#define INTERN_TABLE_SIZE 1024
+
+typedef struct StringInternEntry {
+    struct StringInternEntry *next;
+    uint32_t hash;
+    int length;
+    ObjString *string;
+} StringInternEntry;
+
+static StringInternEntry *intern_table[INTERN_TABLE_SIZE];
+
+static void intern_add(ObjString *s) {
+    uint32_t bucket = s->hash & (INTERN_TABLE_SIZE - 1);
+    StringInternEntry *e = malloc(sizeof(StringInternEntry));
+    if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
+    e->hash = s->hash;
+    e->length = s->length;
+    e->string = s;
+    e->next = intern_table[bucket];
+    intern_table[bucket] = e;
+}
+
+static ObjString *intern_find(const char *chars, int length, uint32_t hash) {
+    uint32_t bucket = hash & (INTERN_TABLE_SIZE - 1);
+    for (StringInternEntry *e = intern_table[bucket]; e; e = e->next) {
+        if (e->hash == hash && e->length == length && memcmp(e->string->chars, chars, length) == 0) {
+            return e->string;
+        }
+    }
+    return NULL;
+}
+
+static void intern_remove(ObjString *s) {
+    uint32_t bucket = s->hash & (INTERN_TABLE_SIZE - 1);
+    StringInternEntry **current = &intern_table[bucket];
+    while (*current) {
+        if ((*current)->string == s) {
+            StringInternEntry *to_free = *current;
+            *current = (*current)->next;
+            free(to_free);
+            return;
+        }
+        current = &(*current)->next;
+    }
+}
+
+void value_free_intern_table(void) {
+    for (int i = 0; i < INTERN_TABLE_SIZE; i++) {
+        StringInternEntry *e = intern_table[i];
+        while (e) {
+            StringInternEntry *next = e->next;
+            free(e);
+            e = next;
+        }
+        intern_table[i] = NULL;
+    }
+}
+
+/* ============================================================ */
 /* Object constructors                                           */
 /* ============================================================ */
 
 ObjString *new_string(const char *chars, int length) {
+    uint32_t hash = fnv1a(chars, length);
+    ObjString *existing = intern_find(chars, length, hash);
+    if (existing) {
+        retain_obj((Object*)existing);
+        return existing;
+    }
+
     ObjString *s = malloc(sizeof(ObjString));
     if (!s) { fprintf(stderr, "OOM\n"); exit(1); }
     s->obj.type = OBJ_STRING; s->obj.refcount = 1; s->obj.next = NULL;
@@ -63,7 +132,8 @@ ObjString *new_string(const char *chars, int length) {
     memcpy(s->chars, chars, length);
     s->chars[length] = '\0';
     s->length = length;
-    s->hash   = fnv1a(chars, length);
+    s->hash   = hash;
+    intern_add(s);
     return s;
 }
 
@@ -180,7 +250,7 @@ static void free_dict_internal(ObjDict *d) {
 void free_object(Object *obj) {
     if (!obj) return;
     switch (obj->type) {
-        case OBJ_STRING: { ObjString *s = (ObjString *)obj; free(s->chars); free(s); break; }
+        case OBJ_STRING: { ObjString *s = (ObjString *)obj; intern_remove(s); free(s->chars); free(s); break; }
         case OBJ_LIST: {
             ObjList *l = (ObjList *)obj;
             for (int i = 0; i < l->count; i++) release_value_inline(l->items[i]);
@@ -284,8 +354,8 @@ bool values_equal(Value a, Value b) {
         case VAL_OBJ:
             if (!a.as.obj || !b.as.obj) return a.as.obj == b.as.obj;
             if (a.as.obj->type == OBJ_STRING && b.as.obj->type == OBJ_STRING) {
-                ObjString *sa = (ObjString *)a.as.obj, *sb = (ObjString *)b.as.obj;
-                return sa->length == sb->length && memcmp(sa->chars, sb->chars, sa->length) == 0;
+                /* Interned strings: same content == same pointer */
+                return a.as.obj == b.as.obj;
             }
             return a.as.obj == b.as.obj;
         default: return false;

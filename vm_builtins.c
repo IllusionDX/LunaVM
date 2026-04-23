@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "vm.h"
 #include "value.h"
 #include "chunk.h"
@@ -182,6 +183,11 @@ static Value bn_type(VM *vm, Value *args, int n) {
     return make_obj((Object *)new_string(t,(int)strlen(t)));
 }
 
+static Value bn_clock(VM *vm, Value *args, int n) {
+    (void)vm; (void)args; (void)n;
+    return make_double((double)clock() / CLOCKS_PER_SEC);
+}
+
 void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);
     vm_define_native(vm, "input", bn_input);
@@ -191,6 +197,7 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "float", bn_float);
     vm_define_native(vm, "len",   bn_len);
     vm_define_native(vm, "type",  bn_type);
+    vm_define_native(vm, "clock", bn_clock);
 }
 
 /* ============================================================ */

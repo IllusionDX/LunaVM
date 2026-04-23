@@ -247,7 +247,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.1-alpha` | Done | String concat optimization. Inline cache for global variable access. |
 | `0.1.2-alpha` | Done | F-strings (`f"Hello {name}"`). |
 | `0.1.3-alpha` | Done | Scratch buffer optimization. Test suite reorganization. |
-| `0.1.4-alpha` | **Current** | Computed GOTO dispatch loop. |
+| `0.1.4-alpha` | Done | Computed GOTO dispatch loop. |
+| `0.1.5-alpha` | **Current** | String interning. `clock()` builtin. |
 | `0.2.0` | Planned | Classes / enums solidified. Better error messages. |
 | `0.3.0` | Planned | Modules and imports actually work. |
 | `0.4.0` | Planned | Standard library (strings, math, io, os). |
@@ -276,6 +277,16 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 - Stack traces on exceptions
 - Debug info in bytecode (optional)
 -panic/recover for native code
+
+## Optimization Roadmap
+
+| Priority | Optimization | Impact | Complexity |
+|----------|--------------|--------|------------|
+| High | **NaN Boxing** | Unify all Value types into a single `uint64_t`. Faster copying, less memory, better cache usage. | Moderate — mechanical refactor across value.h / vm.c. |
+| High | **Small Object Optimization** | Inline small lists/dicts (e.g., <= 4 elements) directly into the object struct to avoid separate heap allocations. | Moderate — changes object layout and collection helpers. |
+| Medium | **Hidden Classes / Shapes** | Give instances a fixed field layout (array indexing) instead of open hash maps. Makes property access O(1) instead of O(n). | High — requires shape objects, transition trees, compiler changes for shape-aware ops. |
+| Low | **String Interning** | *Done in 0.1.5-alpha* | — |
+| Low | **Computed GOTOs** | *Done in 0.1.4-alpha* | — |
 
 ## Security
 
