@@ -13,7 +13,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 | Category | Nodes |
 |----------|-------|
 | **Literals** | `Int`, `Float`, `String`, `Bool`, `Null`, `List`, `Dict` |
-| **Declarations** | `Var`, `Let`, `Const`, `Function`, `Class`, `Enum` |
+| **Declarations** | `Var`, `Const`, `Function`, `Class`, `Enum` |
 | **Expressions** | `Binary`, `Unary`, `Call`, `Index`, `Member`, `New`, `Super` |
 | **Statements** | `If`, `While`, `For`, `Switch`, `Return`, `Break`, `Continue`, `Block` |
 
@@ -40,8 +40,8 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 |-----|------|-------------|
 | 0 | Null | null value |
 | 1 | Bool | true/false |
-| 2 | Int | signed integer |
-| 3 | Uint | unsigned integer |
+| 2 | Int | signed integer (int64) |
+| 3 | Uint | unsigned integer (uint64) |
 | 4 | Float | 32-bit floating point |
 | 5 | Double | 64-bit floating point |
 | 6 | NaN | Not-a-Number (IEEE 754) |
@@ -51,14 +51,35 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 | 10 | Object | class instance |
 | 11 | Function | function closure |
 | 12 | Native | C/native function |
+| 13 | Char | Unicode code-point (uint32) |
 
 ### Bytecode Instruction Set
 
+#### Instruction Format
+
+All instructions are a fixed **4 bytes (32 bits)** — a single `uint32_t`. Eight instructions fit in one 64-byte CPU cache line, matching Lua 5.x's approach for fast dispatch.
+
+Three instruction encodings share the same 32-bit word:
+
 ```
-Format: [opcode: 1 byte][ra: 1 byte][rb: 1 byte][imm: 4 bytes]
+ABC  format  (3-register ops)
+  bits 0-7   : opcode  (8 bits, up to 256 opcodes)
+  bits 8-15  : A       (8 bits, destination register)
+  bits 16-23 : B       (8 bits, source register 1)
+  bits 24-31 : C       (8 bits, source register 2)
+
+ABx  format  (reg + unsigned 16-bit immediate)
+  bits 0-7   : opcode
+  bits 8-15  : A
+  bits 16-31 : Bx      (16 bits unsigned — constant pool index, list size, …)
+
+AsBx format  (reg + signed 16-bit offset)
+  bits 0-7   : opcode
+  bits 8-15  : A
+  bits 16-31 : sBx     (16 bits signed — jump offsets, relative PCs)
 ```
 
-Register-based: operations read from `ra`, `rb`, write to `ra`.
+Register-based: operations read from `A`, `B`, `C`; write result to `A`.
 
 #### Constants & Loading
 
@@ -124,8 +145,6 @@ Register-based: operations read from `ra`, `rb`, write to `ra`.
 | `RET` | rd | Return value from function |
 | `ENTER` | nlocals, nstack | Enter function, allocate locals |
 | `LEAVE` | | Exit function |
-| `REF` | rd, rs | Pass reference to rs |
-| `DEREF` | rd, rs | Dereference rs |
 
 #### Object Operations
 
@@ -161,13 +180,19 @@ Register-based: operations read from `ra`, `rb`, write to `ra`.
 
 ### Instruction Format
 
-```
-Format: [opcode: 1 byte][ra: 1 byte][rb: 1 byte][imm: 4 bytes]
-```
+All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
-- Single-byte opcode (256 instructions max)
-- Two register indices (ra, rb), one immediate/displacement
-- 8-byte total for alignment (optional)
+| Encoding | Bits 0-7 | Bits 8-15 | Bits 16-23 | Bits 24-31 |
+|----------|----------|-----------|------------|------------|
+| **ABC**  | opcode   | A (dest)  | B (src1)   | C (src2)   |
+| **ABx**  | opcode   | A         | Bx (unsigned 16-bit) ←———→       |
+| **AsBx** | opcode   | A         | sBx (signed 16-bit)  ←———→       |
+
+- 8 instructions fit in a single 64-byte CPU cache line
+- 256 opcode budget (8-bit opcode)
+- 256 register budget per frame (8-bit A/B/C)
+- 16-bit Bx allows constant pools up to 65535 entries
+- 16-bit sBx allows jump offsets of ±32767 instructions
 
 ### VM Components
 
@@ -195,16 +220,22 @@ Format: [opcode: 1 byte][ra: 1 byte][rb: 1 byte][imm: 4 bytes]
 ### V1: Register VM Interpreter
 - Register-based bytecode
 - Simple dispatch loop
+- Baseline performance
 
 ### V2: Optimized VM
 - Advanced register allocator
 - Inline caches
 - Fast path detection
 
-### V3: JIT Compiler
+### V3: Simple JIT
 - Trace JIT for hot loops
+- Compile frequently-executed code to machine code
+- No DynASM needed, custom code emitter
+
+### V4: Advanced JIT (if needed)
 - Type specialization
 - Type hints enable compile-time optimization
+- Full JIT with inline caches (consider DynASM or LLVM backend)
 
 ## Memory Management
 

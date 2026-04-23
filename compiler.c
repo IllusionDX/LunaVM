@@ -1,0 +1,912 @@
+/* compiler.c — AST → Bytecode compiler. */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include "compiler.h"
+#include "opcode.h"
+#include "value.h"
+
+/* ---- Scope / Locals ---- */
+
+typedef struct Local {
+    char *name;
+    int   reg;
+} Local;
+
+typedef struct Scope {
+    Local  locals[VM_MAX_REGISTERS];
+    int    local_count;
+    int    saved_base;      /* temp_base to restore on exit */
+    struct Scope *parent;
+} Scope;
+
+/* ---- Loop patch info ---- */
+
+typedef struct LoopInfo {
+    int    start_ip;        /* backward jump target */
+    int    continue_ip;     /* -1 until known */
+    int   *break_patches;
+    int    break_count;
+    int    break_cap;
+    int   *continue_patches;
+    int    continue_count;
+    int    continue_cap;
+    struct LoopInfo *next;
+} LoopInfo;
+
+/* ---- Compiler state ---- */
+
+typedef struct Compiler {
+    Chunk      *chunk;
+    Scope      *scope;
+    VM         *vm;
+    int         temp_base;  /* next free temp register */
+    int         line;       /* V1: always 1 (AST has no lines) */
+    int         func_depth; /* 0 = top-level */
+    LoopInfo   *loop;
+} Compiler;
+
+/* ============================================================ */
+/* Scope helpers                                                */
+/* ============================================================ */
+
+static void scope_enter(Compiler *c) {
+    Scope *s = malloc(sizeof(Scope));
+    s->local_count = 0;
+    s->saved_base  = c->temp_base;
+    s->parent      = c->scope;
+    c->scope       = s;
+}
+
+static void scope_exit(Compiler *c) {
+    Scope *s = c->scope;
+    c->temp_base = s->saved_base;
+    c->scope     = s->parent;
+    free(s);
+}
+
+static int resolve_local(Compiler *c, const char *name) {
+    for (Scope *s = c->scope; s; s = s->parent) {
+        for (int i = s->local_count - 1; i >= 0; i--) {
+            if (strcmp(s->locals[i].name, name) == 0)
+                return s->locals[i].reg;
+        }
+    }
+    return -1;
+}
+
+static int add_local(Compiler *c, const char *name, int reg) {
+    if (!c->scope) return reg;
+    Scope *s = c->scope;
+    if (s->local_count >= VM_MAX_REGISTERS) {
+        fprintf(stderr, "compiler: too many locals\n");
+        return reg;
+    }
+    s->locals[s->local_count].name = (char *)name;
+    s->locals[s->local_count].reg  = reg;
+    s->local_count++;
+    return reg;
+}
+
+/* ============================================================ */
+/* Register allocation                                          */
+/* ============================================================ */
+
+static int alloc_reg(Compiler *c) {
+    if (c->temp_base >= VM_MAX_REGISTERS) {
+        fprintf(stderr, "compiler: out of registers\n");
+        return VM_MAX_REGISTERS - 1;
+    }
+    return c->temp_base++;
+}
+
+static void free_reg(Compiler *c) {
+    if (c->temp_base > 0) c->temp_base--;
+}
+
+/* ============================================================ */
+/* Emit helpers                                                 */
+/* ============================================================ */
+
+static void emit_ABC(Compiler *c, OpCode op, uint8_t a, uint8_t b, uint8_t ci) {
+    chunk_emit_ABC(c->chunk, c->line, op, a, b, ci);
+}
+
+static void emit_ABx(Compiler *c, OpCode op, uint8_t a, uint16_t bx) {
+    chunk_emit_ABx(c->chunk, c->line, op, a, bx);
+}
+
+static void emit_AsBx(Compiler *c, OpCode op, uint8_t a, int32_t sbx) {
+    chunk_emit_AsBx(c->chunk, c->line, op, a, sbx);
+}
+
+static int emit_jump(Compiler *c, OpCode op, uint8_t reg) {
+    return chunk_emit_AsBx(c->chunk, c->line, op, reg, 0);
+}
+
+static void patch_jump(Compiler *c, int jump_idx) {
+    int target = c->chunk->count;
+    int sbx    = target - (jump_idx + 1);
+    chunk_patch_sBx(c->chunk, jump_idx, sbx);
+}
+
+static void emit_move(Compiler *c, uint8_t dst, uint8_t src) {
+    emit_ABC(c, OP_MOVE, dst, src, 0);
+}
+
+static void emit_loadi(Compiler *c, uint8_t dst, int32_t v) {
+    if (v >= -32767 && v <= 32768) {
+        emit_AsBx(c, OP_LOADI, dst, v);
+    } else {
+        int k = chunk_add_const(c->chunk, make_int(v));
+        emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
+    }
+}
+
+static void emit_loadbool(Compiler *c, uint8_t dst, bool v) {
+    emit_ABC(c, v ? OP_LOADTRUE : OP_LOADFALSE, dst, 0, 0);
+}
+
+static void emit_loadnull(Compiler *c, uint8_t dst) {
+    emit_ABC(c, OP_LOADNULL, dst, 0, 0);
+}
+
+static void emit_loadstring(Compiler *c, uint8_t dst, const char *s) {
+    int k = chunk_add_string(c->chunk, s);
+    emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
+}
+
+static void emit_ret(Compiler *c, uint8_t reg) {
+    emit_ABC(c, OP_RET, reg, 0, 0);
+}
+
+static void emit_enter(Compiler *c, uint16_t nlocals) {
+    emit_ABx(c, OP_ENTER, 0, nlocals);
+}
+
+/* ============================================================ */
+/* Loop helpers                                                 */
+/* ============================================================ */
+
+static void loop_push(Compiler *c, int start_ip) {
+    LoopInfo *l = malloc(sizeof(LoopInfo));
+    l->start_ip          = start_ip;
+    l->continue_ip       = -1;
+    l->break_patches     = NULL;
+    l->break_count       = 0;
+    l->break_cap         = 0;
+    l->continue_patches  = NULL;
+    l->continue_count    = 0;
+    l->continue_cap      = 0;
+    l->next              = c->loop;
+    c->loop              = l;
+}
+
+static void loop_patch_breaks(Compiler *c) {
+    LoopInfo *l = c->loop;
+    for (int i = 0; i < l->break_count; i++)
+        patch_jump(c, l->break_patches[i]);
+}
+
+static void loop_patch_continues(Compiler *c) {
+    LoopInfo *l = c->loop;
+    if (l->continue_ip < 0) return;
+    for (int i = 0; i < l->continue_count; i++) {
+        int idx = l->continue_patches[i];
+        int sbx = l->continue_ip - (idx + 1);
+        chunk_patch_sBx(c->chunk, idx, sbx);
+    }
+}
+
+static void loop_record_break(Compiler *c, int jump_idx) {
+    LoopInfo *l = c->loop;
+    if (!l) return;
+    if (l->break_count >= l->break_cap) {
+        l->break_cap = l->break_cap ? l->break_cap * 2 : 4;
+        l->break_patches = realloc(l->break_patches, sizeof(int) * l->break_cap);
+    }
+    l->break_patches[l->break_count++] = jump_idx;
+}
+
+static void loop_pop(Compiler *c) {
+    LoopInfo *l = c->loop;
+    c->loop = l->next;
+    free(l->break_patches);
+    free(l->continue_patches);
+    free(l);
+}
+
+/* ============================================================ */
+/* Forward declarations                                         */
+/* ============================================================ */
+
+static void compile_expr_into(Compiler *c, Expr *expr, int target);
+static void compile_stmt(Compiler *c, Stmt *stmt);
+static void compile_decl(Compiler *c, Decl *decl);
+
+/* ============================================================ */
+/* Expressions                                                  */
+/* ============================================================ */
+
+static void compile_expr_into(Compiler *c, Expr *expr, int target) {
+    switch (expr->kind) {
+
+    case EXPR_INTEGER: {
+        int64_t v = atoll(expr->data.integer.value);
+        emit_loadi(c, (uint8_t)target, (int32_t)v);
+        break;
+    }
+
+    case EXPR_FLOAT: {
+        double v = atof(expr->data.float_lit.value);
+        int k = chunk_add_const(c->chunk, make_double(v));
+        emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+        break;
+    }
+
+    case EXPR_STRING: {
+        emit_loadstring(c, (uint8_t)target, expr->data.string.value);
+        break;
+    }
+
+    case EXPR_CHAR: {
+        emit_loadi(c, (uint8_t)target, (int32_t)expr->data.char_lit.value);
+        break;
+    }
+
+    case EXPR_BOOL: {
+        emit_loadbool(c, (uint8_t)target, expr->data.boolean.value);
+        break;
+    }
+
+    case EXPR_NULL: {
+        emit_loadnull(c, (uint8_t)target);
+        break;
+    }
+
+    case EXPR_IDENTIFIER: {
+        int r = resolve_local(c, expr->data.identifier.name);
+        if (r >= 0) {
+            if (r != target) emit_move(c, (uint8_t)target, (uint8_t)r);
+        } else {
+            int k = chunk_add_string(c->chunk, expr->data.identifier.name);
+            emit_ABx(c, OP_GETGLOBAL, (uint8_t)target, (uint16_t)k);
+        }
+        break;
+    }
+
+    case EXPR_BINARY: {
+        compile_expr_into(c, expr->data.binary.left, target);
+        int temp = alloc_reg(c);
+        compile_expr_into(c, expr->data.binary.right, temp);
+        OpCode op;
+        const char *op_str = expr->data.binary.operator;
+        if (strcmp(op_str, "+") == 0) op = OP_ADD;
+        else if (strcmp(op_str, "-") == 0) op = OP_SUB;
+        else if (strcmp(op_str, "*") == 0) op = OP_MUL;
+        else if (strcmp(op_str, "/") == 0) op = OP_DIV;
+        else if (strcmp(op_str, "%") == 0) op = OP_MOD;
+        else if (strcmp(op_str, "==") == 0) op = OP_EQ;
+        else if (strcmp(op_str, "!=") == 0) op = OP_NE;
+        else if (strcmp(op_str, "<") == 0) op = OP_LT;
+        else if (strcmp(op_str, "<=") == 0) op = OP_LE;
+        else if (strcmp(op_str, ">") == 0) op = OP_GT;
+        else if (strcmp(op_str, ">=") == 0) op = OP_GE;
+        else if (strcmp(op_str, "&") == 0) op = OP_BAND;
+        else if (strcmp(op_str, "|") == 0) op = OP_BOR;
+        else if (strcmp(op_str, "^") == 0) op = OP_BXOR;
+        else if (strcmp(op_str, "<<") == 0) op = OP_SHL;
+        else if (strcmp(op_str, ">>") == 0) op = OP_SHR;
+        else if (strcmp(op_str, "&&") == 0) {
+            /* Short-circuit AND */
+            int t = alloc_reg(c);
+            emit_loadbool(c, (uint8_t)t, false);
+            int jz1 = emit_jump(c, OP_JZ, (uint8_t)target);
+            compile_expr_into(c, expr->data.binary.right, target);
+            int jz2 = emit_jump(c, OP_JZ, (uint8_t)target);
+            emit_loadbool(c, (uint8_t)target, true);
+            int j1 = emit_jump(c, OP_JMP, 0);
+            patch_jump(c, jz1);
+            patch_jump(c, jz2);
+            emit_move(c, (uint8_t)target, (uint8_t)t);
+            patch_jump(c, j1);
+            free_reg(c); /* t */
+            free_reg(c); /* temp unused in AND path, but we allocated it earlier */
+            break;
+        }
+        else if (strcmp(op_str, "||") == 0) {
+            /* Short-circuit OR */
+            int t = alloc_reg(c);
+            emit_loadbool(c, (uint8_t)t, true);
+            int jnz1 = emit_jump(c, OP_JNZ, (uint8_t)target);
+            compile_expr_into(c, expr->data.binary.right, target);
+            int jnz2 = emit_jump(c, OP_JNZ, (uint8_t)target);
+            emit_loadbool(c, (uint8_t)target, false);
+            int j1 = emit_jump(c, OP_JMP, 0);
+            patch_jump(c, jnz1);
+            patch_jump(c, jnz2);
+            emit_move(c, (uint8_t)target, (uint8_t)t);
+            patch_jump(c, j1);
+            free_reg(c);
+            free_reg(c);
+            break;
+        }
+        else {
+            op = OP_ADD; /* fallback */
+        }
+        emit_ABC(c, op, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
+        free_reg(c); /* temp */
+        break;
+    }
+
+    case EXPR_UNARY: {
+        compile_expr_into(c, expr->data.unary.operand, target);
+        const char *op_str = expr->data.unary.operator;
+        if (strcmp(op_str, "-") == 0) {
+            emit_ABC(c, OP_NEG, (uint8_t)target, (uint8_t)target, 0);
+        } else if (strcmp(op_str, "!") == 0) {
+            emit_ABC(c, OP_NOT, (uint8_t)target, (uint8_t)target, 0);
+        } else if (strcmp(op_str, "~") == 0) {
+            emit_ABC(c, OP_BNOT, (uint8_t)target, (uint8_t)target, 0);
+        }
+        break;
+    }
+
+    case EXPR_CALL: {
+        Expr *callee = expr->data.call.callee;
+        int nargs = expr->data.call.arg_count;
+        /* Detect method call: callee is field access */
+        if (callee->kind == EXPR_FIELD_ACCESS) {
+            compile_expr_into(c, callee->data.field_access.obj, target);
+            int saved_base = c->temp_base;
+            /* method name at target+1, args at target+2.. */
+            c->temp_base = target + 2 + nargs;
+            for (int i = 0; i < nargs; i++) {
+                compile_expr_into(c, expr->data.call.arguments[i], target + 2 + i);
+            }
+            c->temp_base = saved_base;
+            /* Load method name into target+1, then INVOKE */
+            int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
+            emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
+            emit_ABC(c, OP_INVOKE, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
+        } else {
+            compile_expr_into(c, callee, target);
+            int saved_base = c->temp_base;
+            c->temp_base = target + 1 + nargs;
+            for (int i = 0; i < nargs; i++) {
+                compile_expr_into(c, expr->data.call.arguments[i], target + 1 + i);
+            }
+            c->temp_base = saved_base;
+            emit_ABC(c, OP_CALL, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
+        }
+        break;
+    }
+
+    case EXPR_FIELD_ACCESS: {
+        compile_expr_into(c, expr->data.field_access.obj, target);
+        int fk = chunk_add_string(c->chunk, expr->data.field_access.field);
+        if (fk > 255) {
+            /* Too many constants for inline C field — use LOADK + INDEXGET */
+            int temp = alloc_reg(c);
+            emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
+            emit_ABC(c, OP_INDEXGET, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
+            free_reg(c);
+        } else {
+            emit_ABC(c, OP_MEMBERGET, (uint8_t)target, (uint8_t)target, (uint8_t)fk);
+        }
+        break;
+    }
+
+    case EXPR_INDEX_ACCESS: {
+        compile_expr_into(c, expr->data.index_access.obj, target);
+        int temp = alloc_reg(c);
+        compile_expr_into(c, expr->data.index_access.index, temp);
+        emit_ABC(c, OP_INDEXGET, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
+        free_reg(c);
+        break;
+    }
+
+    case EXPR_ASSIGNMENT: {
+        Expr *lhs = expr->data.assignment.target;
+        Expr *rhs = expr->data.assignment.value;
+        if (lhs->kind == EXPR_IDENTIFIER) {
+            const char *name = lhs->data.identifier.name;
+            int r = resolve_local(c, name);
+            if (r >= 0) {
+                compile_expr_into(c, rhs, r);
+                if (r != target) emit_move(c, (uint8_t)target, (uint8_t)r);
+            } else {
+                compile_expr_into(c, rhs, target);
+                int k = chunk_add_string(c->chunk, name);
+                emit_ABx(c, OP_SETGLOBAL, (uint8_t)target, (uint16_t)k);
+            }
+        } else if (lhs->kind == EXPR_FIELD_ACCESS) {
+            int obj = alloc_reg(c);
+            compile_expr_into(c, lhs->data.field_access.obj, obj);
+            compile_expr_into(c, rhs, target);
+            int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+            if (fk > 255) {
+                int temp = alloc_reg(c);
+                emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
+                emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)target, (uint8_t)temp);
+                free_reg(c);
+            } else {
+                emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)target, (uint8_t)fk);
+            }
+        } else if (lhs->kind == EXPR_INDEX_ACCESS) {
+            int obj = alloc_reg(c);
+            int idx = alloc_reg(c);
+            compile_expr_into(c, lhs->data.index_access.obj, obj);
+            compile_expr_into(c, lhs->data.index_access.index, idx);
+            compile_expr_into(c, rhs, target);
+            emit_ABC(c, OP_INDEXSET, (uint8_t)obj, (uint8_t)idx, (uint8_t)target);
+        } else {
+            compile_expr_into(c, rhs, target);
+        }
+        break;
+    }
+
+    case EXPR_COMPOUND_ASSIGN: {
+        /* desugar: a += b  =>  a = a + b */
+        Expr *lhs = expr->data.compound_assign.target;
+        Expr *rhs = expr->data.compound_assign.value;
+        const char *op_str = expr->data.compound_assign.operator;
+        char bin_op[3] = {0};
+        if (strcmp(op_str, "+=") == 0) bin_op[0] = '+';
+        else if (strcmp(op_str, "-=") == 0) bin_op[0] = '-';
+        else if (strcmp(op_str, "*=") == 0) bin_op[0] = '*';
+        else if (strcmp(op_str, "/=") == 0) bin_op[0] = '/';
+        else if (strcmp(op_str, "%=") == 0) bin_op[0] = '%';
+        else if (strcmp(op_str, "&=") == 0) bin_op[0] = '&';
+        else if (strcmp(op_str, "|=") == 0) bin_op[0] = '|';
+        else if (strcmp(op_str, "^=") == 0) bin_op[0] = '^';
+
+        Expr fake_rhs = *rhs;
+        Expr fake_bin = {
+            .kind = EXPR_BINARY,
+            .data.binary = { .left = lhs, .operator = bin_op, .right = &fake_rhs }
+        };
+        Expr fake_assign = {
+            .kind = EXPR_ASSIGNMENT,
+            .data.assignment = { .target = lhs, .value = &fake_bin }
+        };
+        compile_expr_into(c, &fake_assign, target);
+        break;
+    }
+
+    case EXPR_TERNARY: {
+        compile_expr_into(c, expr->data.ternary.condition, target);
+        int jz = emit_jump(c, OP_JZ, (uint8_t)target);
+        compile_expr_into(c, expr->data.ternary.then_expr, target);
+        int j1 = emit_jump(c, OP_JMP, 0);
+        patch_jump(c, jz);
+        compile_expr_into(c, expr->data.ternary.else_expr, target);
+        patch_jump(c, j1);
+        break;
+    }
+
+    case EXPR_LIST_LITERAL: {
+        emit_ABC(c, OP_NEWLIST, (uint8_t)target, 0, 0);
+        for (int i = 0; i < expr->data.list_literal.element_count; i++) {
+            /* INVOKE destination at target+2, arg at target+2, method name at target+3 */
+            int saved_base = c->temp_base;
+            c->temp_base = target + 4;
+            compile_expr_into(c, expr->data.list_literal.elements[i], target + 2);
+            c->temp_base = saved_base;
+            int mk = chunk_add_string(c->chunk, "add");
+            emit_ABx(c, OP_LOADK, (uint8_t)(target + 3), (uint16_t)mk);
+            emit_ABC(c, OP_INVOKE, (uint8_t)(target + 2), (uint8_t)target, 1);
+        }
+        break;
+    }
+
+    case EXPR_DICT_LITERAL: {
+        emit_ABC(c, OP_NEWDICT, (uint8_t)target, 0, 0);
+        for (int i = 0; i < expr->data.dict_literal.entry_count; i++) {
+            int k = alloc_reg(c);
+            int v = alloc_reg(c);
+            compile_expr_into(c, expr->data.dict_literal.entries[i].key, k);
+            compile_expr_into(c, expr->data.dict_literal.entries[i].value, v);
+            emit_ABC(c, OP_INDEXSET, (uint8_t)target, (uint8_t)k, (uint8_t)v);
+            free_reg(c);
+            free_reg(c);
+        }
+        break;
+    }
+
+    case EXPR_NEW: {
+        int ck = chunk_add_string(c->chunk, expr->data.new_expr.class_name);
+        emit_ABx(c, OP_NEW, (uint8_t)target, (uint16_t)ck);
+        int nargs = expr->data.new_expr.arg_count;
+        if (nargs > 0) {
+            int saved_base = c->temp_base;
+            /* Args at target+2..target+1+nargs; method name at target+nargs+2; dest at target+nargs+1 */
+            c->temp_base = target + nargs + 3;
+            for (int i = 0; i < nargs; i++) {
+                compile_expr_into(c, expr->data.new_expr.arguments[i], target + 2 + i);
+            }
+            c->temp_base = saved_base;
+            int mk = chunk_add_string(c->chunk, "_init");
+            emit_ABx(c, OP_LOADK, (uint8_t)(target + nargs + 2), (uint16_t)mk);
+            emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
+        }
+        break;
+    }
+
+    default:
+        emit_loadnull(c, (uint8_t)target);
+        break;
+    }
+}
+
+/* ============================================================ */
+/* Statements                                                   */
+/* ============================================================ */
+
+static void compile_stmt(Compiler *c, Stmt *stmt) {
+    switch (stmt->kind) {
+
+    case STMT_EXPRESSION: {
+        int r = alloc_reg(c);
+        compile_expr_into(c, stmt->data.expression.expression, r);
+        free_reg(c);
+        break;
+    }
+
+    case STMT_VAR_DECL: {
+        const char *name = stmt->data.var_decl.name;
+        if (c->func_depth > 0) {
+            int r = alloc_reg(c);
+            add_local(c, name, r);
+            if (stmt->data.var_decl.initializer) {
+                compile_expr_into(c, stmt->data.var_decl.initializer, r);
+            } else {
+                emit_loadnull(c, (uint8_t)r);
+            }
+        } else {
+            int r = alloc_reg(c);
+            if (stmt->data.var_decl.initializer) {
+                compile_expr_into(c, stmt->data.var_decl.initializer, r);
+            } else {
+                emit_loadnull(c, (uint8_t)r);
+            }
+            int k = chunk_add_string(c->chunk, name);
+            emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
+            free_reg(c);
+        }
+        break;
+    }
+
+    case STMT_RETURN: {
+        int r = alloc_reg(c);
+        if (stmt->data.return_stmt.value) {
+            compile_expr_into(c, stmt->data.return_stmt.value, r);
+        } else {
+            emit_loadnull(c, (uint8_t)r);
+        }
+        emit_ret(c, (uint8_t)r);
+        free_reg(c);
+        break;
+    }
+
+    case STMT_PASS:
+        break;
+
+    case STMT_BREAK: {
+        if (!c->loop) {
+            fprintf(stderr, "compiler: break outside loop\n");
+            break;
+        }
+        int j = emit_jump(c, OP_JMP, 0);
+        loop_record_break(c, j);
+        break;
+    }
+
+    case STMT_CONTINUE: {
+        if (!c->loop) {
+            fprintf(stderr, "compiler: continue outside loop\n");
+            break;
+        }
+        if (c->loop->continue_ip >= 0) {
+            /* for-loop: jump to increment */
+            int sbx = c->loop->continue_ip - (c->chunk->count + 1);
+            emit_AsBx(c, OP_JMP, 0, sbx);
+        } else {
+            /* while-loop: target not known yet if body still compiling,
+               but for while we know start_ip immediately. */
+            int sbx = c->loop->start_ip - (c->chunk->count + 1);
+            emit_AsBx(c, OP_JMP, 0, sbx);
+        }
+        break;
+    }
+
+    case STMT_IF: {
+        int cond = alloc_reg(c);
+        compile_expr_into(c, stmt->data.if_stmt.condition, cond);
+        int jz = emit_jump(c, OP_JZ, (uint8_t)cond);
+        free_reg(c);
+
+        scope_enter(c);
+        for (int i = 0; i < stmt->data.if_stmt.then_count; i++)
+            compile_stmt(c, stmt->data.if_stmt.then_body[i]);
+        scope_exit(c);
+
+        if (stmt->data.if_stmt.else_count > 0) {
+            int j = emit_jump(c, OP_JMP, 0);
+            patch_jump(c, jz);
+            scope_enter(c);
+            for (int i = 0; i < stmt->data.if_stmt.else_count; i++)
+                compile_stmt(c, stmt->data.if_stmt.else_body[i]);
+            scope_exit(c);
+            patch_jump(c, j);
+        } else {
+            patch_jump(c, jz);
+        }
+        break;
+    }
+
+    case STMT_WHILE: {
+        int loop_start = c->chunk->count;
+        loop_push(c, loop_start);
+
+        int cond = alloc_reg(c);
+        compile_expr_into(c, stmt->data.while_stmt.condition, cond);
+        int jz = emit_jump(c, OP_JZ, (uint8_t)cond);
+        free_reg(c);
+
+        scope_enter(c);
+        for (int i = 0; i < stmt->data.while_stmt.body_count; i++)
+            compile_stmt(c, stmt->data.while_stmt.body[i]);
+        scope_exit(c);
+
+        /* jump back */
+        int sbx = loop_start - (c->chunk->count + 1);
+        emit_AsBx(c, OP_JMP, 0, sbx);
+
+        patch_jump(c, jz);
+        loop_patch_breaks(c);
+        loop_pop(c);
+        break;
+    }
+
+    case STMT_FOR: {
+        scope_enter(c);
+
+        int iter = alloc_reg(c);
+        compile_expr_into(c, stmt->data.for_stmt.iterable, iter);
+
+        int len = alloc_reg(c);
+        int lk = chunk_add_string(c->chunk, "length");
+        emit_ABx(c, OP_LOADK, (uint8_t)len, (uint16_t)lk);
+        emit_ABC(c, OP_MEMBERGET, (uint8_t)len, (uint8_t)iter, (uint8_t)len);
+
+        int i = alloc_reg(c);
+        emit_loadi(c, (uint8_t)i, 0);
+
+        int var = alloc_reg(c);
+        add_local(c, stmt->data.for_stmt.variable, var);
+
+        int loop_start = c->chunk->count;
+        loop_push(c, loop_start);
+
+        /* condition: i < len */
+        int cond = alloc_reg(c);
+        emit_ABC(c, OP_LT, (uint8_t)cond, (uint8_t)i, (uint8_t)len);
+        int jz = emit_jump(c, OP_JZ, (uint8_t)cond);
+        free_reg(c);
+
+        /* var = iter[i] */
+        emit_ABC(c, OP_INDEXGET, (uint8_t)var, (uint8_t)iter, (uint8_t)i);
+
+        /* body */
+        scope_enter(c);
+        for (int b = 0; b < stmt->data.for_stmt.body_count; b++)
+            compile_stmt(c, stmt->data.for_stmt.body[b]);
+        scope_exit(c);
+
+        /* continue target */
+        int continue_ip = c->chunk->count;
+        c->loop->continue_ip = continue_ip;
+
+        /* i = i + 1 */
+        int one = alloc_reg(c);
+        emit_loadi(c, (uint8_t)one, 1);
+        emit_ABC(c, OP_ADD, (uint8_t)i, (uint8_t)i, (uint8_t)one);
+        free_reg(c);
+
+        /* jump back */
+        int sbx = loop_start - (c->chunk->count + 1);
+        emit_AsBx(c, OP_JMP, 0, sbx);
+
+        patch_jump(c, jz);
+        loop_patch_breaks(c);
+        loop_patch_continues(c);
+        loop_pop(c);
+        scope_exit(c);
+        break;
+    }
+
+    case STMT_SWITCH:
+    case STMT_THROW:
+    case STMT_TRY:
+        /* V1 stubs */
+        break;
+    }
+}
+
+/* ============================================================ */
+/* Declarations                                                 */
+/* ============================================================ */
+
+static void compile_function(Compiler *c, Decl *decl);
+static void compile_class(Compiler *c, Decl *decl);
+static void compile_enum(Compiler *c, Decl *decl);
+
+static void compile_decl(Compiler *c, Decl *decl) {
+    switch (decl->kind) {
+    case DECL_FUNCTION: compile_function(c, decl); break;
+    case DECL_CLASS:    compile_class(c, decl);    break;
+    case DECL_ENUM:     compile_enum(c, decl);     break;
+    case DECL_IMPORT:   /* V1 stub */ break;
+    }
+}
+
+static void compile_function(Compiler *c, Decl *decl) {
+    const char *name = decl->data.function.name;
+    int param_count  = decl->data.function.param_count;
+
+    /* Create sub-chunk */
+    Chunk fn_chunk;
+    chunk_init(&fn_chunk, name);
+
+    Compiler sub = {
+        .chunk       = &fn_chunk,
+        .scope       = NULL,
+        .vm          = c->vm,
+        .temp_base   = 0,
+        .line        = c->line,
+        .func_depth  = c->func_depth + 1,
+        .loop        = NULL
+    };
+
+    scope_enter(&sub);
+    emit_enter(&sub, (uint16_t)param_count);
+
+    /* Parameters as locals in regs 0..n-1 */
+    for (int i = 0; i < param_count; i++) {
+        add_local(&sub, decl->data.function.params[i].name, i);
+    }
+    sub.temp_base = param_count;
+
+    /* Body */
+    for (int i = 0; i < decl->data.function.body_count; i++) {
+        compile_stmt(&sub, decl->data.function.body[i]);
+    }
+
+    /* Implicit return null */
+    emit_loadnull(&sub, 0);
+    emit_ret(&sub, 0);
+
+    scope_exit(&sub);
+
+    /* Build ObjFunction */
+    ObjFunction *fn = new_function(name);
+    fn->chunk       = malloc(sizeof(Chunk));
+    *fn->chunk      = fn_chunk;
+    fn->param_count = param_count;
+    fn->param_names = malloc(sizeof(char*) * param_count);
+    for (int i = 0; i < param_count; i++)
+        fn->param_names[i] = strdup(decl->data.function.params[i].name);
+
+    Value fn_val = make_obj((Object*)fn);
+    vm_set_global(c->vm, name, fn_val, false);
+    release_obj((Object*)fn);
+}
+
+static void compile_class(Compiler *c, Decl *decl) {
+    const char *name = decl->data.class_decl.name;
+    ObjInstance *proto = new_instance(name, decl->data.class_decl.base_class, 4);
+
+    /* Fields */
+    for (int i = 0; i < decl->data.class_decl.field_count; i++) {
+        instance_set_field(proto, decl->data.class_decl.fields[i].name, make_null());
+    }
+
+    /* Methods */
+    for (int i = 0; i < decl->data.class_decl.method_count; i++) {
+        Decl *m = decl->data.class_decl.methods[i];
+        if (m->kind != DECL_FUNCTION) continue;
+
+        Chunk mchunk;
+        chunk_init(&mchunk, m->data.function.name);
+        Compiler sub = {
+            .chunk       = &mchunk,
+            .scope       = NULL,
+            .vm          = c->vm,
+            .temp_base   = 0,
+            .line        = c->line,
+            .func_depth  = c->func_depth + 1,
+            .loop        = NULL
+        };
+        scope_enter(&sub);
+        emit_enter(&sub, (uint16_t)(m->data.function.param_count + 1));
+        /* self in reg 0, params in 1..n */
+        add_local(&sub, "self", 0);
+        for (int j = 0; j < m->data.function.param_count; j++) {
+            add_local(&sub, m->data.function.params[j].name, j + 1);
+        }
+        sub.temp_base = m->data.function.param_count + 1;
+        for (int j = 0; j < m->data.function.body_count; j++)
+            compile_stmt(&sub, m->data.function.body[j]);
+        emit_loadnull(&sub, 0);
+        emit_ret(&sub, 0);
+        scope_exit(&sub);
+
+        ObjFunction *mf = new_function(m->data.function.name);
+        mf->chunk       = malloc(sizeof(Chunk));
+        *mf->chunk      = mchunk;
+        mf->param_count = m->data.function.param_count + 1; /* +self */
+        mf->param_names = malloc(sizeof(char*) * mf->param_count);
+        mf->param_names[0] = strdup("self");
+        for (int j = 0; j < m->data.function.param_count; j++)
+            mf->param_names[j + 1] = strdup(m->data.function.params[j].name);
+
+        /* Append to proto methods */
+        if (proto->method_count >= proto->method_capacity) {
+            proto->method_capacity = proto->method_capacity ? proto->method_capacity * 2 : 4;
+            proto->methods = realloc(proto->methods, sizeof(ObjFunction*) * proto->method_capacity);
+        }
+        proto->methods[proto->method_count++] = mf;
+    }
+
+    Value proto_val = make_obj((Object*)proto);
+    vm_set_global(c->vm, name, proto_val, false);
+    release_obj((Object*)proto);
+}
+
+static void compile_enum(Compiler *c, Decl *decl) {
+    const char *name = decl->data.enum_decl.name;
+    for (int i = 0; i < decl->data.enum_decl.variant_count; i++) {
+        EnumVariant *v = &decl->data.enum_decl.variants[i];
+        int64_t val = v->has_value ? v->value : i;
+        char *full = malloc(strlen(name) + 1 + strlen(v->name) + 1);
+        sprintf(full, "%s.%s", name, v->name);
+        vm_set_global(c->vm, full, make_int(val), true);
+        free(full);
+    }
+}
+
+/* ============================================================ */
+/* Public API                                                   */
+/* ============================================================ */
+
+bool compile_program(Program *program, Chunk *chunk, VM *vm) {
+    chunk_init(chunk, "<main>");
+
+    Compiler c = {
+        .chunk      = chunk,
+        .scope      = NULL,
+        .vm         = vm,
+        .temp_base  = 0,
+        .line       = 1,
+        .func_depth = 0,
+        .loop       = NULL
+    };
+
+    scope_enter(&c);
+
+    /* First pass: declarations (functions, classes, enums) so they're global */
+    for (int i = 0; i < program->decl_count; i++)
+        compile_decl(&c, program->declarations[i]);
+
+    /* Second pass: top-level statements */
+    for (int i = 0; i < program->stmt_count; i++)
+        compile_stmt(&c, program->statements[i]);
+
+    scope_exit(&c);
+
+    emit_ABC(&c, OP_HALT, 0, 0, 0);
+    return true;
+}

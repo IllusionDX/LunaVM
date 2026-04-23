@@ -11,10 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "ast.h"
-#include "eval.h"
+#include "compiler.h"
 #include "lexer.h"
 #include "parser.h"
-#include "analyzer.h"
+#include "vm.h"
 
 static void print_usage(const char *program) {
     fprintf(stderr, "Usage: %s [options] <source_file>\n", program);
@@ -73,14 +73,14 @@ static int execute_native_program(const char *source) {
         return 1;
     }
 
-    Analyzer *analyzer = analyzer_new();
-    AnalyzerResult result = analyze_program(analyzer, program);
+    VM vm;
+    vm_init(&vm);
 
-    if (result != ANALYZER_OK) {
-        fprintf(stderr, "Semantic error at line %d: %s\n",
-                analyzer_get_error_line(analyzer),
-                analyzer_get_error(analyzer));
-        analyzer_free(analyzer);
+    Chunk chunk;
+    if (!compile_program(program, &chunk, &vm)) {
+        fprintf(stderr, "Compiler error: Failed to compile program\n");
+        chunk_free(&chunk);
+        vm_free(&vm);
         free_program(program);
         parser_free(parser);
         token_list_free(tokens);
@@ -88,10 +88,10 @@ static int execute_native_program(const char *source) {
         return 1;
     }
 
-    analyzer_free(analyzer);
+    vm_run_chunk(&vm, &chunk);
 
-    execute_program(program);
-
+    chunk_free(&chunk);
+    vm_free(&vm);
     free_program(program);
     parser_free(parser);
     token_list_free(tokens);

@@ -17,14 +17,13 @@ else
 endif
 
 # Source files
-SOURCES = main.c value.c environment.c ast_free.c \
-    eval_expr.c eval_call.c eval_stmt.c eval_decl.c \
-    lexer.c parser.c analyzer.c
+SOURCES = main.c value.c ast_free.c \
+    lexer.c parser.c chunk.c vm.c vm_builtins.c compiler.c
 
 OBJECTS = $(SOURCES:.c=.o)
 
 # Header files
-HEADERS = ast.h value.h environment.h eval.h lexer.h parser.h analyzer.h
+HEADERS = ast.h value.h lexer.h parser.h chunk.h vm.h opcode.h compiler.h
 
 # Default target
 all: $(TARGET)

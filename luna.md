@@ -19,17 +19,16 @@ Luna is a dynamically-typed programming language with indentation-based syntax.
 Three declaration keywords:
 
 ```luna
-var count = 0                    # function/module scope mutable
-let result = calculate()          # block scope mutable
-const VERSION = "1.0.0"           # immutable constant
+var count = 0                    # mutable, block scoped
+const VERSION = "1.0.0"           # immutable after assignment
 ```
 
-**Type hints** are optional:
+**Type hints** are optional (whitespace around `:` is flexible):
 
 ```luna
 var x = 5                       # no hint
-var x: int = 5                  # with hint
-var name: string = "Luna"        # with hint
+var x: int = 5                  # recommended
+var x : int = 5                 # also valid
 ```
 
 ### Base Types
@@ -162,7 +161,7 @@ def compute(x, y):
 
 ### Pass by Reference
 
-Objects and collections (lists, dicts) are automatically passed by reference:
+Objects and collections (lists, dicts) are passed by reference automatically:
 
 ```luna
 def add_item(list):
@@ -173,14 +172,15 @@ add_item(items)
 print(items)  # [1, 2, 3, 99] - modified!
 ```
 
-Use `&` to explicitly pass primitives by reference:
+For primitives, use return-and-assign:
 
 ```luna
-def increment(&count):
-    count = count + 1
+def increment(x):
+    return x + 1
 
 var x = 5
-increment(&x)  # x = 6
+x = increment(x)
+print(x)  # 6
 ```
 
 ### Classes
@@ -399,9 +399,11 @@ main()
 ## Decisions
 
 | Feature | Decision |
-|---------|----------|
+|--------|----------|
 | **Typing** | Dynamic with optional hints |
-| **Declarations** | `var`, `let`, `const` |
+| **Declarations** | `var`, `const` |
+| **Scope** | Block scoped (`var` at module level = module scoped) |
+| **Pass by reference** | Use return-and-assign |
 | **Collections** | Lists (dynamic), Dicts |
 | **Module/import** | `import x`, `from x import y`, `from x import *` |
 | **Error handling** | Exceptions |

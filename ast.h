@@ -1,5 +1,5 @@
 /* Abstract Syntax Tree definitions for Luna interpreter.
- * Based on the Python AST nodes.
+ * Dynamic VM variant — no static type system in the AST.
  */
 
 #ifndef LUNA_AST_H
@@ -11,43 +11,6 @@
 typedef struct Expr Expr;
 typedef struct Stmt Stmt;
 typedef struct Decl Decl;
-typedef struct Type Type;
-
-/* ============== Types ============== */
-
-typedef enum {
-    TYPE_BASE,
-    TYPE_ARRAY,
-    TYPE_LIST,
-    TYPE_MAP,
-    TYPE_GENERIC
-} TypeKind;
-
-typedef struct Type {
-    TypeKind kind;
-    union {
-        struct {
-            char *name;
-        } base;
-        struct {
-            struct Type *element_type;
-            int size;
-            bool has_size;
-        } array;
-        struct {
-            struct Type *element_type;
-        } list;
-        struct {
-            struct Type *key_type;
-            struct Type *value_type;
-        } map;
-        struct {
-            char *base;
-            struct Type **type_args;
-            int type_arg_count;
-        } generic;
-    } data;
-} Type;
 
 /* ============== Expressions ============== */
 
@@ -67,28 +30,18 @@ typedef enum {
     EXPR_ASSIGNMENT,
     EXPR_COMPOUND_ASSIGN,
     EXPR_TERNARY,
-    EXPR_STRUCT_LITERAL,
-    EXPR_ARRAY_LITERAL,
     EXPR_LIST_LITERAL,
-    EXPR_MAP_LITERAL,
+    EXPR_DICT_LITERAL,
     EXPR_NEW
 } ExprKind;
 
-typedef struct FieldInit {
-    char *name;
-    Expr *value;
-} FieldInit;
-
-typedef struct MapEntry {
+typedef struct DictEntry {
     Expr *key;
     Expr *value;
-} MapEntry;
+} DictEntry;
 
 typedef struct Expr {
     ExprKind kind;
-    Type *inferred_type;
-    int field_offset;
-    bool needs_retain;
     union {
         struct {
             char *value;
@@ -125,8 +78,6 @@ typedef struct Expr {
         struct {
             Expr *obj;
             char *field;
-            int field_index;
-            int field_offset;
         } field_access;
         struct {
             Expr *obj;
@@ -147,22 +98,13 @@ typedef struct Expr {
             Expr *else_expr;
         } ternary;
         struct {
-            char *struct_name;
-            FieldInit *fields;
-            int field_count;
-        } struct_literal;
-        struct {
-            Expr **elements;
-            int element_count;
-        } array_literal;
-        struct {
             Expr **elements;
             int element_count;
         } list_literal;
         struct {
-            MapEntry *entries;
+            DictEntry *entries;
             int entry_count;
-        } map_literal;
+        } dict_literal;
         struct {
             char *class_name;
             Expr **arguments;
@@ -202,16 +144,12 @@ typedef struct CatchClause {
 
 typedef struct Stmt {
     StmtKind kind;
-    Type *inferred_type;
-    bool needs_retain;
-    bool needs_release;
     union {
         struct {
             Expr *expression;
         } expression;
         struct {
             bool is_const;
-            Type *var_type;
             char *name;
             Expr *initializer;
         } var_decl;
@@ -259,21 +197,18 @@ typedef struct Stmt {
 
 typedef enum {
     DECL_FUNCTION,
-    DECL_STRUCT,
     DECL_CLASS,
     DECL_ENUM,
     DECL_IMPORT
 } DeclKind;
 
 typedef struct FunctionParam {
-    Type *param_type;
     char *name;
 } FunctionParam;
 
-typedef struct StructField {
-    Type *field_type;
+typedef struct ClassField {
     char *name;
-} StructField;
+} ClassField;
 
 typedef struct EnumVariant {
     char *name;
@@ -283,25 +218,18 @@ typedef struct EnumVariant {
 
 typedef struct Decl {
     DeclKind kind;
-    int *field_offsets;
     union {
         struct {
             char *name;
             FunctionParam *params;
             int param_count;
-            Type *return_type;
             Stmt **body;
             int body_count;
         } function;
         struct {
             char *name;
-            StructField *fields;
-            int field_count;
-        } struct_decl;
-        struct {
-            char *name;
             char *base_class;
-            StructField *fields;
+            ClassField *fields;
             int field_count;
             Decl **methods;
             int method_count;
@@ -331,7 +259,6 @@ typedef struct Program {
 
 /* ============== Memory management ============== */
 
-void free_type(Type *type);
 void free_expr(Expr *expr);
 void free_stmt(Stmt *stmt);
 void free_decl(Decl *decl);
