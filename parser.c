@@ -10,6 +10,7 @@
 
 /* ============== Forward declarations ============== */
 
+static bool is_declaration_start(Parser *parser);
 static Decl *parse_declaration(Parser *parser);
 static Decl *parse_function_declaration(Parser *parser);
 static Stmt *parse_statement(Parser *parser);
@@ -856,6 +857,16 @@ static Stmt *parse_return_statement(Parser *parser) {
 
 static Stmt *parse_statement(Parser *parser) {
     skip_newlines(parser);
+
+    if (is_declaration_start(parser)) {
+        Decl *decl = parse_declaration(parser);
+        if (decl) {
+            Stmt *stmt = make_stmt(STMT_DECLARATION);
+            stmt->data.declaration.decl = decl;
+            return stmt;
+        }
+        return NULL;
+    }
 
     if (match(parser, TOK_CONST)) {
         advance(parser);

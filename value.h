@@ -74,7 +74,9 @@ typedef enum {
     OBJ_DICT,      /* tag 9  */
     OBJ_INSTANCE,  /* tag 10 */
     OBJ_FUNCTION,  /* tag 11 / 12 (is_native flag) */
-    OBJ_EXCEPTION
+    OBJ_EXCEPTION,
+    OBJ_UPVALUE,
+    OBJ_CLOSURE
 } ObjType;
 
 /* ============================================================ */
@@ -144,6 +146,12 @@ typedef struct ObjInstance {
     int                  method_capacity;
 } ObjInstance;
 
+/* Upvalue descriptor — stored in ObjFunction for CLOSURE instruction */
+typedef struct {
+    uint8_t index;
+    bool    is_local;
+} UpvalueDesc;
+
 /* Function — Luna bytecode function or native C function */
 typedef struct ObjFunction {
     Object obj;
@@ -156,6 +164,9 @@ typedef struct ObjFunction {
     /* Native flag */
     bool is_native;
     NativeFn native_fn;
+    /* Closure metadata */
+    int upvalue_count;
+    UpvalueDesc *upvalue_descriptors;
     /* Legacy tree-walking fields (used by eval_*.c until Phase 4) */
     struct FunctionParam *params;
     struct Stmt **body;
@@ -170,6 +181,23 @@ typedef struct {
     int     line;
     char   *file;
 } ObjException;
+
+/* Upvalue — pointer to a captured variable (either on stack or closed) */
+typedef struct ObjUpvalue {
+    Object       obj;
+    Value       *location;      /* pointer to the live value */
+    Value        closed;        /* heap storage when closed */
+    struct ObjUpvalue *next;    /* linked list of open upvalues */
+    int          frame_depth;   /* vm->frame_count when captured */
+} ObjUpvalue;
+
+/* Closure — function + captured upvalues */
+typedef struct {
+    Object        obj;
+    struct ObjFunction *function;
+    ObjUpvalue  **upvalues;
+    int           upvalue_count;
+} ObjClosure;
 
 /* ============================================================ */
 /* Value constructors                                            */
@@ -197,6 +225,8 @@ ObjInstance *new_instance(const char *class_name, const char *base_class,
 ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
 ObjException *new_exception(const char *message);
+ObjUpvalue  *new_upvalue(Value *slot);
+ObjClosure  *new_closure(ObjFunction *function);
 
 /* ============================================================ */
 /* Value predicates / utilities                                  */

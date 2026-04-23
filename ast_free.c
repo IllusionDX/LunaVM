@@ -121,6 +121,10 @@ void free_stmt(Stmt *stmt) {
         }
         break;
 
+    case STMT_DECLARATION:
+        free_decl(stmt->data.declaration.decl);
+        break;
+
     case STMT_RETURN:
         if (stmt->data.return_stmt.value) {
             free_expr(stmt->data.return_stmt.value);

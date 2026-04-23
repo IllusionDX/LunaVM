@@ -73,7 +73,7 @@
   - [x] If / else: JZ over then-block, JMP over else-block
   - [x] While loop: JZ to exit, JMP back to condition
   - [x] For loop: compile iterable, counter register, INDEXGET per iteration
-  - [ ] Switch: chain of EQ + JZ + JMP (V1 stub)
+  - [x] Switch: chain of EQ + JNZ + JMP (no fallthrough)
   - [x] Function declarations: compile body into sub-Chunk, store as global ObjFunction
   - [x] Function calls: CALL / RET
   - [x] Method calls: INVOKE with method-name constant in pool
@@ -84,8 +84,25 @@
   - [x] List literals: NEWLIST + list.add per element
   - [x] Classes: compile each method into a sub-Chunk, register class definition globally
   - [x] Enums: compile as globals with integer values
-  - [ ] Try/Catch/Finally: TRY / ENDTRY / THROW (V1 stub)
-  - [ ] Import: stub (resolve at runtime from global table)
+  - [x] Try/Catch/Finally: VM try-stack with frame-unwinding, compiler emits TRY/ENDTRY/THROW
+  - [x] Import: V1 placeholder — creates empty dict global for the module name
+
+## Phase 2.5: Closures & Upvalues ✅
+- [x] Parser: allow `def` inside function bodies via `STMT_DECLARATION` wrapper
+- [x] AST: add `STMT_DECLARATION` node kind with `Decl *decl` field
+- [x] Value: add `ObjUpvalue` (captured variable pointer + closed storage)
+- [x] Value: add `ObjClosure` (function + array of upvalues)
+- [x] Value: add `UpvalueDesc` to `ObjFunction` for bytecode descriptors
+- [x] Compiler: add `Compiler *parent` and recursive `resolve_upvalue()`
+- [x] Compiler: `resolve_variable()` returns `VAR_LOCAL` / `VAR_UPVALUE` / `VAR_GLOBAL`
+- [x] Compiler: emit `OP_GETUPVAL` / `OP_SETUPVAL` for captured variables
+- [x] Compiler: emit `OP_CLOSURE` for nested functions with upvalue descriptors
+- [x] VM: `CallFrame.upvalues[]` array for captured variables
+- [x] VM: `VM.open_upvalues` linked list for closing
+- [x] VM: `OP_CLOSURE` creates `ObjClosure` and resolves upvalues from parent frame
+- [x] VM: `OP_GETUPVAL` / `OP_SETUPVAL` read/write through upvalue location pointer
+- [x] VM: `close_upvalues()` copies stack values to heap on frame return
+- [x] VM: `OP_CALL` handles both `OBJ_FUNCTION` and `OBJ_CLOSURE`
 
 ## Phase 3: Pipeline Wiring ✅
 - [x] Update `main.c` — Lexer → Parser → (updated AST) → Compiler → VM; drop Analyzer

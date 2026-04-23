@@ -109,6 +109,8 @@ ObjFunction *new_function(const char *name) {
     f->chunk       = NULL;
     f->param_names = NULL;
     f->param_count = 0;
+    f->upvalue_count = 0;
+    f->upvalue_descriptors = NULL;
     f->is_native   = false;
     f->native_fn   = NULL;
     return f;
@@ -129,6 +131,30 @@ ObjException *new_exception(const char *message) {
     e->line    = 0;
     e->file    = strdup("<unknown>");
     return e;
+}
+
+ObjUpvalue *new_upvalue(Value *slot) {
+    ObjUpvalue *uv = malloc(sizeof(ObjUpvalue));
+    if (!uv) { fprintf(stderr, "OOM\n"); exit(1); }
+    uv->obj.type = OBJ_UPVALUE; uv->obj.refcount = 1; uv->obj.next = NULL;
+    uv->location = slot;
+    uv->closed   = make_null();
+    uv->next     = NULL;
+    uv->frame_depth = 0;
+    return uv;
+}
+
+ObjClosure *new_closure(ObjFunction *function) {
+    ObjClosure *cl = malloc(sizeof(ObjClosure));
+    if (!cl) { fprintf(stderr, "OOM\n"); exit(1); }
+    cl->obj.type = OBJ_CLOSURE; cl->obj.refcount = 1; cl->obj.next = NULL;
+    cl->function = function;
+    retain_obj((Object*)function);
+    cl->upvalue_count = function->upvalue_count;
+    cl->upvalues = cl->upvalue_count > 0
+        ? calloc(cl->upvalue_count, sizeof(ObjUpvalue*))
+        : NULL;
+    return cl;
 }
 
 /* ============================================================ */
@@ -178,12 +204,27 @@ void free_object(Object *obj) {
                 for (int i = 0; i < f->param_count; i++) free(f->param_names[i]);
                 free(f->param_names);
             }
+            free(f->upvalue_descriptors);
             /* chunk is owned by the compiler/program, not the function object */
             free(f); break;
         }
         case OBJ_EXCEPTION: {
             ObjException *e = (ObjException *)obj;
             free(e->message); free(e->file); free(e); break;
+        }
+        case OBJ_UPVALUE: {
+            ObjUpvalue *uv = (ObjUpvalue *)obj;
+            release_value_inline(uv->closed);
+            free(uv); break;
+        }
+        case OBJ_CLOSURE: {
+            ObjClosure *cl = (ObjClosure *)obj;
+            for (int i = 0; i < cl->upvalue_count; i++) {
+                if (cl->upvalues[i]) release_obj((Object*)cl->upvalues[i]);
+            }
+            free(cl->upvalues);
+            release_obj((Object*)cl->function);
+            free(cl); break;
         }
         default: free(obj); break;
     }

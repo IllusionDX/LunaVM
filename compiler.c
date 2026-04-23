@@ -36,6 +36,13 @@ typedef struct LoopInfo {
     struct LoopInfo *next;
 } LoopInfo;
 
+/* ---- Upvalue tracking ---- */
+
+typedef struct CompilerUpvalue {
+    uint8_t index;
+    bool    is_local;
+} CompilerUpvalue;
+
 /* ---- Compiler state ---- */
 
 typedef struct Compiler {
@@ -46,6 +53,9 @@ typedef struct Compiler {
     int         line;       /* V1: always 1 (AST has no lines) */
     int         func_depth; /* 0 = top-level */
     LoopInfo   *loop;
+    struct Compiler *parent;
+    CompilerUpvalue upvalues[VM_MAX_REGISTERS];
+    int         upvalue_count;
 } Compiler;
 
 /* ============================================================ */
@@ -75,6 +85,52 @@ static int resolve_local(Compiler *c, const char *name) {
         }
     }
     return -1;
+}
+
+static int add_upvalue(Compiler *c, uint8_t index, bool is_local) {
+    int count = c->upvalue_count;
+    for (int i = 0; i < count; i++) {
+        if (c->upvalues[i].index == index && c->upvalues[i].is_local == is_local)
+            return i;
+    }
+    if (count >= VM_MAX_REGISTERS) {
+        fprintf(stderr, "compiler: too many upvalues\n");
+        return 0;
+    }
+    c->upvalues[count].index = index;
+    c->upvalues[count].is_local = is_local;
+    return c->upvalue_count++;
+}
+
+static int resolve_upvalue(Compiler *c, const char *name);
+
+static int resolve_upvalue(Compiler *c, const char *name) {
+    if (!c->parent) return -1;
+    int local = resolve_local(c->parent, name);
+    if (local != -1) {
+        return add_upvalue(c, (uint8_t)local, true);
+    }
+    int upvalue = resolve_upvalue(c->parent, name);
+    if (upvalue != -1) {
+        return add_upvalue(c, (uint8_t)upvalue, false);
+    }
+    return -1;
+}
+
+typedef enum { VAR_LOCAL, VAR_UPVALUE, VAR_GLOBAL } VarKind;
+
+static VarKind resolve_variable(Compiler *c, const char *name, int *index) {
+    int local = resolve_local(c, name);
+    if (local != -1) {
+        *index = local;
+        return VAR_LOCAL;
+    }
+    int upvalue = resolve_upvalue(c, name);
+    if (upvalue != -1) {
+        *index = upvalue;
+        return VAR_UPVALUE;
+    }
+    return VAR_GLOBAL;
 }
 
 static int add_local(Compiler *c, const char *name, int reg) {
@@ -267,9 +323,12 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_IDENTIFIER: {
-        int r = resolve_local(c, expr->data.identifier.name);
-        if (r >= 0) {
-            if (r != target) emit_move(c, (uint8_t)target, (uint8_t)r);
+        int idx;
+        VarKind kind = resolve_variable(c, expr->data.identifier.name, &idx);
+        if (kind == VAR_LOCAL) {
+            if (idx != target) emit_move(c, (uint8_t)target, (uint8_t)idx);
+        } else if (kind == VAR_UPVALUE) {
+            emit_ABx(c, OP_GETUPVAL, (uint8_t)target, (uint16_t)idx);
         } else {
             int k = chunk_add_string(c->chunk, expr->data.identifier.name);
             emit_ABx(c, OP_GETGLOBAL, (uint8_t)target, (uint16_t)k);
@@ -413,10 +472,14 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         Expr *rhs = expr->data.assignment.value;
         if (lhs->kind == EXPR_IDENTIFIER) {
             const char *name = lhs->data.identifier.name;
-            int r = resolve_local(c, name);
-            if (r >= 0) {
-                compile_expr_into(c, rhs, r);
-                if (r != target) emit_move(c, (uint8_t)target, (uint8_t)r);
+            int idx;
+            VarKind kind = resolve_variable(c, name, &idx);
+            if (kind == VAR_LOCAL) {
+                compile_expr_into(c, rhs, idx);
+                if (idx != target) emit_move(c, (uint8_t)target, (uint8_t)idx);
+            } else if (kind == VAR_UPVALUE) {
+                compile_expr_into(c, rhs, target);
+                emit_ABx(c, OP_SETUPVAL, (uint8_t)target, (uint16_t)idx);
             } else {
                 compile_expr_into(c, rhs, target);
                 int k = chunk_add_string(c->chunk, name);
@@ -552,6 +615,11 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         int r = alloc_reg(c);
         compile_expr_into(c, stmt->data.expression.expression, r);
         free_reg(c);
+        break;
+    }
+
+    case STMT_DECLARATION: {
+        compile_decl(c, stmt->data.declaration.decl);
         break;
     }
 
@@ -728,11 +796,118 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         break;
     }
 
-    case STMT_SWITCH:
-    case STMT_THROW:
-    case STMT_TRY:
-        /* V1 stubs */
+    case STMT_SWITCH: {
+        int expr_reg = alloc_reg(c);
+        compile_expr_into(c, stmt->data.switch_stmt.expression, expr_reg);
+
+        int case_count = stmt->data.switch_stmt.case_count;
+        int *cmp_jumps = malloc(sizeof(int) * case_count);
+        int *case_indices = malloc(sizeof(int) * case_count);
+        int cmp_count = 0;
+        int default_idx = -1;
+
+        for (int i = 0; i < case_count; i++) {
+            SwitchCase *sc = &stmt->data.switch_stmt.cases[i];
+            if (sc->value == NULL) {
+                default_idx = i;
+                continue;
+            }
+            int temp = alloc_reg(c);
+            compile_expr_into(c, sc->value, temp);
+            emit_ABC(c, OP_EQ, (uint8_t)temp, (uint8_t)expr_reg, (uint8_t)temp);
+            case_indices[cmp_count] = i;
+            cmp_jumps[cmp_count] = emit_jump(c, OP_JNZ, (uint8_t)temp);
+            free_reg(c);
+            cmp_count++;
+        }
+
+        int no_match = emit_jump(c, OP_JMP, 0);
+
+        int *end_jumps = malloc(sizeof(int) * case_count);
+        int end_count = 0;
+
+        for (int i = 0; i < cmp_count; i++) {
+            patch_jump(c, cmp_jumps[i]);
+            SwitchCase *sc = &stmt->data.switch_stmt.cases[case_indices[i]];
+            scope_enter(c);
+            for (int j = 0; j < sc->body_count; j++)
+                compile_stmt(c, sc->body[j]);
+            scope_exit(c);
+            end_jumps[end_count++] = emit_jump(c, OP_JMP, 0);
+        }
+
+        if (default_idx >= 0) {
+            patch_jump(c, no_match);
+            SwitchCase *sc = &stmt->data.switch_stmt.cases[default_idx];
+            scope_enter(c);
+            for (int j = 0; j < sc->body_count; j++)
+                compile_stmt(c, sc->body[j]);
+            scope_exit(c);
+        } else {
+            patch_jump(c, no_match);
+        }
+
+        for (int i = 0; i < end_count; i++)
+            patch_jump(c, end_jumps[i]);
+
+        free(cmp_jumps);
+        free(case_indices);
+        free(end_jumps);
+        free_reg(c);
         break;
+    }
+
+    case STMT_THROW: {
+        int r = alloc_reg(c);
+        compile_expr_into(c, stmt->data.throw_stmt.expression, r);
+        emit_ABC(c, OP_THROW, (uint8_t)r, 0, 0);
+        free_reg(c);
+        break;
+    }
+
+    case STMT_TRY: {
+        int exc_reg = alloc_reg(c);
+        int try_idx = -1;
+        int skip_catch = -1;
+
+        if (stmt->data.try_stmt.catch_count > 0) {
+            try_idx = emit_jump(c, OP_TRY, (uint8_t)exc_reg);
+        }
+
+        scope_enter(c);
+        for (int i = 0; i < stmt->data.try_stmt.try_count; i++)
+            compile_stmt(c, stmt->data.try_stmt.try_body[i]);
+        scope_exit(c);
+
+        if (stmt->data.try_stmt.catch_count > 0) {
+            emit_ABC(c, OP_ENDTRY, 0, 0, 0);
+            skip_catch = emit_jump(c, OP_JMP, 0);
+            patch_jump(c, try_idx);
+
+            CatchClause *cc = &stmt->data.try_stmt.catch_clauses[0];
+            if (cc->variable) {
+                int r = alloc_reg(c);
+                add_local(c, cc->variable, r);
+                emit_move(c, (uint8_t)r, (uint8_t)exc_reg);
+            }
+            scope_enter(c);
+            for (int i = 0; i < cc->body_count; i++)
+                compile_stmt(c, cc->body[i]);
+            scope_exit(c);
+
+            patch_jump(c, skip_catch);
+        }
+
+        if (stmt->data.try_stmt.finally_count > 0) {
+            scope_enter(c);
+            for (int i = 0; i < stmt->data.try_stmt.finally_count; i++)
+                compile_stmt(c, stmt->data.try_stmt.finally_body[i]);
+            scope_exit(c);
+        }
+
+        free_reg(c);
+        break;
+    }
     }
 }
 
@@ -749,7 +924,15 @@ static void compile_decl(Compiler *c, Decl *decl) {
     case DECL_FUNCTION: compile_function(c, decl); break;
     case DECL_CLASS:    compile_class(c, decl);    break;
     case DECL_ENUM:     compile_enum(c, decl);     break;
-    case DECL_IMPORT:   /* V1 stub */ break;
+    case DECL_IMPORT: {
+        /* V1: create an empty dict placeholder for the module */
+        int r = alloc_reg(c);
+        emit_ABC(c, OP_NEWDICT, (uint8_t)r, 0, 0);
+        int k = chunk_add_string(c->chunk, decl->data.import_decl.module_name);
+        emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
+        free_reg(c);
+        break;
+    }
     }
 }
 
@@ -768,7 +951,9 @@ static void compile_function(Compiler *c, Decl *decl) {
         .temp_base   = 0,
         .line        = c->line,
         .func_depth  = c->func_depth + 1,
-        .loop        = NULL
+        .loop        = NULL,
+        .parent      = c,
+        .upvalue_count = 0
     };
 
     scope_enter(&sub);
@@ -799,9 +984,30 @@ static void compile_function(Compiler *c, Decl *decl) {
     fn->param_names = malloc(sizeof(char*) * param_count);
     for (int i = 0; i < param_count; i++)
         fn->param_names[i] = strdup(decl->data.function.params[i].name);
+    fn->upvalue_count = sub.upvalue_count;
+    if (sub.upvalue_count > 0) {
+        fn->upvalue_descriptors = malloc(sizeof(UpvalueDesc) * sub.upvalue_count);
+        for (int i = 0; i < sub.upvalue_count; i++) {
+            fn->upvalue_descriptors[i].index = sub.upvalues[i].index;
+            fn->upvalue_descriptors[i].is_local = sub.upvalues[i].is_local;
+        }
+    }
 
-    Value fn_val = make_obj((Object*)fn);
-    vm_set_global(c->vm, name, fn_val, false);
+    int fn_const = chunk_add_const(c->chunk, make_obj((Object*)fn));
+    int r = alloc_reg(c);
+
+    if (c->func_depth == 0) {
+        /* Top-level: create closure (no upvalues possible) and store global */
+        emit_ABx(c, OP_CLOSURE, (uint8_t)r, (uint16_t)fn_const);
+        int k = chunk_add_string(c->chunk, name);
+        emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
+        free_reg(c);
+    } else {
+        /* Nested: create closure and store as local */
+        add_local(c, name, r);
+        emit_ABx(c, OP_CLOSURE, (uint8_t)r, (uint16_t)fn_const);
+    }
+
     release_obj((Object*)fn);
 }
 

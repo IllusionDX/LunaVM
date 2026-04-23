@@ -88,6 +88,16 @@ static Value do_cmp(Value L, Value R, OpCode op) {
 
 void vm_init(VM *vm) { memset(vm,0,sizeof(VM)); }
 
+static void close_upvalues(VM *vm, int frame_depth);
+
+static void vm_pop_try_frames(VM *vm, int min_depth) {
+    while (vm->try_stack && vm->try_stack->frame_depth > min_depth) {
+        TryFrame *tf = vm->try_stack;
+        vm->try_stack = tf->next;
+        free(tf);
+    }
+}
+
 void vm_free(VM *vm) {
     for (int i=0;i<VM_GLOBAL_BUCKETS;i++) {
         GlobalEntry *e=vm->globals[i];
@@ -96,6 +106,12 @@ void vm_free(VM *vm) {
     }
     Object *o=vm->objects;
     while(o){ Object *nx=o->next; free_object(o); o=nx; }
+    while (vm->try_stack) {
+        TryFrame *tf = vm->try_stack;
+        vm->try_stack = tf->next;
+        free(tf);
+    }
+    close_upvalues(vm, 0);
 }
 
 /* ============================================================ */
@@ -114,6 +130,28 @@ void vm_free(VM *vm) {
 #define CONST(n)    (CHUNK->constants[(int)(n)])
 #define KSTR(n)     (((ObjString*)CONST(n).as.obj)->chars)
 
+static ObjUpvalue *capture_upvalue(VM *vm, Value *slot) {
+    ObjUpvalue *uv = new_upvalue(slot);
+    uv->frame_depth = vm->frame_count;
+    uv->next = vm->open_upvalues;
+    vm->open_upvalues = uv;
+    return uv;
+}
+
+static void close_upvalues(VM *vm, int frame_depth) {
+    ObjUpvalue **current = &vm->open_upvalues;
+    while (*current) {
+        if ((*current)->frame_depth >= frame_depth) {
+            ObjUpvalue *uv = *current;
+            uv->closed = *uv->location;
+            uv->location = &uv->closed;
+            *current = uv->next;
+        } else {
+            current = &(*current)->next;
+        }
+    }
+}
+
 static VMResult push_frame(VM *vm, Chunk *chunk, int ret_reg) {
     if (vm->frame_count >= VM_MAX_FRAMES) { fprintf(stderr,"vm: stack overflow\n"); return VM_ERROR; }
     CallFrame *f = &vm->frames[vm->frame_count++];
@@ -122,7 +160,9 @@ static VMResult push_frame(VM *vm, Chunk *chunk, int ret_reg) {
     f->ret_reg = ret_reg;
     f->has_self= false;
     f->self_val= make_null();
+    f->upvalue_count = 0;
     for (int i=0;i<VM_MAX_REGISTERS;i++) f->regs[i]=make_null();
+    for (int i=0;i<VM_MAX_REGISTERS;i++) f->upvalues[i]=NULL;
     return VM_OK;
 }
 
@@ -136,9 +176,20 @@ dispatch:
     while (vm->frame_count > 0) {
         if (IP >= CHUNK->count) {
             /* implicit return null from top frame */
-            if (vm->frame_count == 1) { vm->frame_count=0; return VM_OK; }
+            if (vm->frame_count == 1) {
+                while (vm->try_stack) {
+                    TryFrame *tf = vm->try_stack;
+                    vm->try_stack = tf->next;
+                    free(tf);
+                }
+                close_upvalues(vm, 1);
+                vm->frame_count=0; return VM_OK;
+            }
             int rr = FRAME.ret_reg;
+            int closing_depth = vm->frame_count;
             vm->frame_count--;
+            close_upvalues(vm, closing_depth);
+            vm_pop_try_frames(vm, vm->frame_count);
             if (rr >= 0) REG(rr) = make_null();
             goto dispatch;
         }
@@ -212,8 +263,14 @@ dispatch:
             if (fn_val.type!=VAL_OBJ||!fn_val.as.obj) {
                 fprintf(stderr,"vm: call non-function\n"); REG(RA)=make_null(); break;
             }
-            ObjFunction *fn = (ObjFunction *)fn_val.as.obj;
-            if (fn->obj.type != OBJ_FUNCTION) {
+            ObjFunction *fn = NULL;
+            ObjClosure *cl = NULL;
+            if (fn_val.as.obj->type == OBJ_FUNCTION) {
+                fn = (ObjFunction *)fn_val.as.obj;
+            } else if (fn_val.as.obj->type == OBJ_CLOSURE) {
+                cl = (ObjClosure *)fn_val.as.obj;
+                fn = cl->function;
+            } else {
                 fprintf(stderr,"vm: not callable\n"); REG(RA)=make_null(); break;
             }
             if (fn->is_native) {
@@ -233,15 +290,34 @@ dispatch:
             for (int i=0;i<sn;i++) saved[i]=REG(RB+1+i);
             if (push_frame(vm, fn->chunk, ret_dest) != VM_OK) return VM_ERROR;
             for (int i=0;i<sn;i++) FRAME.regs[i]=saved[i];
+            /* Copy closure upvalues into the new frame */
+            if (cl) {
+                for (int i=0;i<cl->upvalue_count && i<VM_MAX_REGISTERS;i++) {
+                    FRAME.upvalues[i] = cl->upvalues[i];
+                    if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
+                }
+                FRAME.upvalue_count = cl->upvalue_count;
+            }
             goto dispatch;
         }
 
         /* ---- RET ---- */
         case OP_RET: {
             Value ret_val = REG(RA);
-            if (vm->frame_count <= 1) { vm->frame_count=0; return VM_OK; }
+            if (vm->frame_count <= 1) {
+                while (vm->try_stack) {
+                    TryFrame *tf = vm->try_stack;
+                    vm->try_stack = tf->next;
+                    free(tf);
+                }
+                close_upvalues(vm, 1);
+                vm->frame_count=0; return VM_OK;
+            }
             int rr = FRAME.ret_reg;
+            int closing_depth = vm->frame_count;
             vm->frame_count--;
+            close_upvalues(vm, closing_depth);
+            vm_pop_try_frames(vm, vm->frame_count);
             if (rr >= 0) REG(rr) = ret_val;
             goto dispatch;
         }
@@ -360,8 +436,8 @@ dispatch:
                     case OBJ_INSTANCE: {
                         ObjInstance *obj_inst=(ObjInstance*)obj.as.obj;
                         for(int mi=0;mi<obj_inst->method_count&&!handled;mi++){
-                            if(strcmp(obj_inst->methods[mi]->name,mname)==0){
-                                ObjFunction *mf=obj_inst->methods[mi];
+                            ObjFunction *mf=obj_inst->methods[mi];
+                            if(strcmp(mf->name,mname)==0){
                                 if(mf->is_native){ result=mf->native_fn(vm,argv,nargs); handled=true; }
                                 else if(mf->chunk){
                                     int rr=(int)RA;
@@ -388,14 +464,82 @@ dispatch:
         }
 
         /* ---- Exceptions ---- */
-        case OP_THROW:
-            vm->last_exception=REG(RA);
-            vm->frame_count=0;
+        case OP_THROW: {
+            Value exc = REG(RA);
+            vm->last_exception = exc;
+            while (vm->try_stack) {
+                TryFrame *tf = vm->try_stack;
+                vm->try_stack = tf->next;
+                while (vm->frame_count > tf->frame_depth) {
+                    vm->frame_count--;
+                }
+                if (vm->frame_count > 0) {
+                    FRAME.regs[tf->exc_reg] = exc;
+                    IP = tf->catch_ip;
+                    free(tf);
+                    goto dispatch;
+                }
+                free(tf);
+            }
+            vm->frame_count = 0;
             return VM_EXCEPTION;
+        }
 
-        case OP_TRY: case OP_ENDTRY:
-        case OP_CLOSURE: case OP_GETUPVAL: case OP_SETUPVAL: case OP_SUPER:
-            /* stubs — V2 */ break;
+        case OP_TRY: {
+            TryFrame *tf = malloc(sizeof(TryFrame));
+            tf->catch_ip = IP + SBX;
+            tf->exc_reg = RA;
+            tf->frame_depth = vm->frame_count;
+            tf->next = vm->try_stack;
+            vm->try_stack = tf;
+            break;
+        }
+
+        case OP_ENDTRY: {
+            if (vm->try_stack) {
+                TryFrame *tf = vm->try_stack;
+                vm->try_stack = tf->next;
+                free(tf);
+            }
+            break;
+        }
+
+        case OP_CLOSURE: {
+            Value fn_val = CONST(BX);
+            if (fn_val.type != VAL_OBJ || fn_val.as.obj->type != OBJ_FUNCTION) {
+                REG(RA) = make_null(); break;
+            }
+            ObjFunction *fn = (ObjFunction*)fn_val.as.obj;
+            ObjClosure *cl = new_closure(fn);
+            for (int i = 0; i < fn->upvalue_count; i++) {
+                uint8_t idx = fn->upvalue_descriptors[i].index;
+                bool is_local = fn->upvalue_descriptors[i].is_local;
+                if (is_local) {
+                    cl->upvalues[i] = capture_upvalue(vm, &FRAME.regs[idx]);
+                } else {
+                    cl->upvalues[i] = FRAME.upvalues[idx];
+                    if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
+                }
+            }
+            REG(RA) = make_obj((Object*)cl);
+            break;
+        }
+
+        case OP_GETUPVAL: {
+            ObjUpvalue *uv = FRAME.upvalues[BX];
+            if (uv) REG(RA) = *uv->location;
+            else REG(RA) = make_null();
+            break;
+        }
+
+        case OP_SETUPVAL: {
+            ObjUpvalue *uv = FRAME.upvalues[BX];
+            if (uv) *uv->location = REG(RA);
+            break;
+        }
+
+        case OP_SUPER:
+            /* stub — V2 */ break;
 
         case OP_HALT: vm->frame_count=0; return VM_OK;
 

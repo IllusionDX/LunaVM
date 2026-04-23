@@ -118,6 +118,7 @@ typedef struct Expr {
 typedef enum {
     STMT_EXPRESSION,
     STMT_VAR_DECL,
+    STMT_DECLARATION,
     STMT_RETURN,
     STMT_PASS,
     STMT_BREAK,
@@ -153,6 +154,9 @@ typedef struct Stmt {
             char *name;
             Expr *initializer;
         } var_decl;
+        struct {
+            Decl *decl;
+        } declaration;
         struct {
             Expr *value;
         } return_stmt;

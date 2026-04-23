@@ -23,6 +23,8 @@ typedef struct {
     int      ret_reg;                    /* caller's destination register */
     bool     has_self;
     Value    self_val;
+    ObjUpvalue *upvalues[VM_MAX_REGISTERS]; /* captured upvalues          */
+    int      upvalue_count;
 } CallFrame;
 
 /* ---- Global variable entry (chained hash table) ---- */
@@ -35,6 +37,17 @@ typedef struct GlobalEntry {
 
 #define VM_GLOBAL_BUCKETS 256
 
+/* ---- Exception handling frame ---- */
+typedef struct TryFrame {
+    int catch_ip;
+    int exc_reg;
+    int frame_depth;   /* vm->frame_count when TRY was pushed */
+    struct TryFrame *next;
+} TryFrame;
+
+/* Forward declaration */
+typedef struct ObjUpvalue ObjUpvalue;
+
 /* ---- VM State ---- */
 typedef struct VM {
     CallFrame   frames[VM_MAX_FRAMES];
@@ -44,6 +57,12 @@ typedef struct VM {
 
     /* GC intrusive list */
     Object     *objects;
+
+    /* Exception handling */
+    TryFrame   *try_stack;
+
+    /* Open upvalues (not yet closed) */
+    ObjUpvalue *open_upvalues;
 
     /* Last unhandled exception */
     Value       last_exception;

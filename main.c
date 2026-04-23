@@ -88,7 +88,13 @@ static int execute_native_program(const char *source) {
         return 1;
     }
 
-    vm_run_chunk(&vm, &chunk);
+    VMResult result = vm_run_chunk(&vm, &chunk);
+    if (result == VM_EXCEPTION) {
+        fprintf(stderr, "Uncaught exception: ");
+        char *exc_str = value_to_string(vm.last_exception);
+        fprintf(stderr, "%s\n", exc_str);
+        free(exc_str);
+    }
 
     chunk_free(&chunk);
     vm_free(&vm);
