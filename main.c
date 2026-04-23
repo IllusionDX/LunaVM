@@ -10,14 +10,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <io.h>
 #include "ast.h"
 #include "compiler.h"
 #include "lexer.h"
 #include "parser.h"
 #include "vm.h"
+#include "version.h"
 
 static void print_usage(const char *program) {
     fprintf(stderr, "Usage: %s [options] <source_file>\n", program);
+    fprintf(stderr, "       %s            # Run interactive REPL\n", program);
     fprintf(stderr, "\nOptions:\n");
     fprintf(stderr, "  -u          Unbuffered stdout/stderr\n");
     fprintf(stderr, "  --version   Show version information\n");
@@ -25,6 +28,7 @@ static void print_usage(const char *program) {
     fprintf(stderr, "\nExamples:\n");
     fprintf(stderr, "  %s program.luna    # Run Luna source file\n", program);
     fprintf(stderr, "  %s -u program.luna # Run with unbuffered output\n", program);
+    fprintf(stderr, "  %s                 # Start REPL\n", program);
 }
 
 static char *read_file(const char *path) {
@@ -77,7 +81,7 @@ static int execute_native_program(const char *source) {
     vm_init(&vm);
 
     Chunk chunk;
-    if (!compile_program(program, &chunk, &vm)) {
+    if (!compile_program(program, &chunk, &vm, false)) {
         fprintf(stderr, "Compiler error: Failed to compile program\n");
         chunk_free(&chunk);
         vm_free(&vm);
@@ -106,6 +110,161 @@ static int execute_native_program(const char *source) {
     return 0;
 }
 
+static int execute_repl_line(VM *vm, const char *source) {
+    Lexer *lexer = lexer_new(source);
+    TokenList *tokens = lexer_tokenize(lexer);
+
+    if (!tokens) {
+        fflush(stdout);
+        fprintf(stderr, "Lexer error: Failed to tokenize source\n");
+        lexer_free(lexer);
+        return 1;
+    }
+
+    Parser *parser = parser_new(tokens);
+    Program *program = parser_parse(parser);
+
+    if (!program || parser->had_error) {
+        fflush(stdout);
+        fprintf(stderr, "Parser error: Failed to parse source\n");
+        parser_free(parser);
+        token_list_free(tokens);
+        lexer_free(lexer);
+        return 1;
+    }
+
+    Chunk chunk;
+    if (!compile_program(program, &chunk, vm, true)) {
+        fflush(stdout);
+        fprintf(stderr, "Compiler error: Failed to compile program\n");
+        chunk_free(&chunk);
+        free_program(program);
+        parser_free(parser);
+        token_list_free(tokens);
+        lexer_free(lexer);
+        return 1;
+    }
+
+    VMResult result = vm_run_chunk(vm, &chunk);
+    if (result == VM_EXCEPTION) {
+        fflush(stdout);
+        fprintf(stderr, "Uncaught exception: ");
+        char *exc_str = value_to_string(vm->last_exception);
+        fprintf(stderr, "%s\n", exc_str);
+        free(exc_str);
+    }
+
+    chunk_free(&chunk);
+    free_program(program);
+    parser_free(parser);
+    token_list_free(tokens);
+    lexer_free(lexer);
+
+    return 0;
+}
+
+static void repl(void) {
+    VM vm;
+    vm_init(&vm);
+
+    bool is_tty = _isatty(_fileno(stdin));
+
+    if (is_tty) {
+        printf("LunaScript %s REPL\n", LUNA_VERSION_STRING);
+        printf("Type 'exit' or press Ctrl+D to quit.\n\n");
+    }
+
+    char *buffer = malloc(1);
+    if (!buffer) return;
+    buffer[0] = '\0';
+
+    while (1) {
+        bool has_input = buffer[0] != '\0';
+        if (is_tty) {
+            printf("%s", has_input ? "... " : ">>> ");
+            fflush(stdout);
+        }
+
+        char line[1024];
+        if (!fgets(line, sizeof(line), stdin)) {
+            if (has_input) printf("\n");
+            break;
+        }
+
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') {
+            line[len - 1] = '\0';
+        }
+
+        if (line[0] == '\0') {
+            if (!has_input) {
+                continue;
+            }
+            /* Empty line terminates multi-line input */
+        } else {
+            size_t buf_len = strlen(buffer);
+            size_t line_len = strlen(line);
+            char *new_buf = realloc(buffer, buf_len + line_len + 2);
+            if (!new_buf) {
+                free(buffer);
+                buffer = malloc(1);
+                if (!buffer) break;
+                buffer[0] = '\0';
+                continue;
+            }
+            buffer = new_buf;
+            if (buf_len > 0) {
+                buffer[buf_len] = '\n';
+                memcpy(buffer + buf_len + 1, line, line_len + 1);
+            } else {
+                memcpy(buffer, line, line_len + 1);
+            }
+
+            bool has_newline = strchr(buffer, '\n') != NULL;
+            bool ends_with_colon = buffer[0] && buffer[strlen(buffer) - 1] == ':';
+            int open_brackets = 0;
+            for (char *p = buffer; *p; p++) {
+                if (*p == '(' || *p == '[' || *p == '{') open_brackets++;
+                else if (*p == ')' || *p == ']' || *p == '}') open_brackets--;
+            }
+
+            if (!has_newline) {
+                if (ends_with_colon || open_brackets != 0) {
+                    continue;
+                }
+            } else {
+                /* Multi-line: require empty line to submit */
+                continue;
+            }
+        }
+
+        /* Execute buffer */
+        if (strcmp(buffer, "exit") == 0 || strcmp(buffer, "quit") == 0) {
+            break;
+        }
+
+        vm_set_global(&vm, "_", make_null(), false);
+        int result = execute_repl_line(&vm, buffer);
+        if (result == 0) {
+            Value last;
+            if (vm_get_global(&vm, "_", &last) && last.type != VAL_NULL) {
+                char *s = value_to_string(last);
+                printf("%s\n", s);
+                free(s);
+                vm_set_global(&vm, "_", make_null(), false);
+            }
+        }
+
+        free(buffer);
+        buffer = malloc(1);
+        if (!buffer) break;
+        buffer[0] = '\0';
+    }
+
+    free(buffer);
+    vm_free(&vm);
+}
+
 int main(int argc, char *argv[]) {
     int unbuffered = 0;
 
@@ -121,8 +280,8 @@ int main(int argc, char *argv[]) {
     }
 
     if (argc < 2) {
-        print_usage(argv[0]);
-        return 1;
+        repl();
+        return 0;
     }
 
     int file_idx = 1;
@@ -131,9 +290,9 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-u") == 0) continue;
 
         if (strcmp(argv[i], "--version") == 0) {
-            printf("Luna interpreter v1.0.0\n");
-            printf("Tree-walking interpreter with ARC memory management\n");
-            printf("Native C lexer and parser\n");
+            printf("LunaScript interpreter %s\n", LUNA_VERSION_STRING);
+            printf("Register-based bytecode VM with ARC memory management\n");
+            printf("Native C lexer, parser, and compiler\n");
             return 0;
         }
 

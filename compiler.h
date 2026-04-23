@@ -9,6 +9,6 @@
 
 /* Compile a Program AST into a top-level Chunk and register globals in vm.
  * Returns true on success, false on failure. */
-bool compile_program(Program *program, Chunk *chunk, VM *vm);
+bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl);
 
 #endif /* LUNA_COMPILER_H */

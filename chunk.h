@@ -12,6 +12,9 @@
 #include "opcode.h"
 #include "value.h"
 
+/* Forward declaration for inline cache */
+struct GlobalEntry;
+
 typedef struct Chunk {
     /* Instruction array (each entry is a 32-bit encoded instruction) */
     uint32_t   *code;
@@ -25,6 +28,9 @@ typedef struct Chunk {
     Value      *constants;
     int         const_count;
     int         const_capacity;
+
+    /* Inline cache: GlobalEntry* per instruction, used by OP_GETGLOBAL */
+    struct GlobalEntry **global_cache;
 
     /* Debug name (function name or "<module>") */
     char       *name;

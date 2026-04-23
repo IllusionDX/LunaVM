@@ -222,6 +222,13 @@ static Token *scan_string(Lexer *lexer) {
     return make_token(lexer, type, start + 1, length - 2);
 }
 
+static Token *scan_fstring(Lexer *lexer) {
+    Token *tok = scan_string(lexer);
+    tok->type = TOK_FSTRING_LITERAL;
+    tok->column -= 1; /* adjust for the 'f' prefix */
+    return tok;
+}
+
 static Token *scan_operator(Lexer *lexer) {
     const char *start = lexer->current;
     char c = advance(lexer);
@@ -380,6 +387,10 @@ static Token *scan_token(Lexer *lexer) {
         return make_token(lexer, TOK_NEWLINE, "\\n", 1);
     }
     
+    if (c == 'f' && (peek_next(lexer) == '"' || peek_next(lexer) == '\'')) {
+        advance(lexer); /* consume 'f' */
+        return scan_fstring(lexer);
+    }
     if (is_alpha(c)) { return scan_identifier(lexer); }
     if (is_digit(c) || (c == '.' && is_digit(peek_next(lexer)))) { return scan_number(lexer); }
     if (c == '"' || c == '\'') { return scan_string(lexer); }
@@ -471,6 +482,7 @@ const char *token_type_name(TokenType type) {
         case TOK_INTEGER_LITERAL: return "INTEGER";
         case TOK_FLOAT_LITERAL: return "FLOAT";
         case TOK_STRING_LITERAL: return "STRING";
+        case TOK_FSTRING_LITERAL: return "FSTRING";
         case TOK_CHAR_LITERAL: return "CHAR";
         case TOK_TRUE: return "TRUE";
         case TOK_FALSE: return "FALSE";

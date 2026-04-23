@@ -1,4 +1,4 @@
-# Luna Implementation Plan
+# LunaScript Implementation Plan
 
 ## Pipeline
 
@@ -217,6 +217,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
 ## JIT Roadmap
 
+> **Note:** The V1-V4 roadmap tracks the *VM engine* evolution (interpreter → optimized VM → JIT). It is orthogonal to the public SemVer release cycle, which tracks *language stability* and *stdlib maturity*.
+
 ### V1: Register VM Interpreter
 - Register-based bytecode
 - Simple dispatch loop
@@ -236,6 +238,26 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 - Type specialization
 - Type hints enable compile-time optimization
 - Full JIT with inline caches (consider DynASM or LLVM backend)
+
+## Release Roadmap (SemVer)
+
+| Version | Status | Milestone |
+|---------|--------|-----------|
+| `0.1.0-alpha` | Done | Core language works. Basic VM, lexer, parser, compiler. REPL. |
+| `0.1.1-alpha` | Done | String concat optimization. Inline cache for global variable access. |
+| `0.1.2-alpha` | Done | F-strings (`f"Hello {name}"`). |
+| `0.1.3-alpha` | **Current** | Scratch buffer optimization. Test suite reorganization. |
+| `0.2.0` | Planned | Classes / enums solidified. Better error messages. |
+| `0.3.0` | Planned | Modules and imports actually work. |
+| `0.4.0` | Planned | Standard library (strings, math, io, os). |
+| `0.5.0` | Planned | Package manager (`luna install`). |
+| `0.6.0` | Planned | Debugger / profiler. |
+| `0.7.0` | Planned | V2 optimized VM lands. |
+| `0.8.0` | Planned | V3 simple JIT. |
+| `0.9.0-beta` | Planned | Spec freeze, release candidate phase. |
+| `1.0.0` | Planned | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
+
+**Rule of thumb:** bump the minor version when a user-facing feature ships (e.g. package manager, stdlib module); bump the engine version (V1→V2) when the *runtime* gets a major architectural upgrade. They do not have to stay in lockstep.
 
 ## Memory Management
 

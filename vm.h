@@ -81,6 +81,7 @@ void     vm_free(VM *vm);
 void     vm_define_native(VM *vm, const char *name, NativeFn fn);
 void     vm_set_global(VM *vm, const char *name, Value value, bool is_const);
 bool     vm_get_global(VM *vm, const char *name, Value *out);
+GlobalEntry *vm_resolve_global(VM *vm, const char *name);
 
 VMResult vm_run_chunk(VM *vm, Chunk *chunk);
 

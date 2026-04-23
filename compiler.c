@@ -54,6 +54,7 @@ typedef struct Compiler {
     int         func_depth; /* 0 = top-level */
     LoopInfo   *loop;
     struct Compiler *parent;
+    bool        is_repl;
     CompilerUpvalue upvalues[VM_MAX_REGISTERS];
     int         upvalue_count;
 } Compiler;
@@ -1088,7 +1089,7 @@ static void compile_enum(Compiler *c, Decl *decl) {
 /* Public API                                                   */
 /* ============================================================ */
 
-bool compile_program(Program *program, Chunk *chunk, VM *vm) {
+bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl) {
     chunk_init(chunk, "<main>");
 
     Compiler c = {
@@ -1098,7 +1099,8 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm) {
         .temp_base  = 0,
         .line       = 1,
         .func_depth = 0,
-        .loop       = NULL
+        .loop       = NULL,
+        .is_repl    = is_repl
     };
 
     scope_enter(&c);
@@ -1108,8 +1110,21 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm) {
         compile_decl(&c, program->declarations[i]);
 
     /* Second pass: top-level statements */
-    for (int i = 0; i < program->stmt_count; i++)
+    for (int i = 0; i < program->stmt_count; i++) {
+        if (c.is_repl && i == program->stmt_count - 1 &&
+            program->statements[i]->kind == STMT_EXPRESSION) {
+            Expr *expr = program->statements[i]->data.expression.expression;
+            if (expr->kind != EXPR_ASSIGNMENT && expr->kind != EXPR_COMPOUND_ASSIGN) {
+                int r = alloc_reg(&c);
+                compile_expr_into(&c, expr, r);
+                int k = chunk_add_string(c.chunk, "_");
+                emit_ABx(&c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
+                free_reg(&c);
+                continue;
+            }
+        }
         compile_stmt(&c, program->statements[i]);
+    }
 
     scope_exit(&c);
 

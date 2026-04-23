@@ -43,10 +43,9 @@ clean:
 # Rebuild
 rebuild: clean all
 
-# Run tests
+# Run regression tests
 test: $(TARGET)
-	@echo "Running interpreter tests..."
-	@echo '{"declarations":[],"statements":[]}' | ./$(TARGET) --json -
+	powershell -ExecutionPolicy Bypass -File run_tests.ps1
 
 # Debug build
 debug: CFLAGS = -Wall -Wextra -std=c99 -O0 -g -DDEBUG

@@ -53,10 +53,26 @@ static inline bool is_int_type(Value v) { return v.type==VAL_INT||v.type==VAL_UI
 static Value do_arith(Value L, Value R, OpCode op) {
     /* String concat for ADD */
     if (op==OP_ADD && L.type==VAL_OBJ && L.as.obj && L.as.obj->type==OBJ_STRING) {
-        char *ls=value_to_string(L), *rs=value_to_string(R);
-        int len=(int)strlen(ls)+(int)strlen(rs);
-        char *buf=malloc(len+1); strcpy(buf,ls); strcat(buf,rs);
-        ObjString *s=new_string(buf,len); free(ls);free(rs);free(buf);
+        ObjString *ls = (ObjString*)L.as.obj;
+        const char *rs;
+        int rs_len;
+        char *rs_tmp = NULL;
+        if (R.type==VAL_OBJ && R.as.obj && R.as.obj->type==OBJ_STRING) {
+            ObjString *rs_str = (ObjString*)R.as.obj;
+            rs = rs_str->chars;
+            rs_len = rs_str->length;
+        } else {
+            rs_tmp = value_to_string(R);
+            rs = rs_tmp;
+            rs_len = (int)strlen(rs_tmp);
+        }
+        int len = ls->length + rs_len;
+        char *buf = malloc(len + 1);
+        memcpy(buf, ls->chars, ls->length);
+        memcpy(buf + ls->length, rs, rs_len + 1);
+        ObjString *s = new_string(buf, len);
+        free(rs_tmp);
+        free(buf);
         return make_obj((Object*)s);
     }
     if (!is_num(L)||!is_num(R)) return make_null();
@@ -217,9 +233,26 @@ dispatch:
         case OP_GETGLOBAL: {
             if(CONST(BX).type!=VAL_OBJ||!CONST(BX).as.obj){REG(RA)=make_null();break;}
             const char *nm=KSTR(BX);
-            Value out;
-            if(!vm_get_global(vm,nm,&out)){fprintf(stderr,"vm: undefined '%s'\n",nm);REG(RA)=make_null();}
-            else REG(RA)=out;
+
+            /* Inline cache: check cached GlobalEntry at this instruction */
+            int inst_idx = IP - 1;
+            GlobalEntry *cached = CHUNK->global_cache ? CHUNK->global_cache[inst_idx] : NULL;
+            if (cached && cached->name && strcmp(cached->name, nm) == 0) {
+                REG(RA) = cached->value;
+                break;
+            }
+
+            GlobalEntry *e = vm_resolve_global(vm, nm);
+            if (!e) {
+                fprintf(stderr,"vm: undefined '%s'\n",nm);
+                REG(RA)=make_null();
+            } else {
+                REG(RA)=e->value;
+                if (!CHUNK->global_cache) {
+                    CHUNK->global_cache = calloc((size_t)CHUNK->capacity, sizeof(GlobalEntry*));
+                }
+                CHUNK->global_cache[inst_idx] = e;
+            }
             break;
         }
         case OP_SETGLOBAL: {
@@ -274,11 +307,12 @@ dispatch:
                 fprintf(stderr,"vm: not callable\n"); REG(RA)=make_null(); break;
             }
             if (fn->is_native) {
-                /* collect args into temporary buffer */
-                Value *argv = nargs > 0 ? malloc(sizeof(Value)*nargs) : NULL;
-                for (int i=0;i<nargs;i++) argv[i]=REG(RB+1+i);
+                /* collect args into temporary buffer (stack scratch, fallback to heap) */
+                Value scratch[256];
+                Value *argv = (nargs > 0 && nargs <= 256) ? scratch : (nargs > 0 ? malloc(sizeof(Value)*nargs) : NULL);
+                for (int i = 0; i < nargs; i++) argv[i] = REG(RB+1+i);
                 Value res = fn->native_fn(vm, argv, nargs);
-                free(argv);
+                if (argv != scratch) free(argv);
                 REG(RA) = res;
                 break;
             }
@@ -425,7 +459,9 @@ dispatch:
             Value method_val = REG(RA + 1);
             if(method_val.type!=VAL_OBJ||!method_val.as.obj){REG(RA)=make_null();break;}
             const char *mname=((ObjString*)method_val.as.obj)->chars;
-            Value *argv = nargs>0 ? malloc(sizeof(Value)*nargs) : NULL;
+            /* collect args into temporary buffer (stack scratch, fallback to heap) */
+            Value scratch[256];
+            Value *argv = (nargs > 0 && nargs <= 256) ? scratch : (nargs > 0 ? malloc(sizeof(Value)*nargs) : NULL);
             /* Args start at RB+2; RB+1 holds the method name (loaded by compiler) */
             for(int i=0;i<nargs;i++) argv[i]=REG(RB+2+i);
             Value result=make_null(); bool handled=false;
@@ -443,8 +479,7 @@ dispatch:
                                     int rr=(int)RA;
                                     Value saved2[256]; int sn2=nargs<255?nargs:255;
                                     for(int i=0;i<sn2;i++) saved2[i]=argv[i];
-                                    free(argv); argv=NULL;
-                                    if(push_frame(vm,mf->chunk,rr)!=VM_OK){free(argv);return VM_ERROR;}
+                                    if(push_frame(vm,mf->chunk,rr)!=VM_OK){if(argv!=scratch)free(argv);return VM_ERROR;}
                                     FRAME.regs[0]=obj; /* self */
                                     for(int i=0;i<sn2;i++) FRAME.regs[i+1]=saved2[i];
                                     FRAME.has_self=true; FRAME.self_val=obj;
@@ -457,7 +492,7 @@ dispatch:
                     default: break;
                 }
             }
-            free(argv);
+            if (argv != scratch) free(argv);
             if(!handled) fprintf(stderr,"vm: unknown method '%s'\n",mname);
             REG(RA)=result;
             break;

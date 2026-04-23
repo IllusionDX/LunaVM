@@ -47,6 +47,14 @@ bool vm_get_global(VM *vm, const char *name, Value *out) {
     return false;
 }
 
+GlobalEntry *vm_resolve_global(VM *vm, const char *name) {
+    uint32_t bucket = hash_cstr(name) & (VM_GLOBAL_BUCKETS - 1);
+    for (GlobalEntry *e = vm->globals[bucket]; e; e = e->next) {
+        if (strcmp(e->name, name) == 0) return e;
+    }
+    return NULL;
+}
+
 void vm_define_native(VM *vm, const char *name, NativeFn fn) {
     ObjFunction *f = new_native_function(name, fn);
     Value v = make_obj((Object *)f);
