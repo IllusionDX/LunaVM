@@ -246,7 +246,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.0-alpha` | Done | Core language works. Basic VM, lexer, parser, compiler. REPL. |
 | `0.1.1-alpha` | Done | String concat optimization. Inline cache for global variable access. |
 | `0.1.2-alpha` | Done | F-strings (`f"Hello {name}"`). |
-| `0.1.3-alpha` | **Current** | Scratch buffer optimization. Test suite reorganization. |
+| `0.1.3-alpha` | Done | Scratch buffer optimization. Test suite reorganization. |
+| `0.1.4-alpha` | **Current** | Computed GOTO dispatch loop. |
 | `0.2.0` | Planned | Classes / enums solidified. Better error messages. |
 | `0.3.0` | Planned | Modules and imports actually work. |
 | `0.4.0` | Planned | Standard library (strings, math, io, os). |
