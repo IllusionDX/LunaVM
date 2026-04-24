@@ -211,7 +211,8 @@ typedef struct {
 /* Upvalue — pointer to a captured variable (either on stack or closed) */
 typedef struct ObjUpvalue {
     Object       obj;
-    Value       *location;      /* pointer to the live value */
+    int          stack_index;   /* offset into vm->stack (if open) */
+    bool         is_open;
     Value        closed;        /* heap storage when closed */
     struct ObjUpvalue *next;    /* linked list of open upvalues */
     int          frame_depth;   /* vm->frame_count when captured */
@@ -237,7 +238,7 @@ ObjInstance *new_instance(const char *class_name, const char *base_class,
 ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
 ObjException *new_exception(const char *message);
-ObjUpvalue  *new_upvalue(Value *slot);
+ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);
 
 /* ============================================================ */
@@ -253,9 +254,25 @@ char *value_to_string(Value v);     /* caller must free() */
 /* ARC memory management                                         */
 /* ============================================================ */
 
-void retain_obj(Object *obj);
-void release_obj(Object *obj);
 void free_object(Object *obj);
+
+static inline void retain_obj(Object *obj) {
+    if (obj) obj->refcount++;
+}
+
+static inline void release_obj(Object *obj) {
+    if (!obj) return;
+    if (--obj->refcount <= 0) free_object(obj);
+}
+
+static inline void retain_value(Value v) {
+    if (IS_OBJ(v)) retain_obj(AS_OBJ(v));
+}
+
+static inline void release_value(Value v) {
+    if (IS_OBJ(v)) release_obj(AS_OBJ(v));
+}
+
 void value_free_intern_table(void);
 
 /* ============================================================ */

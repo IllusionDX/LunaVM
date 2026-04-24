@@ -1120,7 +1120,6 @@ static int compile_function_value(Compiler *c, const char *name,
     }
 
     int fn_const = chunk_add_const(c->chunk, make_obj((Object*)fn));
-    release_obj((Object*)fn);
     return fn_const;
 }
 
@@ -1206,11 +1205,11 @@ static void compile_class(Compiler *c, Decl *decl) {
             proto->methods = realloc(proto->methods, sizeof(ObjFunction*) * proto->method_capacity);
         }
         proto->methods[proto->method_count++] = mf;
+        retain_obj((Object*)mf);
     }
 
     Value proto_val = make_obj((Object*)proto);
     vm_set_global(c->vm, name, proto_val, false);
-    release_obj((Object*)proto);
 }
 
 static void compile_enum(Compiler *c, Decl *decl) {

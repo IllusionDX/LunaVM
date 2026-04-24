@@ -180,7 +180,35 @@ void vm_free(VM *vm) {
 #define RKB         (ISK(B) ? CONST(Bx & 0xFF) : REG(B))
 #define RKC         (ISK(C) ? CONST(Bx & 0xFF) : REG(C))
 #define REG(i)      (vm->stack[FRAME.base + (i)])
+#define SET_REG(i, v) do { \
+    Value _new = (v); \
+    retain_value(_new); \
+    Value _old = REG(i); \
+    REG(i) = _new; \
+    release_value(_old); \
+} while (0)
+/* For values that are guaranteed NOT to be heap objects (int, bool, null, double).
+   Skips the no-op retain_value branch. */
+#define SET_REG_PRIM(i, v) do { \
+    Value _old = REG(i); \
+    REG(i) = (v); \
+    release_value(_old); \
+} while (0)
+#define SET_STACK(idx, v) do { \
+    Value _new = (v); \
+    retain_value(_new); \
+    Value _old = vm->stack[idx]; \
+    vm->stack[idx] = _new; \
+    release_value(_old); \
+} while (0)
 #define CONST(i)    (CHUNK->constants[(i)])
+#define SET_FIELD(inst, idx, v) do { \
+    Value _new = (v); \
+    retain_value(_new); \
+    Value _old = (inst)->fields[idx]; \
+    (inst)->fields[idx] = _new; \
+    release_value(_old); \
+} while (0)
 #define KSTR(n)     (((ObjString*)AS_OBJ(CONST(n)))->chars)
 #define KSTROBJ(n)  ((ObjString*)AS_OBJ(CONST(n)))
 
@@ -284,15 +312,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     /* 0.  MOVE                                                 */
     /* -------------------------------------------------------- */
     op_move:
-        REG(RA) = REG(RB);
+        SET_REG(RA, REG(RB));
         DECODE; goto *op_labels[OP(instr)];
 
     op_copy: {
-        Value v = REG(RB);
-        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
-        Value old = REG(RA);
-        REG(RA) = v;
-        if (IS_OBJ(old) && AS_OBJ(old)) release_obj(AS_OBJ(old));
+        SET_REG(RA, REG(RB));
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -305,64 +329,73 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     /* 1-4.  LOADK / LOADBOOL / LOADNULL / LOADI               */
     /* -------------------------------------------------------- */
     op_loadk:
-        REG(RA) = CONST(BX);
+        SET_REG(RA, CONST(BX));
         DECODE; goto *op_labels[OP(instr)];
     op_loadnull:
-        REG(RA) = make_null();
+        SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     op_loadi:
-        REG(RA) = make_int(SBX);
+        SET_REG_PRIM(RA, make_int(SBX));
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
     /* 35-36.  LOADTRUE / LOADFALSE                             */
     /* -------------------------------------------------------- */
     op_loadtrue:
-        REG(RA) = make_bool(true);
+        SET_REG_PRIM(RA, make_bool(true));
         DECODE; goto *op_labels[OP(instr)];
     op_loadfalse:
-        REG(RA) = make_bool(false);
+        SET_REG_PRIM(RA, make_bool(false));
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
     /* 5-9.  Arithmetic                                         */
     /* -------------------------------------------------------- */
-    op_add:  REG(RA) = do_arith(RKB, RKC, OP_ADD);  DECODE; goto *op_labels[OP(instr)];
-    op_sub:  REG(RA) = do_arith(RKB, RKC, OP_SUB);  DECODE; goto *op_labels[OP(instr)];
-    op_mul:  REG(RA) = do_arith(RKB, RKC, OP_MUL);  DECODE; goto *op_labels[OP(instr)];
-    op_div:  REG(RA) = do_arith(RKB, RKC, OP_DIV);  DECODE; goto *op_labels[OP(instr)];
-    op_mod:  REG(RA) = do_arith(RKB, RKC, OP_MOD);  DECODE; goto *op_labels[OP(instr)];
+    op_add: {
+        Value _L = RKB;
+        Value _R = RKC;
+        if (IS_INT(_L) && IS_INT(_R)) {
+            SET_REG_PRIM(RA, make_int(AS_INT(_L) + AS_INT(_R)));
+        } else {
+            SET_REG(RA, do_arith(_L, _R, OP_ADD));
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_sub:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_SUB));  DECODE; goto *op_labels[OP(instr)];
+    op_mul:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_MUL));  DECODE; goto *op_labels[OP(instr)];
+    op_div:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_DIV));  DECODE; goto *op_labels[OP(instr)];
+    op_mod:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_MOD));  DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
     /* 11-16.  Comparisons                                      */
     /* -------------------------------------------------------- */
-    op_lt: REG(RA) = do_cmp(RKB, RKC, OP_LT); DECODE; goto *op_labels[OP(instr)];
-    op_le: REG(RA) = do_cmp(RKB, RKC, OP_LE); DECODE; goto *op_labels[OP(instr)];
-    op_eq: REG(RA) = do_cmp(RKB, RKC, OP_EQ); DECODE; goto *op_labels[OP(instr)];
-    op_ne: REG(RA) = do_cmp(RKB, RKC, OP_NE); DECODE; goto *op_labels[OP(instr)];
-    op_gt: REG(RA) = do_cmp(RKB, RKC, OP_GT); DECODE; goto *op_labels[OP(instr)];
-    op_ge: REG(RA) = do_cmp(RKB, RKC, OP_GE); DECODE; goto *op_labels[OP(instr)];
+    op_lt: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_LT)); DECODE; goto *op_labels[OP(instr)];
+    op_le: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_LE)); DECODE; goto *op_labels[OP(instr)];
+    op_eq: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_EQ)); DECODE; goto *op_labels[OP(instr)];
+    op_ne: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_NE)); DECODE; goto *op_labels[OP(instr)];
+    op_gt: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_GT)); DECODE; goto *op_labels[OP(instr)];
+    op_ge: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_GE)); DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
     /* 17-22.  Bitwise                                          */
     /* -------------------------------------------------------- */
-    op_band: REG(RA) = make_int(to_i64(REG(RB)) & to_i64(REG(RC)));  DECODE; goto *op_labels[OP(instr)];
-    op_bor:  REG(RA) = make_int(to_i64(REG(RB)) | to_i64(REG(RC)));  DECODE; goto *op_labels[OP(instr)];
-    op_bxor: REG(RA) = make_int(to_i64(REG(RB)) ^ to_i64(REG(RC)));  DECODE; goto *op_labels[OP(instr)];
-    op_shl:  REG(RA) = make_int(to_i64(REG(RB)) << to_i64(REG(RC))); DECODE; goto *op_labels[OP(instr)];
-    op_shr:  REG(RA) = make_int(to_i64(REG(RB)) >> to_i64(REG(RC))); DECODE; goto *op_labels[OP(instr)];
-    op_bnot: REG(RA) = make_int(~to_i64(REG(RB))); DECODE; goto *op_labels[OP(instr)];
+    op_band: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) & to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_bor:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) | to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_bxor: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) ^ to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_shl:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) << to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
+    op_shr:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) >> to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
+    op_bnot: SET_REG_PRIM(RA, make_int(~to_i64(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
     /* 23-24.  NOT / NEG                                        */
     /* -------------------------------------------------------- */
-    op_not: REG(RA) = make_bool(!is_truthy(REG(RB))); DECODE; goto *op_labels[OP(instr)];
+    op_not: SET_REG_PRIM(RA, make_bool(!is_truthy(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
 
     op_neg: {
         Value v = REG(RB);
-        if (IS_INT(v))    { REG(RA) = make_int(-AS_INT(v));     DECODE; goto *op_labels[OP(instr)]; }
-        if (IS_DOUBLE(v)) { REG(RA) = make_double(-AS_DOUBLE(v)); DECODE; goto *op_labels[OP(instr)]; }
-        REG(RA) = make_null();
+        if (IS_INT(v))    { SET_REG_PRIM(RA, make_int(-AS_INT(v)));     DECODE; goto *op_labels[OP(instr)]; }
+        if (IS_DOUBLE(v)) { SET_REG_PRIM(RA, make_double(-AS_DOUBLE(v))); DECODE; goto *op_labels[OP(instr)]; }
+        SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -391,7 +424,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             char *s = value_to_string(fn_val);
             fprintf(stderr, "vm: attempt to call non-function (got %s)\n", s);
             free(s);
-            REG(ret_reg) = make_null();
+            SET_REG_PRIM(ret_reg, make_null());
             DECODE; goto *op_labels[OP(instr)];
         }
         if (AS_OBJ(fn_val)->type == OBJ_FUNCTION) {
@@ -400,12 +433,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
                 Value result = fn->native_fn(vm, scratch, nargs);
-                REG(ret_reg) = result;
+                SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     fprintf(stderr, "vm: call stack overflow\n");
-                    REG(ret_reg) = make_null();
+                    SET_REG_PRIM(ret_reg, make_null());
                     DECODE; goto *op_labels[OP(instr)];
                 }
                 CallFrame *caller = &FRAME;
@@ -436,12 +469,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
                 Value result = fn->native_fn(vm, scratch, nargs);
-                REG(ret_reg) = result;
+                SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     fprintf(stderr, "vm: call stack overflow\n");
-                    REG(ret_reg) = make_null();
+                    SET_REG_PRIM(ret_reg, make_null());
                     DECODE; goto *op_labels[OP(instr)];
                 }
                 CallFrame *caller = &FRAME;
@@ -469,7 +502,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             char *s = value_to_string(fn_val);
             fprintf(stderr, "vm: attempt to call non-function (type=%d, value=%s)\n", AS_OBJ(fn_val)->type, s);
             free(s);
-            REG(ret_reg) = make_null();
+            SET_REG_PRIM(ret_reg, make_null());
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -480,20 +513,28 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_ret: {
         uint8_t ret_reg = RA;
         Value retval = REG(ret_reg);
+        if (IS_OBJ(retval) && AS_OBJ(retval)) retain_obj(AS_OBJ(retval));
+
         if (vm->frame_count <= 1) {
+            close_upvalues(vm, 0);
+            for (int i = 0; i < FRAME.chunk->max_registers; i++) SET_REG(i, make_null());
             vm->stack_count = 0;
             vm->frame_count = 0;
+            if (IS_OBJ(retval) && AS_OBJ(retval)) release_obj(AS_OBJ(retval));
             return VM_OK;
         }
         CallFrame *callee = &FRAME;
         int old_base = callee->base;
         close_upvalues(vm, vm->frame_count);
+        for (int i = 0; i < callee->chunk->max_registers; i++) SET_REG(i, make_null());
+        
         vm_pop_try_frames(vm, vm->frame_count - 1);
         vm->frame_count--;
         CallFrame *caller = &FRAME;
         CHUNK = caller->chunk;
         IP = caller->ip;
-        vm->stack[caller->base + callee->ret_reg] = retval;
+        SET_REG(callee->ret_reg, retval);
+        if (IS_OBJ(retval) && AS_OBJ(retval)) release_obj(AS_OBJ(retval));
         vm->stack_count = old_base;
         DECODE;
         goto *op_labels[OP(instr)];
@@ -509,8 +550,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     /* -------------------------------------------------------- */
     /* 31-32.  NEWLIST / NEWDICT                                */
     /* -------------------------------------------------------- */
-    op_newlist: REG(RA) = make_obj((Object*)new_list((int)Bx)); DECODE; goto *op_labels[OP(instr)];
-    op_newdict: REG(RA) = make_obj((Object*)new_dict()); DECODE; goto *op_labels[OP(instr)];
+    op_newlist: SET_REG(RA, make_obj((Object*)new_list((int)Bx))); DECODE; goto *op_labels[OP(instr)];
+    op_newdict: SET_REG(RA, make_obj((Object*)new_dict())); DECODE; goto *op_labels[OP(instr)];
     
     op_listappend: {
         Value lst = REG(RA);
@@ -534,12 +575,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     list_add(keys, dict->entries[i].key);
                 }
             }
-            REG(RA) = make_obj((Object*)keys);
+            SET_REG(RA, make_obj((Object*)keys));
         } else {
-            REG(RA) = iter;
+            SET_REG(RA, iter);
         }
-        REG(RA + 1) = make_int(0);
-        REG(RA + 2) = make_null();
+        SET_REG_PRIM(RA + 1, make_int(0));
+        SET_REG_PRIM(RA + 2, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -547,15 +588,15 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value iter = REG(RA);
         Value state = REG(RA + 1);
         bool has_next = false;
-        
+
         if (IS_OBJ(iter) && AS_OBJ(iter)) {
             switch (AS_OBJ(iter)->type) {
                 case OBJ_LIST: {
                     ObjList *lst = (ObjList*)AS_OBJ(iter);
                     int idx = AS_INT(state);
                     if (idx < lst->count) {
-                        REG(RA + 2) = lst->items[idx];
-                        REG(RA + 1) = make_int(idx + 1);
+                        SET_REG(RA + 2, lst->items[idx]);
+                        SET_REG_PRIM(RA + 1, make_int(idx + 1));
                         has_next = true;
                     }
                     break;
@@ -565,8 +606,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     int idx = AS_INT(state);
                     if (idx < str->length) {
                         char buf[2] = {str->chars[idx], '\0'};
-                        REG(RA + 2) = make_obj((Object*)new_string(buf, 1));
-                        REG(RA + 1) = make_int(idx + 1);
+                        SET_REG(RA + 2, make_obj((Object*)new_string(buf, 1)));
+                        SET_REG_PRIM(RA + 1, make_int(idx + 1));
                         has_next = true;
                     }
                     break;
@@ -591,7 +632,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     /* -------------------------------------------------------- */
     op_new: {
         ObjString *cls_str = KSTROBJ(BX);
-        if (!cls_str) { REG(RA) = make_null(); DECODE; goto *op_labels[OP(instr)]; }
+        if (!cls_str) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
         const char *cls_name = cls_str->chars;
         Value proto_val;
         ObjInstance *proto = NULL;
@@ -602,10 +643,18 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         if (proto) {
             for (int i = 0; i < proto->field_count; i++)
                 instance_set_field(new_inst, proto->field_names[i], proto->fields[i]);
-            new_inst->methods = proto->methods;
-            new_inst->method_count = proto->method_count;
+            
+            if (proto->method_count > 0) {
+                new_inst->methods = malloc(sizeof(ObjFunction*) * proto->method_count);
+                memcpy(new_inst->methods, proto->methods, sizeof(ObjFunction*) * proto->method_count);
+                new_inst->method_count = proto->method_count;
+                new_inst->method_capacity = proto->method_count;
+                for (int i = 0; i < proto->method_count; i++) {
+                    if (new_inst->methods[i]) retain_obj((Object*)new_inst->methods[i]);
+                }
+            }
         }
-        REG(RA) = make_obj((Object*)new_inst);
+        SET_REG(RA, make_obj((Object*)new_inst));
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -618,22 +667,22 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         if (IS_OBJ(obj) && AS_OBJ(obj)) {
             switch (AS_OBJ(obj)->type) {
                 case OBJ_LIST:
-                    REG(RA) = IS_INT(key) ? list_get((ObjList*)AS_OBJ(obj), AS_INT(key)) : make_null();
+                    SET_REG(RA, IS_INT(key) ? list_get((ObjList*)AS_OBJ(obj), AS_INT(key)) : make_null());
                     break;
                 case OBJ_DICT:
-                    REG(RA) = dict_get((ObjDict*)AS_OBJ(obj), key);
+                    SET_REG(RA, dict_get((ObjDict*)AS_OBJ(obj), key));
                     break;
                 case OBJ_STRING: {
                     ObjString *s = (ObjString*)AS_OBJ(obj);
                     if (IS_INT(key) && AS_INT(key) >= 0 && AS_INT(key) < s->length)
-                        REG(RA) = make_obj((Object*)new_string(&s->chars[AS_INT(key)], 1));
+                        SET_REG(RA, make_obj((Object*)new_string(&s->chars[AS_INT(key)], 1)));
                     else
-                        REG(RA) = make_null();
+                        SET_REG_PRIM(RA, make_null());
                     break;
                 }
-                default: REG(RA) = make_null(); break;
+                default: SET_REG_PRIM(RA, make_null()); break;
             }
-        } else REG(RA) = make_null();
+        } else SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
     op_indexset: {
@@ -655,9 +704,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         uint8_t dst = RA;
         if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
             ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
-            REG(dst) = uv->location ? *uv->location : uv->closed;
+            SET_REG(dst, uv->is_open ? vm->stack[uv->stack_index] : uv->closed);
         } else {
-            REG(dst) = make_null();
+            SET_REG_PRIM(dst, make_null());
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -666,10 +715,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         uint8_t src = RA;
         if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
             ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
-            if (uv->location) {
-                *uv->location = REG(src);
+            Value val = REG(src);
+            if (uv->is_open) {
+                SET_STACK(uv->stack_index, val);
             } else {
-                uv->closed = REG(src);
+                if (IS_OBJ(val) && AS_OBJ(val)) retain_obj(AS_OBJ(val));
+                Value old = uv->closed;
+                uv->closed = val;
+                if (IS_OBJ(old) && AS_OBJ(old)) release_obj(AS_OBJ(old));
             }
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -689,25 +742,25 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 int idx = h & (IC_CACHE_SIZE - 1);
                 IC_MemberEntry *ic = &vm->member_ic[idx];
                 if (ic->inst == inst && ic->name == field) {
-                    REG(RA) = inst->fields[ic->index];
+                    SET_REG(RA, inst->fields[ic->index]);
                 } else {
                     int fi = -1;
                     for (int i = 0; i < inst->field_count; i++) {
                         if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
                     }
                     if (fi >= 0) {
-                        REG(RA) = inst->fields[fi];
+                        SET_REG(RA, inst->fields[fi]);
                         ic->inst = inst; ic->name = field; ic->index = fi;
                     } else {
-                        REG(RA) = make_null();
+                        SET_REG_PRIM(RA, make_null());
                     }
                 }
                 break;
             }
-            case OBJ_LIST:     REG(RA) = (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(list_length((ObjList*)AS_OBJ(obj))) : make_null(); break;
-            case OBJ_DICT:     REG(RA) = (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(dict_length((ObjDict*)AS_OBJ(obj))) : make_null(); break;
-            case OBJ_STRING:   REG(RA) = (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(((ObjString*)AS_OBJ(obj))->length) : make_null(); break;
-            default: REG(RA) = make_null(); break;
+            case OBJ_LIST:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(list_length((ObjList*)AS_OBJ(obj))) : make_null()); break;
+            case OBJ_DICT:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(dict_length((ObjDict*)AS_OBJ(obj))) : make_null()); break;
+            case OBJ_STRING:   SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(((ObjString*)AS_OBJ(obj))->length) : make_null()); break;
+            default: SET_REG_PRIM(RA, make_null()); break;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -720,14 +773,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             int idx = h & (IC_CACHE_SIZE - 1);
             IC_MemberEntry *ic = &vm->member_ic[idx];
             if (ic->inst == inst && ic->name == field) {
-                inst->fields[ic->index] = REG(RB);
+                SET_FIELD(inst, ic->index, REG(RB));
             } else {
                 int fi = -1;
                 for (int i = 0; i < inst->field_count; i++) {
                     if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
                 }
                 if (fi >= 0) {
-                    inst->fields[fi] = REG(RB);
+                    SET_FIELD(inst, fi, REG(RB));
                     ic->inst = inst; ic->name = field; ic->index = fi;
                 } else {
                     instance_set_field(inst, field->chars, REG(RB));
@@ -746,7 +799,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         uint8_t nargs   = C;
         Value method_val = REG(obj_reg + 1);
         Value obj = REG(obj_reg);
-        if (!IS_OBJ(method_val) || !AS_OBJ(method_val) || AS_OBJ(method_val)->type != OBJ_STRING) { REG(ret_reg) = make_null(); DECODE; goto *op_labels[OP(instr)]; }
+        if (!IS_OBJ(method_val) || !AS_OBJ(method_val) || AS_OBJ(method_val)->type != OBJ_STRING) { SET_REG_PRIM(ret_reg, make_null()); DECODE; goto *op_labels[OP(instr)]; }
         const char *mname = ((ObjString*)AS_OBJ(method_val))->chars;
 
         Value scratch[256];
@@ -776,6 +829,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     }
                     if (mi >= 0) {
                         ObjFunction *m = obj_inst->methods[mi];
+                        SET_REG(obj_reg + 1, obj); // Bind 'self' to first arg slot
                         if (m->is_native) {
                             result = m->native_fn(vm, scratch, nargs);
                         } else {
@@ -810,8 +864,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 default: break;
             }
         }
-        if (handled) REG(ret_reg) = result;
-        else { fprintf(stderr, "vm: unknown method '%s'\n", mname); REG(ret_reg) = make_null(); }
+        if (handled) SET_REG(ret_reg, result);
+        else { fprintf(stderr, "vm: unknown method '%s'\n", mname); SET_REG_PRIM(ret_reg, make_null()); }
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -824,7 +878,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value fn_val = CONST(k);
         if (!IS_OBJ(fn_val) || AS_OBJ(fn_val)->type != OBJ_FUNCTION) {
             fprintf(stderr, "vm: CLOSURE needs function constant\n");
-            REG(dst) = make_null();
+            SET_REG(dst, make_null());
             DECODE; goto *op_labels[OP(instr)];
         }
         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
@@ -840,8 +894,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 else
                     cl->upvalues[i] = NULL;
             }
+            if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
         }
-        REG(dst) = make_obj((Object*)cl);
+        SET_REG(dst, make_obj((Object*)cl));
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -857,8 +912,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     /* -------------------------------------------------------- */
     op_getglobal: {
         Value v;
-        if (vm_get_global_fast(vm, KSTROBJ(BX), &v)) REG(RA) = v;
-        else REG(RA) = make_null();
+        if (vm_get_global_fast(vm, KSTROBJ(BX), &v)) SET_REG(RA, v);
+        else SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -886,7 +941,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     vm->frame_count--;
                 }
                 vm->stack_count = tf->stack_count;
-                REG(tf->exc_reg) = exc;
+                SET_REG(tf->exc_reg, exc);
                 int catch_ip = tf->catch_ip;
                 vm->try_stack = tf->next;
                 free(tf);
@@ -962,17 +1017,18 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
 /* ============================================================ */
 
 ObjUpvalue *capture_upvalue(VM *vm, int stack_idx) {
-    Value *slot = &vm->stack[stack_idx];
     ObjUpvalue *prev = NULL;
     ObjUpvalue *uv = vm->open_upvalues;
-    while (uv && uv->location > slot) {
+    while (uv && uv->stack_index > stack_idx) {
         prev = uv;
         uv = uv->next;
     }
-    if (uv && uv->location == slot) return uv;
-    ObjUpvalue *created = new_upvalue(slot);
+    if (uv && uv->is_open && uv->stack_index == stack_idx) return uv;
+    
+    ObjUpvalue *created = new_upvalue(stack_idx);
     created->next = uv;
     created->frame_depth = vm->frame_count;
+    retain_obj((Object*)created); // Owned by the open_upvalues list
     if (prev) prev->next = created;
     else vm->open_upvalues = created;
     return created;
@@ -981,9 +1037,11 @@ ObjUpvalue *capture_upvalue(VM *vm, int stack_idx) {
 static void close_upvalues(VM *vm, int frame_depth) {
     while (vm->open_upvalues && vm->open_upvalues->frame_depth >= frame_depth) {
         ObjUpvalue *uv = vm->open_upvalues;
-        uv->closed = *uv->location;
-        uv->location = &uv->closed;
+        uv->closed = vm->stack[uv->stack_index];
+        if (IS_OBJ(uv->closed) && AS_OBJ(uv->closed)) retain_obj(AS_OBJ(uv->closed));
+        uv->is_open = false;
         vm->open_upvalues = uv->next;
+        release_obj((Object*)uv); // No longer owned by the list
     }
 }
 

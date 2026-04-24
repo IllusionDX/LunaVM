@@ -122,7 +122,6 @@ int chunk_add_string(Chunk *chunk, const char *cstr) {
     }
     ObjString *obj = new_string(cstr, (int)strlen(cstr));
     int idx = chunk_add_const(chunk, make_obj((Object *)obj));
-    release_obj((Object *)obj);  /* chunk_add_const retained it; balance new_string ref */
     return idx;
 }
 

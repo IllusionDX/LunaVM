@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <math.h>
 #include "value.h"
+#include "chunk.h"
 
 /* ============================================================ */
 /* Hashing                                                       */
@@ -109,13 +110,12 @@ ObjString *new_string(const char *chars, int length) {
     uint32_t hash = fnv1a(chars, length);
     ObjString *existing = intern_find(chars, length, hash);
     if (existing) {
-        retain_obj((Object*)existing);
         return existing;
     }
 
     ObjString *s = malloc(sizeof(ObjString));
     if (!s) { fprintf(stderr, "OOM\n"); exit(1); }
-    s->obj.type = OBJ_STRING; s->obj.refcount = 1; s->obj.next = NULL;
+    s->obj.type = OBJ_STRING; s->obj.refcount = 0; s->obj.next = NULL;
     s->chars = malloc(length + 1);
     if (!s->chars) { fprintf(stderr, "OOM\n"); exit(1); }
     memcpy(s->chars, chars, length);
@@ -129,7 +129,7 @@ ObjString *new_string(const char *chars, int length) {
 ObjList *new_list(int capacity) {
     ObjList *l = malloc(sizeof(ObjList));
     if (!l) { fprintf(stderr, "OOM\n"); exit(1); }
-    l->obj.type = OBJ_LIST; l->obj.refcount = 1; l->obj.next = NULL;
+    l->obj.type = OBJ_LIST; l->obj.refcount = 0; l->obj.next = NULL;
     l->count = 0;
     l->capacity = capacity > 0 ? capacity : 0;
     if (l->capacity > 0) {
@@ -145,7 +145,7 @@ ObjDict *new_dict(void) {
     ObjDict *d = malloc(sizeof(ObjDict));
     if (!d) { fprintf(stderr, "OOM\n"); exit(1); }
     d->obj.type = OBJ_DICT;
-    d->obj.refcount = 1;
+    d->obj.refcount = 0;
     d->obj.next = NULL;
     d->indices = NULL;
     d->entries = NULL;
@@ -159,7 +159,7 @@ ObjDict *new_dict(void) {
 ObjInstance *new_instance(const char *class_name, const char *base_class, int cap) {
     ObjInstance *inst = malloc(sizeof(ObjInstance));
     if (!inst) { fprintf(stderr, "OOM\n"); exit(1); }
-    inst->obj.type = OBJ_INSTANCE; inst->obj.refcount = 1; inst->obj.next = NULL;
+    inst->obj.type = OBJ_INSTANCE; inst->obj.refcount = 0; inst->obj.next = NULL;
     inst->class_name    = strdup(class_name);
     inst->base_class    = base_class ? strdup(base_class) : NULL;
     inst->field_capacity = cap > 0 ? cap : 4;
@@ -174,7 +174,7 @@ ObjInstance *new_instance(const char *class_name, const char *base_class, int ca
 ObjFunction *new_function(const char *name) {
     ObjFunction *f = malloc(sizeof(ObjFunction));
     if (!f) { fprintf(stderr, "OOM\n"); exit(1); }
-    f->obj.type = OBJ_FUNCTION; f->obj.refcount = 1; f->obj.next = NULL;
+    f->obj.type = OBJ_FUNCTION; f->obj.refcount = 0; f->obj.next = NULL;
     f->name        = strdup(name ? name : "<fn>");
     f->chunk       = NULL;
     f->param_names = NULL;
@@ -196,20 +196,21 @@ ObjFunction *new_native_function(const char *name, NativeFn fn) {
 ObjException *new_exception(const char *message) {
     ObjException *e = malloc(sizeof(ObjException));
     if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
-    e->obj.type = OBJ_EXCEPTION; e->obj.refcount = 1; e->obj.next = NULL;
+    e->obj.type = OBJ_EXCEPTION; e->obj.refcount = 0; e->obj.next = NULL;
     e->message = strdup(message);
     e->line    = 0;
     e->file    = strdup("<unknown>");
     return e;
 }
 
-ObjUpvalue *new_upvalue(Value *slot) {
+ObjUpvalue *new_upvalue(int stack_index) {
     ObjUpvalue *uv = malloc(sizeof(ObjUpvalue));
     if (!uv) { fprintf(stderr, "OOM\n"); exit(1); }
-    uv->obj.type = OBJ_UPVALUE; uv->obj.refcount = 1; uv->obj.next = NULL;
-    uv->location = slot;
-    uv->closed   = make_null();
-    uv->next     = NULL;
+    uv->obj.type = OBJ_UPVALUE; uv->obj.refcount = 0; uv->obj.next = NULL;
+    uv->stack_index = stack_index;
+    uv->is_open     = true;
+    uv->closed      = make_null();
+    uv->next        = NULL;
     uv->frame_depth = 0;
     return uv;
 }
@@ -217,7 +218,7 @@ ObjUpvalue *new_upvalue(Value *slot) {
 ObjClosure *new_closure(ObjFunction *function) {
     ObjClosure *cl = malloc(sizeof(ObjClosure));
     if (!cl) { fprintf(stderr, "OOM\n"); exit(1); }
-    cl->obj.type = OBJ_CLOSURE; cl->obj.refcount = 1; cl->obj.next = NULL;
+    cl->obj.type = OBJ_CLOSURE; cl->obj.refcount = 0; cl->obj.next = NULL;
     cl->function = function;
     retain_obj((Object*)function);
     cl->upvalue_count = function->upvalue_count;
@@ -231,19 +232,12 @@ ObjClosure *new_closure(ObjFunction *function) {
 /* ARC memory management                                         */
 /* ============================================================ */
 
-void retain_obj(Object *obj) {
-    if (obj) obj->refcount++;
-}
-
-static void release_value_inline(Value v) {
-    if (IS_OBJ(v) && AS_OBJ(v)) release_obj(AS_OBJ(v));
-}
 
 static void free_dict_internal(ObjDict *d) {
     for (int i = 0; i < d->next_entry; i++) {
         if (d->entries[i].key != EMPTY_VAL) {
-            release_value_inline(d->entries[i].key);
-            release_value_inline(d->entries[i].value);
+            release_value(d->entries[i].key);
+            release_value(d->entries[i].value);
         }
     }
     if (d->indices) free(d->indices);
@@ -257,17 +251,23 @@ void free_object(Object *obj) {
         case OBJ_STRING: { ObjString *s = (ObjString *)obj; intern_remove(s); free(s->chars); free(s); break; }
         case OBJ_LIST: {
             ObjList *l = (ObjList *)obj;
-            for (int i = 0; i < l->count; i++) release_value_inline(l->items[i]);
+            for (int i = 0; i < l->count; i++) release_value(l->items[i]);
             free(l->items); free(l); break;
         }
         case OBJ_DICT:     free_dict_internal((ObjDict *)obj); break;
         case OBJ_INSTANCE: {
             ObjInstance *inst = (ObjInstance *)obj;
-            free(inst->class_name);
+            if (inst->class_name) free(inst->class_name);
             if (inst->base_class) free(inst->base_class);
             for (int i = 0; i < inst->field_count; i++) {
-                release_value_inline(inst->fields[i]);
+                release_value(inst->fields[i]);
                 if (inst->field_names[i]) free(inst->field_names[i]);
+            }
+            if (inst->methods) {
+                for (int i = 0; i < inst->method_count; i++) {
+                    if (inst->methods[i]) release_obj((Object*)inst->methods[i]);
+                }
+                free(inst->methods);
             }
             free(inst->field_names); free(inst->fields); free(inst); break;
         }
@@ -278,8 +278,11 @@ void free_object(Object *obj) {
                 for (int i = 0; i < f->param_count; i++) free(f->param_names[i]);
                 free(f->param_names);
             }
+            if (f->chunk) {
+                chunk_free(f->chunk);
+                free(f->chunk);
+            }
             free(f->upvalue_descriptors);
-            /* chunk is owned by the compiler/program, not the function object */
             free(f); break;
         }
         case OBJ_EXCEPTION: {
@@ -288,7 +291,7 @@ void free_object(Object *obj) {
         }
         case OBJ_UPVALUE: {
             ObjUpvalue *uv = (ObjUpvalue *)obj;
-            release_value_inline(uv->closed);
+            release_value(uv->closed);
             free(uv); break;
         }
         case OBJ_CLOSURE: {
@@ -304,11 +307,6 @@ void free_object(Object *obj) {
     }
 }
 
-void release_obj(Object *obj) {
-    if (!obj) return;
-    obj->refcount--;
-    if (obj->refcount <= 0) free_object(obj);
-}
 
 /* ============================================================ */
 /* Value predicates                                              */
@@ -420,7 +418,7 @@ Value instance_get_field(ObjInstance *inst, const char *name) {
 void instance_set_field(ObjInstance *inst, const char *name, Value value) {
     for (int i = 0; i < inst->field_count; i++) {
         if (inst->field_names[i] && strcmp(inst->field_names[i], name) == 0) {
-            release_value_inline(inst->fields[i]);
+            release_value(inst->fields[i]);
             if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
             inst->fields[i] = value;
             return;
@@ -469,7 +467,7 @@ Value list_remove(ObjList *list, int index) {
     if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
     memmove(&list->items[index], &list->items[index + 1], (list->count - index - 1) * sizeof(Value));
     list->count--;
-    release_value_inline(v);
+    release_value(v);
     return v;
 }
 
@@ -479,7 +477,7 @@ Value list_pop(ObjList *list) {
 }
 
 void list_clear(ObjList *list) {
-    for (int i = 0; i < list->count; i++) release_value_inline(list->items[i]);
+    for (int i = 0; i < list->count; i++) release_value(list->items[i]);
     list->count = 0;
 }
 
@@ -490,7 +488,7 @@ Value list_get(ObjList *list, int index) {
 
 void list_set(ObjList *list, int index, Value value) {
     if (index < 0 || index >= list->count) { fprintf(stderr, "list: index out of bounds\n"); return; }
-    release_value_inline(list->items[index]);
+    release_value(list->items[index]);
     if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     list->items[index] = value;
 }
@@ -556,7 +554,7 @@ void dict_set(ObjDict *d, Value key, Value value) {
         } else {
             int e_idx = d->indices[i];
             if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
-                release_value_inline(d->entries[e_idx].value);
+                release_value(d->entries[e_idx].value);
                 if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
                 d->entries[e_idx].value = value;
                 return;
@@ -632,8 +630,8 @@ Value dict_remove(ObjDict *d, Value key) {
                 d->indices[i] = -2;
                 Value v = d->entries[e_idx].value;
                 if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
-                release_value_inline(d->entries[e_idx].key);
-                release_value_inline(d->entries[e_idx].value);
+                release_value(d->entries[e_idx].key);
+                release_value(d->entries[e_idx].value);
                 d->entries[e_idx].key = EMPTY_VAL;
                 d->entries[e_idx].value = make_null();
                 d->entry_count--;
@@ -650,8 +648,8 @@ Value dict_remove(ObjDict *d, Value key) {
 void dict_clear(ObjDict *d) {
     for (int i = 0; i < d->next_entry; i++) {
         if (d->entries[i].key != EMPTY_VAL) {
-            release_value_inline(d->entries[i].key);
-            release_value_inline(d->entries[i].value);
+            release_value(d->entries[i].key);
+            release_value(d->entries[i].value);
         }
     }
     for (int i = 0; i < d->capacity; i++) d->indices[i] = -1;

@@ -84,7 +84,6 @@ void vm_define_native(VM *vm, const char *name, NativeFn fn) {
     ObjFunction *f = new_native_function(name, fn);
     Value v = make_obj((Object *)f);
     vm_set_global(vm, name, v, true);
-    release_obj((Object *)f);
 }
 
 /* ============================================================ */
