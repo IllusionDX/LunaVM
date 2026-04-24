@@ -23,13 +23,15 @@ var count = 0                    # mutable, block scoped
 const VERSION = "1.0.0"           # immutable after assignment
 ```
 
-**Type hints** are optional (whitespace around `:` is flexible):
+**Type hints** are optional and currently parsed but ignored (whitespace around `:` is flexible):
 
 ```luna
 var x = 5                       # no hint
 var x: int = 5                  # recommended
 var x : int = 5                 # also valid
 ```
+
+> Note: `list`, `dict`, `int`, `float`, `string`, `bool`, and `char` are reserved keywords and cannot be used as variable names. This restriction will be lifted in a future release.
 
 ### Base Types
 
@@ -43,16 +45,15 @@ var x : int = 5                 # also valid
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `int` | signed integer | `var n = 42` |
-| `uint` | unsigned integer | `var u = 42` |
+| `int` | signed 32-bit integer | `var n = 42` |
 
 **Float:**
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `float` | 32-bit IEEE-754 | `var f = 3.14` |
-| `double` | 64-bit IEEE-754 | `var d = 3.14159` |
-| `NaN` | Not-a-Number (IEEE 754) | `var n = 0/0` |
+| `float` | 64-bit IEEE-754 (runtime) | `var f = 3.14` |
+
+> `NaN` is a runtime value (`0/0`), not a type hint.
 
 **Other:**
 
@@ -94,7 +95,7 @@ var vals = config.values()     # all values
 
 ```luna
 var key = "player_name"
-var player_data[key] = "Hero"
+player_data[key] = "Hero"
 ```
 
 ### Operators
@@ -108,6 +109,22 @@ var player_data[key] = "Hero"
 **Assignment:** `=`, `+=`, `-=`, `*=`, `/=`
 
 **Bitwise:** `&`, `|`, `^`, `<<`, `>>`, `~`
+
+### F-Strings
+
+Interpolated strings with `f"..."`:
+
+```luna
+var name = "Luna"
+print(f"Hello, {name}!")
+```
+
+### List Comprehensions
+
+```luna
+var squares = [x * x for x in range(1, 6)]
+var evens = [x for x in items if x % 2 == 0]
+```
 
 ### Escape Sequences
 
@@ -195,16 +212,18 @@ class Entity:
     def is_alive() -> bool:
         return self.hp > 0
 
-class Player extends Entity:
+class Player:
     var score
 
     def _init(name):
-        super(name, 100)
+        self.name = name
         self.score = 0
 
     def add_score(points):
         self.score = self.score + points
 ```
+
+> Class inheritance (`extends`, `super`) is not yet implemented.
 
 **Instantiation:** Use `new` keyword:
 
@@ -282,6 +301,13 @@ for i in range(0, 10):
 
 **Loop control:** `break`, `continue`
 
+**Pass:**
+
+```luna
+def placeholder():
+    pass
+```
+
 ```luna
 for i in range(0, 100):
     if i % 2 == 0:
@@ -321,22 +347,16 @@ Single-line comments:
 var value = 42
 ```
 
-Multi-line comments:
+> Multi-line comments (`"""..."""`) are planned for 0.2.0.
+
+### Import (Placeholder)
 
 ```luna
-"""
-Multi-line
-comment
-"""
+import math
 ```
 
-### Import
-
-```luna
-import math              # import entire module
-from math import sin     # import specific
-from math import *      # import all
-```
+> `import` is parsed but not yet functional. Module resolution is planned for 0.3.0.
+> `from ... import` syntax is parsed but has no runtime support.
 
 ### Error Handling
 
@@ -398,7 +418,7 @@ main()
 | **Scope** | Block scoped (`var` at module level = module scoped) |
 | **Pass by reference** | Use return-and-assign |
 | **Collections** | Lists (dynamic), Dicts |
-| **Module/import** | `import x`, `from x import y`, `from x import *` |
+| **Module/import** | `import x` (parse-only placeholder). `from x import y` / `from x import *` parsed but not functional. |
 | **Error handling** | Exceptions |
 | **Semicolon insertion** | Auto-insert like Go |
 | **Loop control** | `break`, `continue` |
@@ -416,10 +436,4 @@ LunaScript is designed to be simple and flexible. The dynamic typing model allow
 
 ## Roadmap
 
-### V2
-- Array slicing and comprehensions
-
-### V3
-- Coroutines / async
-- JIT compiler
-- Type specialization from hints
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the full release roadmap and technical details.
