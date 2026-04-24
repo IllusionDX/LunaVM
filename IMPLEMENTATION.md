@@ -276,10 +276,6 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `1.0.0` | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
 
 > **Note:** A package manager (`luna install`) is not guaranteed and may ship after 1.0 depending on community demand and maintenance bandwidth.
-| `0.7.0` | V2 optimized VM lands. Type specialization from hints (e.g. monomorphic inline caches for `int`-hinted variables). |
-| `0.8.0` | V3 simple JIT. |
-| `0.9.0-beta` | Spec freeze, release candidate phase. |
-| `1.0.0` | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
 
 **Rule of thumb:** bump the minor version when a user-facing feature ships (e.g. package manager, stdlib module); bump the engine generation when the *runtime* gets a major architectural upgrade. They do not have to stay in lockstep.
 

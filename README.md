@@ -428,7 +428,7 @@ main()
 
 ---
 
-## Notes
+## 📝 Notes
 
 LunaScript is designed to be simple and flexible. The dynamic typing model allows rapid development while optional type hints provide documentation and optimization opportunities.
 
