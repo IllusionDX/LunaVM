@@ -51,6 +51,10 @@ test: $(TARGET)
 debug: CFLAGS = -Wall -Wextra -std=c99 -O0 -g -DDEBUG
 debug: $(TARGET)
 
+# Release build
+release: CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG
+release: $(TARGET)
+
 # Static analysis
 analyze:
 	clang --analyze $(SOURCES) $(HEADERS) 2>/dev/null || echo "Clang not available"

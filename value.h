@@ -130,12 +130,15 @@ typedef struct {
     uint32_t hash;
 } ObjString;
 
-/* List — dynamic array (no embedded type info — dynamic typing) */
+/* List — dynamic array (no embedded type info — dynamic typing)
+ * Small Object Optimization: up to 4 elements stored inline
+ * to avoid a separate heap allocation. */
 typedef struct {
     Object  obj;
-    Value  *items;
+    Value  *items;           /* NULL = using inline storage */
     int     count;
     int     capacity;
+    Value   inline_items[4]; /* inline buffer for SOO */
 } ObjList;
 
 /* Dict entry in the dense array */
@@ -145,15 +148,18 @@ typedef struct {
     Value    value;
 } ObjDictEntry;
 
-/* Dict — Compact Ordered Dict maintaining insertion order */
+/* Dict — Compact Ordered Dict maintaining insertion order
+ * Small Object Optimization: up to 4 entries stored inline
+ * with linear search to avoid sparse+dense allocations. */
 typedef struct {
     Object     obj;
-    int       *indices;      /* Sparse hash table (-1=empty, -2=deleted, >=0=index) */
-    ObjDictEntry *entries;      /* Dense array of entries */
-    int        capacity;     /* Size of indices array (power of 2) */
-    int        entry_count;  /* Number of valid entries */
-    int        next_entry;   /* Next available index in entries array */
-    int        deleted_count;/* Number of tombstones */
+    int       *indices;          /* NULL = using SOO (linear search) */
+    ObjDictEntry *entries;       /* NULL = using SOO */
+    int        capacity;         /* Size of indices array (power of 2) */
+    int        entry_count;      /* Number of valid entries */
+    int        next_entry;       /* Next available index in entries array */
+    int        deleted_count;    /* Number of tombstones */
+    ObjDictEntry inline_entries[4]; /* inline buffer for SOO */
 } ObjDict;
 
 /* Class instance — fields as a parallel-array open dict */

@@ -570,9 +570,13 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         if (IS_OBJ(iter) && AS_OBJ(iter) && AS_OBJ(iter)->type == OBJ_DICT) {
             ObjDict *dict = (ObjDict*)AS_OBJ(iter);
             ObjList *keys = new_list(dict->entry_count);
-            for (int i = 0; i < dict->next_entry; i++) {
-                if (dict->entries[i].key != EMPTY_VAL) {
-                    list_add(keys, dict->entries[i].key);
+            if (dict->indices == NULL) {
+                for (int i = 0; i < dict->entry_count; i++)
+                    list_add(keys, dict->inline_entries[i].key);
+            } else {
+                for (int i = 0; i < dict->next_entry; i++) {
+                    if (dict->entries[i].key != EMPTY_VAL)
+                        list_add(keys, dict->entries[i].key);
                 }
             }
             SET_REG(RA, make_obj((Object*)keys));
@@ -595,7 +599,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     ObjList *lst = (ObjList*)AS_OBJ(iter);
                     int idx = AS_INT(state);
                     if (idx < lst->count) {
-                        SET_REG(RA + 2, lst->items[idx]);
+                        Value item = lst->items ? lst->items[idx] : lst->inline_items[idx];
+                        SET_REG(RA + 2, item);
                         SET_REG_PRIM(RA + 1, make_int(idx + 1));
                         has_next = true;
                     }
