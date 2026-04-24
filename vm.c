@@ -401,6 +401,8 @@ void vm_free(VM *vm) {
         vm->globals[i] = NULL;
     }
 
+    close_upvalues(vm, 0);
+
     // Release any values still on the stack so their refcounts drop
     for (int i = 0; i < vm->stack_count; i++) {
         if (IS_OBJ(vm->stack[i]) && AS_OBJ(vm->stack[i]))
@@ -408,8 +410,6 @@ void vm_free(VM *vm) {
     }
     free(vm->stack);
     vm->stack = NULL;
-
-    close_upvalues(vm, 0);
 
     while (vm->try_stack) {
         TryFrame *tf = vm->try_stack;

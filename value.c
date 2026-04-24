@@ -203,6 +203,12 @@ static void dict_transition_to_heap(ObjDict *d) {
         d->entries[e_idx] = old[i];
         d->entry_count++;
     }
+
+    /* Release the old inline references — ownership has moved to heap entries. */
+    for (int i = 0; i < old_count; i++) {
+        release_value(old[i].key);
+        release_value(old[i].value);
+    }
 }
 
 ObjInstance *new_instance(const char *class_name, const char *base_class, int cap) {
