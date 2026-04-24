@@ -223,6 +223,8 @@ static void mark_object(Object *obj) {
 }
 
 void mark_and_sweep(VM *vm) {
+    if (gc_collecting) return;
+
     // 1. Mark roots
     for (int i = 0; i < vm->stack_count; i++) {
         mark_value(vm->stack[i]);
@@ -249,7 +251,10 @@ void mark_and_sweep(VM *vm) {
     }
     mark_value(vm->last_exception);
 
-    // Removed inline cache marking to avoid dangling pointer segfaults
+    // Invalidate inline caches — any cached object may have been collected.
+    memset(vm->global_ic, 0, sizeof(vm->global_ic));
+    memset(vm->member_ic, 0, sizeof(vm->member_ic));
+    memset(vm->method_ic, 0, sizeof(vm->method_ic));
 
     // 2. Collect unmarked garbage
     Object *garbage = NULL;
@@ -395,15 +400,39 @@ void vm_free(VM *vm) {
         }
         vm->globals[i] = NULL;
     }
-    Object *o = vm->objects;
-    while (o) { Object *nx = o->next; free_object(o); o = nx; }
+
+    // Release any values still on the stack so their refcounts drop
+    for (int i = 0; i < vm->stack_count; i++) {
+        if (IS_OBJ(vm->stack[i]) && AS_OBJ(vm->stack[i]))
+            release_obj(AS_OBJ(vm->stack[i]));
+    }
+    free(vm->stack);
+    vm->stack = NULL;
+
+    close_upvalues(vm, 0);
+
     while (vm->try_stack) {
         TryFrame *tf = vm->try_stack;
         vm->try_stack = tf->next;
         free(tf);
     }
-    close_upvalues(vm, 0);
+
     value_free_intern_table();
+
+    // Free any remaining objects (shutdown path — no cascading releases).
+    gc_collecting = true;
+    Object *obj = all_objects;
+    while (obj) {
+        Object *next = obj->next;
+        obj->next = NULL;
+        obj->prev = NULL;
+        free_object_container(obj);
+        obj = next;
+    }
+    all_objects = NULL;
+    allocated_objects = 0;
+    bytes_allocated = 0;
+    gc_collecting = false;
 }
 
 /* ============================================================ */
