@@ -77,7 +77,7 @@ static void skip_whitespace(Lexer *lexer) {
 
 static void skip_comment(Lexer *lexer) {
     if (peek(lexer) == '#') {
-        while (!is_at_end(lexer) && peek(lexer) != '\n') {
+        while (!is_at_end(lexer) && peek(lexer) != '\n' && peek(lexer) != '\r') {
             advance(lexer);
         }
     }
@@ -307,9 +307,13 @@ static Token *scan_token(Lexer *lexer) {
     }
 
     if (lexer->at_line_start) {
-        if (peek(lexer) == '\n' || peek(lexer) == '\0') {
+        if (peek(lexer) == '\n' || peek(lexer) == '\r' || peek(lexer) == '\0') {
             lexer->at_line_start = true;
-            if (peek(lexer) == '\n') { advance(lexer); return scan_token(lexer); }
+            if (peek(lexer) == '\n' || peek(lexer) == '\r') {
+                if (peek(lexer) == '\r' && peek_next(lexer) == '\n') advance(lexer);
+                advance(lexer);
+                return scan_token(lexer);
+            }
         } else if (peek(lexer) == '#') {
             // skip comment check at line start, handled later
         } else {
@@ -317,7 +321,7 @@ static Token *scan_token(Lexer *lexer) {
             while (peek(lexer) == ' ') { advance(lexer); indent++; }
             while (peek(lexer) == '\t') { advance(lexer); indent += 4; }
             
-            if (peek(lexer) == '\n' || peek(lexer) == '\0' || peek(lexer) == '#') {
+            if (peek(lexer) == '\n' || peek(lexer) == '\r' || peek(lexer) == '\0' || peek(lexer) == '#') {
                 lexer->at_line_start = true;
                 return scan_token(lexer);
             }
@@ -381,9 +385,14 @@ static Token *scan_token(Lexer *lexer) {
         return scan_token(lexer);
     }
     
-    if (c == '\n') {
+    if (c == '\n' || c == '\r') {
         lexer->at_line_start = true;
-        advance(lexer);
+        if (c == '\r' && peek_next(lexer) == '\n') {
+            advance(lexer); /* consume \r */
+            advance(lexer); /* consume \n */
+        } else {
+            advance(lexer);
+        }
         return make_token(lexer, TOK_NEWLINE, "\\n", 1);
     }
     

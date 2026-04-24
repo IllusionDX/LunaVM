@@ -77,11 +77,11 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
             case OP_SUB: return make_int(li - ri);
             case OP_MUL: return make_int(li * ri);
             case OP_DIV: {
-                if (!ri) { fprintf(stderr, "vm: div/0\n"); return make_null(); }
+                if (!ri) return make_null();
                 return make_int(li / ri);
             }
             case OP_MOD: {
-                if (!ri) { fprintf(stderr, "vm: mod/0\n"); return make_null(); }
+                if (!ri) return make_null();
                 return make_int(li % ri);
             }
             default: return make_null();
@@ -95,11 +95,11 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         case OP_SUB: return make_double(l - r);
         case OP_MUL: return make_double(l * r);
         case OP_DIV: {
-            if (r == 0.0) { fprintf(stderr, "vm: div/0\n"); return make_null(); }
+            if (r == 0.0) return make_null();
             return make_double(l / r);
         }
         case OP_MOD: {
-            if (r == 0.0) { fprintf(stderr, "vm: mod/0\n"); return make_null(); }
+            if (r == 0.0) return make_null();
             return make_double(fmod(l, r));
         }
         default: return make_null();
@@ -226,7 +226,10 @@ void vm_free(VM *vm) {
 #define KSTROBJ(n)  ((ObjString*)AS_OBJ(CONST(n)))
 
 VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
-    if (vm->frame_count >= MAX_FRAMES) { fprintf(stderr, "vm: frame overflow\n"); return VM_ERROR; }
+    if (vm->frame_count >= MAX_FRAMES) {
+        vm->last_exception = make_obj((Object*)new_exception("vm: frame overflow"));
+        return VM_EXCEPTION;
+    }
     CallFrame *frame = &vm->frames[vm->frame_count++];
     frame->chunk = chunk;
     frame->ip = 0;
@@ -244,6 +247,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     uint8_t  A, B, C;
     uint16_t Bx;
     int      sBx;
+    Value    _exc = make_null();
 
 #define DECODE \
     do { \
@@ -378,8 +382,36 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
     op_sub: { Value _L=RKB,_R=RKC; if(IS_INT(_L)&&IS_INT(_R)){SET_REG_PRIM(RA,make_int(AS_INT(_L)-AS_INT(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
     op_mul: { Value _L=RKB,_R=RKC; if(IS_INT(_L)&&IS_INT(_R)){SET_REG_PRIM(RA,make_int(AS_INT(_L)*AS_INT(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_MUL));} DECODE; goto *op_labels[OP(instr)]; }
-    op_div:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_DIV));  DECODE; goto *op_labels[OP(instr)];
-    op_mod:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_MOD));  DECODE; goto *op_labels[OP(instr)];
+    op_div: {
+        Value _L = RKB, _R = RKC;
+        if (IS_INT(_L) && IS_INT(_R)) {
+            int64_t ri = AS_INT(_R);
+            if (!ri) { release_value(_exc); _exc = make_obj((Object*)new_exception("vm: div/0")); goto op_throw; }
+            SET_REG_PRIM(RA, make_int(AS_INT(_L) / ri));
+        } else if (is_num(_L) && is_num(_R)) {
+            double r = to_f64(_R);
+            if (r == 0.0) { release_value(_exc); _exc = make_obj((Object*)new_exception("vm: div/0")); goto op_throw; }
+            SET_REG_PRIM(RA, make_double(to_f64(_L) / r));
+        } else {
+            SET_REG_PRIM(RA, make_null());
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_mod: {
+        Value _L = RKB, _R = RKC;
+        if (IS_INT(_L) && IS_INT(_R)) {
+            int64_t ri = AS_INT(_R);
+            if (!ri) { release_value(_exc); _exc = make_obj((Object*)new_exception("vm: mod/0")); goto op_throw; }
+            SET_REG_PRIM(RA, make_int(AS_INT(_L) % ri));
+        } else if (is_num(_L) && is_num(_R)) {
+            double r = to_f64(_R);
+            if (r == 0.0) { release_value(_exc); _exc = make_obj((Object*)new_exception("vm: mod/0")); goto op_throw; }
+            SET_REG_PRIM(RA, make_double(fmod(to_f64(_L), r)));
+        } else {
+            SET_REG_PRIM(RA, make_null());
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
 
     /* ---- Integer-immediate fast paths ---- */
     op_addi: {
@@ -451,10 +483,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value fn_val = REG(fn_reg);
         if (!IS_OBJ(fn_val) || !AS_OBJ(fn_val)) {
             char *s = value_to_string(fn_val);
-            fprintf(stderr, "vm: attempt to call non-function (got %s)\n", s);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "vm: attempt to call non-function (got %s)", s);
             free(s);
-            SET_REG_PRIM(ret_reg, make_null());
-            DECODE; goto *op_labels[OP(instr)];
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception(buf));
+            goto op_throw;
         }
         if (AS_OBJ(fn_val)->type == OBJ_FUNCTION) {
             ObjFunction *fn = (ObjFunction *)AS_OBJ(fn_val);
@@ -466,9 +500,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 DECODE; goto *op_labels[OP(instr)];
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
-                    fprintf(stderr, "vm: call stack overflow\n");
-                    SET_REG_PRIM(ret_reg, make_null());
-                    DECODE; goto *op_labels[OP(instr)];
+                    release_value(_exc);
+                    _exc = make_obj((Object*)new_exception("vm: call stack overflow"));
+                    goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
                 CallFrame *callee = &vm->frames[vm->frame_count];
@@ -502,9 +536,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 DECODE; goto *op_labels[OP(instr)];
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
-                    fprintf(stderr, "vm: call stack overflow\n");
-                    SET_REG_PRIM(ret_reg, make_null());
-                    DECODE; goto *op_labels[OP(instr)];
+                    release_value(_exc);
+                    _exc = make_obj((Object*)new_exception("vm: call stack overflow"));
+                    goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
                 CallFrame *callee = &vm->frames[vm->frame_count];
@@ -529,9 +563,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             }
         } else {
             char *s = value_to_string(fn_val);
-            fprintf(stderr, "vm: attempt to call non-function (type=%d, value=%s)\n", AS_OBJ(fn_val)->type, s);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "vm: attempt to call non-function (type=%d, value=%s)", AS_OBJ(fn_val)->type, s);
             free(s);
-            SET_REG_PRIM(ret_reg, make_null());
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception(buf));
+            goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -588,8 +625,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         if (IS_OBJ(lst) && AS_OBJ(lst) && AS_OBJ(lst)->type == OBJ_LIST) {
             list_add((ObjList*)AS_OBJ(lst), val);
         } else {
-            fprintf(stderr, "vm: listappend on non-list\n");
-            return VM_ERROR;
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception("vm: listappend on non-list"));
+            goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -647,12 +685,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     break;
                 }
                 default:
-                    fprintf(stderr, "vm: object is not iterable\n");
-                    return VM_ERROR;
+                    release_value(_exc);
+                    _exc = make_obj((Object*)new_exception("vm: object is not iterable"));
+                    goto op_throw;
             }
         } else {
-            fprintf(stderr, "vm: non-object is not iterable\n");
-            return VM_ERROR;
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception("vm: non-object is not iterable"));
+            goto op_throw;
         }
 
         if (has_next) {
@@ -899,7 +939,13 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             }
         }
         if (handled) SET_REG(ret_reg, result);
-        else { fprintf(stderr, "vm: unknown method '%s'\n", mname); SET_REG_PRIM(ret_reg, make_null()); }
+        else {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "vm: unknown method '%s'", mname);
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception(buf));
+            goto op_throw;
+        }
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -911,9 +957,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         uint8_t dst = RA;
         Value fn_val = CONST(k);
         if (!IS_OBJ(fn_val) || AS_OBJ(fn_val)->type != OBJ_FUNCTION) {
-            fprintf(stderr, "vm: CLOSURE needs function constant\n");
-            SET_REG(dst, make_null());
-            DECODE; goto *op_labels[OP(instr)];
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception("vm: CLOSURE needs function constant"));
+            goto op_throw;
         }
         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
         ObjClosure *cl = new_closure(fn);
@@ -963,8 +1009,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     /* 48.  THROW                                               */
     /* -------------------------------------------------------- */
     op_throw: {
-        Value exc = REG(RA);
-        vm->last_exception = exc;
+        if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
+            _exc = REG(RA);
+        }
+        vm->last_exception = _exc;
         /* unwind to the nearest catch */
         while (vm->try_stack) {
             TryFrame *tf = vm->try_stack;
@@ -975,10 +1023,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     vm->frame_count--;
                 }
                 vm->stack_count = tf->stack_count;
-                SET_REG(tf->exc_reg, exc);
+                SET_REG(tf->exc_reg, _exc);
                 int catch_ip = tf->catch_ip;
                 vm->try_stack = tf->next;
                 free(tf);
+                _exc = make_null();
                 CHUNK = FRAME.chunk;
                 IP = catch_ip;
                 DECODE;
@@ -988,7 +1037,6 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             vm->try_stack = tf->next;
             free(tf);
         }
-        fprintf(stderr, "vm: unhandled exception\n");
         return VM_EXCEPTION;
     }
 
@@ -1028,8 +1076,13 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     /* Unimplemented / stub opcodes                             */
     /* -------------------------------------------------------- */
     op_unimplemented:
-        fprintf(stderr, "vm: unimplemented opcode %d\n", OP(instr));
-        return VM_ERROR;
+        {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "vm: unimplemented opcode %d", OP(instr));
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception(buf));
+            goto op_throw;
+        }
 
     /* ============================================================ */
 #undef DECODE

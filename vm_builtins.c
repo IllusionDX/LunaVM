@@ -211,12 +211,12 @@ void vm_register_builtins(VM *vm) {
 bool vm_invoke_list(VM *vm, ObjList *list, const char *method,
                     Value *args, int nargs, Value *result) {
     (void)vm;
-    if (!strcmp(method,"add")    && nargs>=1) { list_add(list,args[0]);                       *result=make_null(); return true; }
+    if ((!strcmp(method,"add") || !strcmp(method,"append")) && nargs>=1) { list_add(list,args[0]); *result=make_null(); return true; }
     if (!strcmp(method,"insert") && nargs>=2 && IS_INT(args[0])) { list_insert(list, AS_INT(args[0]), args[1]); *result=make_null(); return true; }
     if (!strcmp(method,"remove") && nargs>=1 && IS_INT(args[0])) { *result=list_remove(list, AS_INT(args[0])); return true; }
     if (!strcmp(method,"pop"))   { *result=list_pop(list);    return true; }
     if (!strcmp(method,"clear")) { list_clear(list); *result=make_null(); return true; }
-    if (!strcmp(method,"length"))    { *result=make_int(list_length(list)); return true; }
+    if (!strcmp(method,"length") || !strcmp(method,"size")) { *result=make_int(list_length(list)); return true; }
     return false;
 }
 
