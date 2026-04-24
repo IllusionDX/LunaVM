@@ -294,7 +294,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | Priority | Optimization | Impact | Complexity |
 |----------|--------------|--------|------------|
 | High | **NaN Boxing** | *Done in 0.1.8-alpha* — unified all Value types into a single `uint64_t`. Faster copying, less memory, better cache usage. |
-| High | **Small Object Optimization** | Inline small lists/dicts (e.g., <= 4 elements) directly into the object struct to avoid separate heap allocations. | Moderate — changes object layout and collection helpers. |
+| High | **Small Object Optimization** | *Done in 0.1.13-alpha* — inline small lists/dicts (<= 4 elements) directly into the object struct to avoid separate heap allocations. Dict SOO→heap transition fixed in 0.1.16-alpha. |
 | Medium | **Hidden Classes / Shapes** | Give instances a fixed field layout (array indexing) instead of open hash maps. Makes property access O(1) instead of O(n). | High — requires shape objects, transition trees, compiler changes for shape-aware ops. |
 | Low | **String Interning** | *Done in 0.1.5-alpha* | — |
 | Low | **Computed GOTOs** | *Done in 0.1.4-alpha* | — |
