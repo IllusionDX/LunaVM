@@ -55,6 +55,10 @@ debug: $(TARGET)
 release: CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG
 release: $(TARGET)
 
+# Static build (self-contained executable, no DLL dependencies)
+static: LDFLAGS = -lm -static
+static: $(TARGET)
+
 # Static analysis
 analyze:
 	clang --analyze $(SOURCES) $(HEADERS) 2>/dev/null || echo "Clang not available"
