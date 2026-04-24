@@ -264,6 +264,7 @@ void mark_and_sweep(VM *vm) {
             Object *next = obj->next;
             // Add to garbage list (using next field temporarily)
             obj->next = garbage;
+            obj->prev = NULL;
             garbage = obj;
             obj = next;
         } else {
@@ -274,34 +275,16 @@ void mark_and_sweep(VM *vm) {
 
     /* 3. Free garbage
      *
-     * REFCOUNT PINNING HACK (Hybrid ARC + GC):
-     * ----------------------------------------
-     * We are about to release child objects (list elements, dict entries,
-     * instance fields, closure upvalues).  Those children are *also* in the
-     * `garbage` list in many cases (e.g. a cycle: A -> B -> A).  If we call
-     * release_value() on a child whose refcount is 1, the ARC side will
-     * immediately call free_object(), which tries to unlink the object from
-     * `all_objects` --- the same list we are currently sweeping.  This causes
-     * heap corruption / use-after-free because the sweep iterator still holds
-     * a pointer to the object we just freed.
-     *
-     * Fix: set refcount to an astronomically high value (1 000 000) on every
-     * object in the garbage list *before* releasing any children.  Now
-     * release_value() / release_obj() decrements but never reaches zero,
-     * so free_object() is NEVER re-entered during the sweep.  Live (marked)
-     * objects simply get their refcount decremented normally and survive
-     * because roots still hold them.  After all children are released, we
-     * call free_object() once per garbage object, which unlinks it and
-     * frees its memory safely.
+     * During sweep we release children first (breaking cycles) and then
+     * free container memory.  We set gc_collecting so that release_obj()
+     * never re-enters free_object() while we are mid-sweep.  After children
+     * are released we call free_object_container() which only frees memory
+     * and does NOT release children again, avoiding the double-decrement
+     * bug that the old 1M-refcount hack had.
      */
-    Object *g = garbage;
-    while (g) {
-        g->refcount = 1000000;
-        g->prev = NULL;
-        g = g->next;
-    }
+    gc_collecting = true;
 
-    g = garbage;
+    Object *g = garbage;
     while (g) {
         switch (g->type) {
             case OBJ_LIST: {
@@ -370,9 +353,11 @@ void mark_and_sweep(VM *vm) {
     while (g) {
         Object *next = g->next;
         g->next = NULL;
-        free_object(g);
+        free_object_container(g);
         g = next;
     }
+
+    gc_collecting = false;
 
     if (bytes_allocated > next_gc_threshold) {
         next_gc_threshold = bytes_allocated * 2;

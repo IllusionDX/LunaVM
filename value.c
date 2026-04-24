@@ -110,6 +110,7 @@ Object *all_objects = NULL;
 int allocated_objects = 0;
 size_t bytes_allocated = 0;
 size_t next_gc_threshold = 64 * 1024 * 1024;
+bool gc_collecting = false;
 
 static void init_object(Object *obj, ObjType type, size_t size) {
     obj->type = type;
@@ -281,26 +282,9 @@ ObjClosure *new_closure(ObjFunction *function) {
 /* ============================================================ */
 
 
-static void free_dict_internal(ObjDict *d) {
-    if (d->indices == NULL) {
-        for (int i = 0; i < d->entry_count; i++) {
-            release_value(d->inline_entries[i].key);
-            release_value(d->inline_entries[i].value);
-        }
-    } else {
-        for (int i = 0; i < d->next_entry; i++) {
-            if (d->entries[i].key != EMPTY_VAL) {
-                release_value(d->entries[i].key);
-                release_value(d->entries[i].value);
-            }
-        }
-        if (d->indices) free(d->indices);
-        if (d->entries) free(d->entries);
-    }
-    free(d);
-}
-
-void free_object(Object *obj) {
+/* Free container memory without releasing children.
+ * Used by the GC sweep after children have already been released. */
+void free_object_container(Object *obj) {
     if (!obj) return;
 
     if (obj->prev) {
@@ -318,29 +302,22 @@ void free_object(Object *obj) {
         case OBJ_STRING: { ObjString *s = (ObjString *)obj; intern_remove(s); free(s->chars); free(s); break; }
         case OBJ_LIST: {
             ObjList *l = (ObjList *)obj;
-            if (l->items) {
-                for (int i = 0; i < l->count; i++) release_value(l->items[i]);
-                free(l->items);
-            } else {
-                for (int i = 0; i < l->count; i++) release_value(l->inline_items[i]);
-            }
+            if (l->items) free(l->items);
             free(l); break;
         }
-        case OBJ_DICT:     free_dict_internal((ObjDict *)obj); break;
+        case OBJ_DICT: {
+            ObjDict *d = (ObjDict *)obj;
+            if (d->indices) { free(d->indices); free(d->entries); }
+            free(d); break;
+        }
         case OBJ_INSTANCE: {
             ObjInstance *inst = (ObjInstance *)obj;
             if (inst->class_name) free(inst->class_name);
             if (inst->base_class) free(inst->base_class);
             for (int i = 0; i < inst->field_count; i++) {
-                release_value(inst->fields[i]);
                 if (inst->field_names[i]) free(inst->field_names[i]);
             }
-            if (inst->methods) {
-                for (int i = 0; i < inst->method_count; i++) {
-                    if (inst->methods[i]) release_obj((Object*)inst->methods[i]);
-                }
-                free(inst->methods);
-            }
+            if (inst->methods) free(inst->methods);
             free(inst->field_names); free(inst->fields); free(inst); break;
         }
         case OBJ_FUNCTION: {
@@ -362,21 +339,77 @@ void free_object(Object *obj) {
             free(e->message); free(e->file); free(e); break;
         }
         case OBJ_UPVALUE: {
+            free((ObjUpvalue *)obj); break;
+        }
+        case OBJ_CLOSURE: {
+            ObjClosure *cl = (ObjClosure *)obj;
+            free(cl->upvalues);
+            free(cl); break;
+        }
+        default: free(obj); break;
+    }
+}
+
+/* ARC path: release children, then free container. */
+void free_object(Object *obj) {
+    if (!obj) return;
+
+    switch (obj->type) {
+        case OBJ_LIST: {
+            ObjList *l = (ObjList *)obj;
+            if (l->items) {
+                for (int i = 0; i < l->count; i++) release_value(l->items[i]);
+            } else {
+                for (int i = 0; i < l->count; i++) release_value(l->inline_items[i]);
+            }
+            break;
+        }
+        case OBJ_DICT: {
+            ObjDict *d = (ObjDict *)obj;
+            if (d->indices == NULL) {
+                for (int i = 0; i < d->entry_count; i++) {
+                    release_value(d->inline_entries[i].key);
+                    release_value(d->inline_entries[i].value);
+                }
+            } else {
+                for (int i = 0; i < d->next_entry; i++) {
+                    if (d->entries[i].key != EMPTY_VAL) {
+                        release_value(d->entries[i].key);
+                        release_value(d->entries[i].value);
+                    }
+                }
+            }
+            break;
+        }
+        case OBJ_INSTANCE: {
+            ObjInstance *inst = (ObjInstance *)obj;
+            for (int i = 0; i < inst->field_count; i++) {
+                release_value(inst->fields[i]);
+            }
+            if (inst->methods) {
+                for (int i = 0; i < inst->method_count; i++) {
+                    if (inst->methods[i]) release_obj((Object*)inst->methods[i]);
+                }
+            }
+            break;
+        }
+        case OBJ_UPVALUE: {
             ObjUpvalue *uv = (ObjUpvalue *)obj;
             release_value(uv->closed);
-            free(uv); break;
+            break;
         }
         case OBJ_CLOSURE: {
             ObjClosure *cl = (ObjClosure *)obj;
             for (int i = 0; i < cl->upvalue_count; i++) {
                 if (cl->upvalues[i]) release_obj((Object*)cl->upvalues[i]);
             }
-            free(cl->upvalues);
             release_obj((Object*)cl->function);
-            free(cl); break;
+            break;
         }
-        default: free(obj); break;
+        default: break;
     }
+
+    free_object_container(obj);
 }
 
 

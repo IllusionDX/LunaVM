@@ -267,8 +267,10 @@ extern Object *all_objects;
 extern int allocated_objects;
 extern size_t bytes_allocated;
 extern size_t next_gc_threshold;
+extern bool gc_collecting;
 
 void free_object(Object *obj);
+void free_object_container(Object *obj);
 
 static inline void retain_obj(Object *obj) {
     if (obj) obj->refcount++;
@@ -276,7 +278,7 @@ static inline void retain_obj(Object *obj) {
 
 static inline void release_obj(Object *obj) {
     if (!obj) return;
-    if (--obj->refcount <= 0) free_object(obj);
+    if (--obj->refcount <= 0 && !gc_collecting) free_object(obj);
 }
 
 static inline void retain_value(Value v) {
