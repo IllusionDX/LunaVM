@@ -1,7 +1,10 @@
-# 🌙 LunaScript Programming Language
+# 🌙 LunaVM — LunaScript Runtime
 
 ## 🌌 Overview
-LunaScript is a dynamically-typed programming language with indentation-based syntax.
+
+**LunaVM** is the register-based bytecode virtual machine and reference runtime for **LunaScript**, a dynamically-typed programming language with indentation-based syntax.
+
+LunaScript draws inspiration from **Python** (indentation-based blocks, list comprehensions), **JavaScript** (flexible objects, prototype-style fields), **GDScript** (lightweight class syntax, optional type hints), and **Lua** (register-based VM internals, lightweight closures).
 
 ## ✨ Design Principles
 
