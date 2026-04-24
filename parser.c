@@ -1134,10 +1134,17 @@ static Decl *parse_function_declaration(Parser *parser) {
     }
 
     expect(parser, TOK_COLON, "Expected ':' after function declaration");
-    expect_newline(parser);
 
     int body_count = 0;
-    Stmt **body = parse_block(parser, &body_count);
+    Stmt **body = NULL;
+    if (match(parser, TOK_NEWLINE)) {
+        advance(parser);
+        body = parse_block(parser, &body_count);
+    } else {
+        body = (Stmt **)malloc(sizeof(Stmt *));
+        body[0] = parse_statement(parser);
+        body_count = 1;
+    }
 
     Decl *decl = make_decl(DECL_FUNCTION);
     decl->data.function.name = strdup(name ? name->value : "");
@@ -1162,10 +1169,17 @@ static Expr *parse_anonymous_function(Parser *parser) {
     }
 
     expect(parser, TOK_COLON, "Expected ':' after anonymous function header");
-    expect_newline(parser);
 
     int body_count = 0;
-    Stmt **body = parse_block(parser, &body_count);
+    Stmt **body = NULL;
+    if (match(parser, TOK_NEWLINE)) {
+        advance(parser);
+        body = parse_block(parser, &body_count);
+    } else {
+        body = (Stmt **)malloc(sizeof(Stmt *));
+        body[0] = parse_statement(parser);
+        body_count = 1;
+    }
 
     Expr *expr = make_expr(EXPR_FUNCTION);
     expr->data.function.name = NULL;
