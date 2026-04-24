@@ -1,0 +1,44 @@
+# Simple test program for Luna interpreter
+
+def greet(name: string) -> void:
+    print("Hello, " + name + "!")
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+def main() -> int:
+    # Test basic arithmetic
+    var x: int = 5
+    var y = 10
+    var result = x + y
+    print("5 + 10 =")
+    print(result)
+    
+    # Test function call
+    greet("Luna")
+    
+    # Test if statement
+    if result > 10:
+        print("Result is greater than 10")
+    else:
+        print("Result is 10 or less")
+    
+    # Test while loop
+    var i = 0
+    while i < 3:
+        print("Loop iteration:")
+        print(i)
+        i = i + 1
+    
+    # Test list
+    var numbers = [1, 2, 3, 4, 5]
+    print("List length:")
+    print(numbers.length)
+    numbers.add(6)
+    print("After adding 6:")
+    print(numbers.length)
+    
+    # Test return
+    return 0
+
+main()

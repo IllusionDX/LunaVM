@@ -1,0 +1,6 @@
+# Test try without catch (should propagate to VM exception)
+
+try:
+    throw("uncaught")
+
+print("should not print")

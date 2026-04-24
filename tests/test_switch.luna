@@ -1,0 +1,41 @@
+# Test switch statement
+
+var x = 2
+
+switch x:
+    case 1:
+        print("one")
+    case 2:
+        print("two")
+    case 3:
+        print("three")
+    default:
+        print("other")
+
+# Test with default only
+var y = 99
+switch y:
+    case 1:
+        print("one")
+    default:
+        print("default case")
+
+# Test string switch
+var s = "hello"
+switch s:
+    case "world":
+        print("world")
+    case "hello":
+        print("hello matched")
+    default:
+        print("no match")
+
+# Test switch with no match and no default
+var z = 99
+switch z:
+    case 1:
+        print("one")
+    case 2:
+        print("two")
+
+print("after switch")

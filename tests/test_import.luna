@@ -1,0 +1,6 @@
+# Test import statement (V1 placeholder)
+
+import math
+
+# math should exist as an empty dict global
+print("import test done")

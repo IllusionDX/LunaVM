@@ -1,0 +1,9 @@
+var arr = [1, 2, 3]
+var calls = 0
+def get_idx():
+    calls += 1
+    return 0
+
+arr[get_idx()] += 10
+print(calls)
+print(arr[0])

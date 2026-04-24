@@ -1,0 +1,13 @@
+var side_effect = 0
+def trigger():
+    side_effect += 1
+    return true
+
+print(false and trigger())
+print(side_effect)
+
+print(true or trigger())
+print(side_effect)
+
+print(not false)
+print(not true)

@@ -1,0 +1,17 @@
+# Test closure that outlives its parent frame
+
+def make_counter():
+    var count = 0
+    def counter():
+        count = count + 1
+        return count
+    return counter
+
+var c = make_counter()
+print(c())
+print(c())
+print(c())
+
+var d = make_counter()
+print(d())
+print(d())

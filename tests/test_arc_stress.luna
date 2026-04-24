@@ -1,0 +1,12 @@
+# test_arc_stress.luna
+var start = clock()
+
+var i = 0
+while i < 1000000:
+    var temp_list = [i, i + 1, i + 2]
+    # Here the list is CREATED and DESTROYED on each iteration
+    # ARC has to work at full throttle
+    i = i + 1
+
+var end = clock()
+print(f"One million creations/destructions in: {end - start}s")

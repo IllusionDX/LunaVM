@@ -1,0 +1,6 @@
+var start = clock()
+var i = 0
+while i < 1000000:
+    i = i + 1
+var end = clock()
+print(f"One million iterations in: {end - start} seconds")

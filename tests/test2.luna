@@ -1,0 +1,58 @@
+var world_state = {
+    "regions": ["Forest", "Tundra", "Volcano"],
+    "entities": {
+        "wolf_alpha": {
+            "hp": 500,
+            "position": [120.5, 44.0],
+            "tags": ["hostile", "elite", "boss"]
+        },
+        "drone_unit": {
+            "hp": 50,
+            "position": [10.0, 5.0],
+            "tags": ["robotic", "scout"]
+        }
+    }
+}
+
+# Dynamic lists (heap-allocated)
+var coordinates = [120.5, 44.0, 10.1, 5.5]
+
+# Class with Complex State
+class Character:
+    var name
+    var level
+    var attributes
+    
+    def _init(n, lvl):
+        self.name = n
+        self.level = lvl
+        self.attributes = {
+            "STR": 10 + lvl,
+            "DEX": 8 + lvl,
+            "INT": 5
+        }
+
+    def get_power_level():
+        var base = self.attributes["STR"] * 1.5
+        return base + (self.level * 2.0)
+
+# Logic & Built-in Functions
+def process_combat(p, damage):
+    print("Processing combat for: " + p.name)
+    var is_alive = true
+    
+    if damage > 100:
+        print("Critical hit detected!")
+        is_alive = false
+    
+    print("Survivor status:")
+    print(is_alive)
+
+# Execution Block
+var player = new Character("Zim", 5)
+var current_hp = world_state["entities"]["wolf_alpha"]["hp"]
+
+process_combat(player, 120)
+
+print("Final Attributes for " + player.name + ":")
+print(player.attributes)

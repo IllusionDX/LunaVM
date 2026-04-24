@@ -1,0 +1,29 @@
+# Test try/catch/throw
+
+def risky(n):
+    if n < 0:
+        throw("negative!")
+    return n * 2
+
+try:
+    var a = risky(5)
+    print(a)
+    var b = risky(-1)
+    print("should not print")
+catch e:
+    print("caught:")
+    print(e)
+
+print("after try/catch")
+
+# Test nested try/catch: rethrow inside catch is caught by outer try
+try:
+    try:
+        throw("inner")
+    catch inner:
+        print("inner caught:")
+        print(inner)
+        throw("rethrown")
+catch outer:
+    print("outer caught:")
+    print(outer)

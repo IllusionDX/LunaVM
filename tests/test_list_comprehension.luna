@@ -1,0 +1,12 @@
+var nums = [1, 2, 3, 4, 5]
+var squares = [x * x for x in nums]
+print(squares)
+
+var evens = [x for x in nums if x % 2 == 0]
+print(evens)
+
+var doubled = [x * 2 for x in range(4)]
+print(doubled)
+
+var filtered = [x * x for x in range(10) if x % 2 == 1]
+print(filtered)

@@ -45,7 +45,11 @@ rebuild: clean all
 
 # Run regression tests
 test: $(TARGET)
+ifeq ($(OS),Windows_NT)
 	powershell -ExecutionPolicy Bypass -File run_tests.ps1
+else
+	bash run_tests.sh
+endif
 
 # Debug build
 debug: CFLAGS = -Wall -Wextra -std=c99 -O0 -g -DDEBUG

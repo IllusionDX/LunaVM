@@ -1,0 +1,34 @@
+class Character:
+    var name
+    var level
+    var attributes
+    
+    def _init(n, lvl):
+        self.name = n
+        self.level = lvl
+        self.attributes = {
+            "STR": 10 + lvl,
+            "DEX": 8 + lvl,
+            "INT": 5
+        }
+
+    def get_power_level():
+        var base = self.attributes["STR"] * 1.5
+        return base + (self.level * 2.0)
+
+def process_combat(p, damage):
+    print("Processing combat for: " + p.name)
+    var is_alive = true
+    
+    if damage > 100:
+        print("Critical hit detected!")
+        is_alive = false
+    
+    print("Survivor status:")
+    print(is_alive)
+
+var player = new Character("Zim", 5)
+process_combat(player, 120)
+
+print("Final Attributes for " + player.name + ":")
+print(player.attributes)

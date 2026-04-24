@@ -1,0 +1,11 @@
+class Character:
+    var name
+    var level
+    
+    def _init(n, lvl):
+        self.name = n
+        self.level = lvl
+
+var player = new Character("Zim", 5)
+print(player.name)
+print(player.level)

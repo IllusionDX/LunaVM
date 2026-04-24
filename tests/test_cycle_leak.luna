@@ -1,0 +1,23 @@
+var start = clock()
+
+# Test 1: Create a cycle using a list that contains itself
+var i = 0
+while i < 100000:
+    var a = []
+    var b = []
+    a.append(b)
+    b.append(a)
+    i = i + 1
+
+# Test 2: Create a cycle using dictionaries
+var j = 0
+while j < 100000:
+    var d1 = {}
+    var d2 = {}
+    d1["other"] = d2
+    d2["other"] = d1
+    j = j + 1
+
+var end = clock()
+print(f"Created 200k cycles in: {end - start} seconds")
+print("If the GC works, this program should not consume GBs of RAM")

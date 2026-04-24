@@ -1,0 +1,11 @@
+# test_append.luna
+var start = clock()
+
+var items = []
+var i = 0
+while i < 1000000:
+    items.append(i)
+    i = i + 1
+
+var end = clock()
+print(f"One million elements in: {end - start} seconds")

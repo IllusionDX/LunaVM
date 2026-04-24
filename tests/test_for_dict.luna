@@ -1,0 +1,6 @@
+var d = {"a": 1, "b": 2, "c": 3}
+var total = 0
+for k in d:
+    total += 1
+    print(k)
+print("total keys: " + str(total))

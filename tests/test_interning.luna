@@ -1,0 +1,6 @@
+var a = "hello"
+var b = "hello"
+var c = "hel" + "lo"
+print(a == b)
+print(a == c)
+print(b == c)

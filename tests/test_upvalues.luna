@@ -1,0 +1,25 @@
+# Simple upvalue test (merged from test_upvalues_simple)
+def make_simple_counter():
+    var count = 0
+    return def():
+        count = count + 1
+        print(count)
+
+var s = make_simple_counter()
+s()
+s()
+
+# Named upvalue test with multiple instances
+def make_named_counter(name):
+    var count = 0
+    return def():
+        count += 1
+        print(f"Counter {name}: {count}")
+
+var c1 = make_named_counter("Alpha")
+var c2 = make_named_counter("Beta")
+
+c1() # should print 1
+c1() # should print 2
+c2() # should print 1 (c2 has its own 'count')
+c1() # should print 3

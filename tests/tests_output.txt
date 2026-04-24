@@ -1,12 +1,12 @@
 ===== bench_clock.luna =====
-Un millon de iteraciones en: 0.03 segundos
+One million iterations in: 0.032 seconds
 
 ===== fib30.luna =====
 832040
-Fibonacci 30 en: 0.128s
+Fibonacci 30 en: 0.124s
 
 ===== memory_test.luna =====
-Un millón de appends en: 0.058 segundos
+One million appends in: 0.062 seconds
 
 ===== minimal.luna =====
 hello
@@ -36,10 +36,10 @@ Final Attributes for Zim:
 {"STR": 15, "DEX": 13, "INT": 5}
 
 ===== test_append.luna =====
-Un millón de elementos en: 0.072 segundos
+One million elements in: 0.062 seconds
 
 ===== test_arc_stress.luna =====
-Un millón de creaciones/destrucciones en: 0.12s
+One million creations/destructions in: 0.124s
 
 ===== test_class_method.luna =====
 Processing combat for: Zim
@@ -75,20 +75,16 @@ Zim
 11
 
 ===== test_cycle_leak.luna =====
-Creados 200k ciclos en: 0.047 segundos
-Si el GC funciona, este programa no debería consumir GBs de RAM
+Created 200k cycles in: 0.051 seconds
+If the GC works, this program should not consume GBs of RAM
 
 ===== test_cycle_small.luna =====
 Done with list cycles
 Done with dict cycles
-Creados 2k ciclos en: 0 segundos
+Created 2k cycles in: 0 seconds
 
 ===== test_dict_list.luna =====
 Forest
-
-===== test_dict_minimal.luna =====
-Forest
-500
 
 ===== test_for_dict.luna =====
 a
@@ -117,15 +113,6 @@ true
 ===== test_nested_dict.luna =====
 Forest
 500
-
-===== test_nested_dict_medium.luna =====
-Forest
-500
-
-===== test_nested_dict_only.luna =====
-500
-
-===== test_nested_dict_with_list.luna =====
 hostile
 
 ===== test_shortcircuit.luna =====
@@ -144,8 +131,6 @@ true
 two
 default case
 hello matched
-
-===== test_switch_nodefault.luna =====
 after switch
 
 ===== test_try.luna =====
@@ -162,12 +147,10 @@ rethrown
 Uncaught exception: uncaught
 
 ===== test_upvalues.luna =====
-Contador Alfa: 1
-Contador Alfa: 2
-Contador Beta: 1
-Contador Alfa: 3
-
-===== test_upvalues_simple.luna =====
 1
 2
+Counter Alpha: 1
+Counter Alpha: 2
+Counter Beta: 1
+Counter Alpha: 3
 
