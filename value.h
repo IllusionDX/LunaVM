@@ -109,7 +109,10 @@ typedef enum {
 typedef struct Object {
     ObjType        type;
     int            refcount;
+    bool           is_marked;
+    size_t         size;
     struct Object *next;    /* intrusive GC linked list */
+    struct Object *prev;    /* doubly linked for O(1) removal */
 } Object;
 
 /* ============================================================ */
@@ -259,6 +262,11 @@ char *value_to_string(Value v);     /* caller must free() */
 /* ============================================================ */
 /* ARC memory management                                         */
 /* ============================================================ */
+
+extern Object *all_objects;
+extern int allocated_objects;
+extern size_t bytes_allocated;
+extern size_t next_gc_threshold;
 
 void free_object(Object *obj);
 

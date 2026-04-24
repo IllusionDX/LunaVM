@@ -141,6 +141,247 @@ static inline Value do_cmp(Value L, Value R, OpCode op) {
 }
 
 /* ============================================================ */
+/* GC (Mark & Sweep)                                             */
+/* ============================================================ */
+
+extern Object *all_objects;
+extern int allocated_objects;
+
+static void mark_object(Object *obj);
+
+static void mark_value(Value v) {
+    if (IS_OBJ(v) && AS_OBJ(v)) {
+        mark_object(AS_OBJ(v));
+    }
+}
+
+static void mark_object(Object *obj) {
+    if (!obj || obj->is_marked) return;
+    obj->is_marked = true;
+
+    switch (obj->type) {
+        case OBJ_LIST: {
+            ObjList *l = (ObjList *)obj;
+            if (l->items) {
+                for (int i = 0; i < l->count; i++) mark_value(l->items[i]);
+            } else {
+                for (int i = 0; i < l->count; i++) mark_value(l->inline_items[i]);
+            }
+            break;
+        }
+        case OBJ_DICT: {
+            ObjDict *d = (ObjDict *)obj;
+            if (d->indices == NULL) {
+                for (int i = 0; i < d->entry_count; i++) {
+                    mark_value(d->inline_entries[i].key);
+                    mark_value(d->inline_entries[i].value);
+                }
+            } else {
+                for (int i = 0; i < d->next_entry; i++) {
+                    if (d->entries[i].key != EMPTY_VAL) {
+                        mark_value(d->entries[i].key);
+                        mark_value(d->entries[i].value);
+                    }
+                }
+            }
+            break;
+        }
+        case OBJ_INSTANCE: {
+            ObjInstance *inst = (ObjInstance *)obj;
+            for (int i = 0; i < inst->field_count; i++) {
+                mark_value(inst->fields[i]);
+            }
+            for (int i = 0; i < inst->method_count; i++) {
+                mark_object((Object*)inst->methods[i]);
+            }
+            break;
+        }
+        case OBJ_CLOSURE: {
+            ObjClosure *cl = (ObjClosure *)obj;
+            mark_object((Object*)cl->function);
+            for (int i = 0; i < cl->upvalue_count; i++) {
+                mark_object((Object*)cl->upvalues[i]);
+            }
+            break;
+        }
+        case OBJ_FUNCTION: {
+            ObjFunction *f = (ObjFunction *)obj;
+            if (f->chunk) {
+                for (int i = 0; i < f->chunk->const_count; i++) {
+                    mark_value(f->chunk->constants[i]);
+                }
+            }
+            break;
+        }
+        case OBJ_UPVALUE: {
+            ObjUpvalue *uv = (ObjUpvalue *)obj;
+            mark_value(uv->closed);
+            break;
+        }
+        default: break;
+    }
+}
+
+void mark_and_sweep(VM *vm) {
+    // 1. Mark roots
+    for (int i = 0; i < vm->stack_count; i++) {
+        mark_value(vm->stack[i]);
+    }
+    for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
+        GlobalEntry *e = vm->globals[i];
+        while (e) {
+            mark_value(e->value);
+            e = e->next;
+        }
+    }
+    for (int i = 0; i < vm->frame_count; i++) {
+        if (vm->frames[i].closure) mark_object((Object*)vm->frames[i].closure);
+        if (vm->frames[i].chunk) {
+            for (int j = 0; j < vm->frames[i].chunk->const_count; j++) {
+                mark_value(vm->frames[i].chunk->constants[j]);
+            }
+        }
+    }
+    ObjUpvalue *uv = vm->open_upvalues;
+    while (uv) {
+        mark_object((Object*)uv);
+        uv = uv->next;
+    }
+    mark_value(vm->last_exception);
+
+    // Removed inline cache marking to avoid dangling pointer segfaults
+
+    // 2. Collect unmarked garbage
+    Object *garbage = NULL;
+    Object *obj = all_objects;
+    while (obj) {
+        if (!obj->is_marked) {
+            // Isolate it from the doubly linked list
+            if (obj->prev) obj->prev->next = obj->next;
+            else all_objects = obj->next;
+            if (obj->next) obj->next->prev = obj->prev;
+
+            Object *next = obj->next;
+            // Add to garbage list (using next field temporarily)
+            obj->next = garbage;
+            garbage = obj;
+            obj = next;
+        } else {
+            obj->is_marked = false; // Reset for next GC
+            obj = obj->next;
+        }
+    }
+
+    /* 3. Free garbage
+     *
+     * REFCOUNT PINNING HACK (Hybrid ARC + GC):
+     * ----------------------------------------
+     * We are about to release child objects (list elements, dict entries,
+     * instance fields, closure upvalues).  Those children are *also* in the
+     * `garbage` list in many cases (e.g. a cycle: A -> B -> A).  If we call
+     * release_value() on a child whose refcount is 1, the ARC side will
+     * immediately call free_object(), which tries to unlink the object from
+     * `all_objects` --- the same list we are currently sweeping.  This causes
+     * heap corruption / use-after-free because the sweep iterator still holds
+     * a pointer to the object we just freed.
+     *
+     * Fix: set refcount to an astronomically high value (1 000 000) on every
+     * object in the garbage list *before* releasing any children.  Now
+     * release_value() / release_obj() decrements but never reaches zero,
+     * so free_object() is NEVER re-entered during the sweep.  Live (marked)
+     * objects simply get their refcount decremented normally and survive
+     * because roots still hold them.  After all children are released, we
+     * call free_object() once per garbage object, which unlinks it and
+     * frees its memory safely.
+     */
+    Object *g = garbage;
+    while (g) {
+        g->refcount = 1000000;
+        g->prev = NULL;
+        g = g->next;
+    }
+
+    g = garbage;
+    while (g) {
+        switch (g->type) {
+            case OBJ_LIST: {
+                ObjList *l = (ObjList *)g;
+                if (l->items) {
+                    for (int i = 0; i < l->count; i++) release_value(l->items[i]);
+                } else {
+                    for (int i = 0; i < l->count; i++) release_value(l->inline_items[i]);
+                }
+                l->count = 0;
+                break;
+            }
+            case OBJ_DICT: {
+                ObjDict *d = (ObjDict *)g;
+                if (d->indices == NULL) {
+                    for (int i = 0; i < d->entry_count; i++) {
+                        release_value(d->inline_entries[i].key);
+                        release_value(d->inline_entries[i].value);
+                    }
+                } else {
+                    for (int i = 0; i < d->next_entry; i++) {
+                        if (d->entries[i].key != EMPTY_VAL) {
+                            release_value(d->entries[i].key);
+                            release_value(d->entries[i].value);
+                        }
+                    }
+                }
+                d->entry_count = 0;
+                d->next_entry = 0;
+                break;
+            }
+            case OBJ_INSTANCE: {
+                ObjInstance *inst = (ObjInstance *)g;
+                for (int i = 0; i < inst->field_count; i++) release_value(inst->fields[i]);
+                inst->field_count = 0;
+                if (inst->methods) {
+                    for (int i = 0; i < inst->method_count; i++) {
+                        if (inst->methods[i]) release_obj((Object*)inst->methods[i]);
+                    }
+                    inst->method_count = 0;
+                }
+                break;
+            }
+            case OBJ_CLOSURE: {
+                ObjClosure *cl = (ObjClosure *)g;
+                if (cl->function) release_obj((Object*)cl->function);
+                cl->function = NULL;
+                for (int i = 0; i < cl->upvalue_count; i++) {
+                    if (cl->upvalues[i]) release_obj((Object*)cl->upvalues[i]);
+                }
+                cl->upvalue_count = 0;
+                break;
+            }
+            case OBJ_UPVALUE: {
+                ObjUpvalue *uv = (ObjUpvalue *)g;
+                release_value(uv->closed);
+                uv->closed = make_null();
+                break;
+            }
+            default: break;
+        }
+        g = g->next;
+    }
+
+    g = garbage;
+    while (g) {
+        Object *next = g->next;
+        g->next = NULL;
+        free_object(g);
+        g = next;
+    }
+
+    if (bytes_allocated > next_gc_threshold) {
+        next_gc_threshold = bytes_allocated * 2;
+    } else {
+        next_gc_threshold = 64 * 1024 * 1024; // Reset to 64MB
+    }
+}
+
+/* ============================================================ */
 /* VM init / free                                                */
 /* ============================================================ */
 
@@ -226,6 +467,9 @@ void vm_free(VM *vm) {
 #define KSTROBJ(n)  ((ObjString*)AS_OBJ(CONST(n)))
 
 VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
+    if (allocated_objects > 1000) {
+        mark_and_sweep(vm);
+    }
     if (vm->frame_count >= MAX_FRAMES) {
         vm->last_exception = make_obj((Object*)new_exception("vm: frame overflow"));
         return VM_EXCEPTION;
@@ -251,6 +495,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
 
 #define DECODE \
     do { \
+        if ((++vm->instr_count & 4095) == 0 && bytes_allocated > next_gc_threshold) mark_and_sweep(vm); \
         instr = CHUNK->code[IP++]; \
         A   = DECODE_A(instr); \
         B   = DECODE_B(instr); \

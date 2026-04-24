@@ -106,6 +106,24 @@ void value_free_intern_table(void) {
 /* Object constructors                                           */
 /* ============================================================ */
 
+Object *all_objects = NULL;
+int allocated_objects = 0;
+size_t bytes_allocated = 0;
+size_t next_gc_threshold = 64 * 1024 * 1024;
+
+static void init_object(Object *obj, ObjType type, size_t size) {
+    obj->type = type;
+    obj->refcount = 0;
+    obj->is_marked = false;
+    obj->size = size;
+    bytes_allocated += size;
+    obj->next = all_objects;
+    obj->prev = NULL;
+    if (all_objects) all_objects->prev = obj;
+    all_objects = obj;
+    allocated_objects++;
+}
+
 ObjString *new_string(const char *chars, int length) {
     uint32_t hash = fnv1a(chars, length);
     ObjString *existing = intern_find(chars, length, hash);
@@ -115,7 +133,7 @@ ObjString *new_string(const char *chars, int length) {
 
     ObjString *s = malloc(sizeof(ObjString));
     if (!s) { fprintf(stderr, "OOM\n"); exit(1); }
-    s->obj.type = OBJ_STRING; s->obj.refcount = 0; s->obj.next = NULL;
+    init_object((Object*)s, OBJ_STRING, sizeof(ObjString) + length + 1);
     s->chars = malloc(length + 1);
     if (!s->chars) { fprintf(stderr, "OOM\n"); exit(1); }
     memcpy(s->chars, chars, length);
@@ -129,7 +147,7 @@ ObjString *new_string(const char *chars, int length) {
 ObjList *new_list(int capacity) {
     ObjList *l = malloc(sizeof(ObjList));
     if (!l) { fprintf(stderr, "OOM\n"); exit(1); }
-    l->obj.type = OBJ_LIST; l->obj.refcount = 0; l->obj.next = NULL;
+    init_object((Object*)l, OBJ_LIST, sizeof(ObjList) + (capacity > 4 ? capacity * sizeof(Value) : 0));
     l->count = 0;
     if (capacity > 4) {
         l->capacity = capacity;
@@ -145,9 +163,7 @@ ObjList *new_list(int capacity) {
 ObjDict *new_dict(void) {
     ObjDict *d = malloc(sizeof(ObjDict));
     if (!d) { fprintf(stderr, "OOM\n"); exit(1); }
-    d->obj.type = OBJ_DICT;
-    d->obj.refcount = 0;
-    d->obj.next = NULL;
+    init_object((Object*)d, OBJ_DICT, sizeof(ObjDict));
     d->indices = NULL;
     d->entries = NULL;
     d->capacity = 0;
@@ -191,7 +207,7 @@ static void dict_transition_to_heap(ObjDict *d) {
 ObjInstance *new_instance(const char *class_name, const char *base_class, int cap) {
     ObjInstance *inst = malloc(sizeof(ObjInstance));
     if (!inst) { fprintf(stderr, "OOM\n"); exit(1); }
-    inst->obj.type = OBJ_INSTANCE; inst->obj.refcount = 0; inst->obj.next = NULL;
+    init_object((Object*)inst, OBJ_INSTANCE, sizeof(ObjInstance) + sizeof(Value) * cap + sizeof(ObjFunction*) * 0);
     inst->class_name    = strdup(class_name);
     inst->base_class    = base_class ? strdup(base_class) : NULL;
     inst->field_capacity = cap > 0 ? cap : 4;
@@ -206,7 +222,7 @@ ObjInstance *new_instance(const char *class_name, const char *base_class, int ca
 ObjFunction *new_function(const char *name) {
     ObjFunction *f = malloc(sizeof(ObjFunction));
     if (!f) { fprintf(stderr, "OOM\n"); exit(1); }
-    f->obj.type = OBJ_FUNCTION; f->obj.refcount = 0; f->obj.next = NULL;
+    init_object((Object*)f, OBJ_FUNCTION, sizeof(ObjFunction));
     f->name        = strdup(name ? name : "<fn>");
     f->chunk       = NULL;
     f->param_names = NULL;
@@ -228,7 +244,7 @@ ObjFunction *new_native_function(const char *name, NativeFn fn) {
 ObjException *new_exception(const char *message) {
     ObjException *e = malloc(sizeof(ObjException));
     if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
-    e->obj.type = OBJ_EXCEPTION; e->obj.refcount = 0; e->obj.next = NULL;
+    init_object((Object*)e, OBJ_EXCEPTION, sizeof(ObjException) + strlen(message) + 1);
     e->message = strdup(message);
     e->line    = 0;
     e->file    = strdup("<unknown>");
@@ -238,7 +254,7 @@ ObjException *new_exception(const char *message) {
 ObjUpvalue *new_upvalue(int stack_index) {
     ObjUpvalue *uv = malloc(sizeof(ObjUpvalue));
     if (!uv) { fprintf(stderr, "OOM\n"); exit(1); }
-    uv->obj.type = OBJ_UPVALUE; uv->obj.refcount = 0; uv->obj.next = NULL;
+    init_object((Object*)uv, OBJ_UPVALUE, sizeof(ObjUpvalue));
     uv->stack_index = stack_index;
     uv->is_open     = true;
     uv->closed      = make_null();
@@ -250,7 +266,7 @@ ObjUpvalue *new_upvalue(int stack_index) {
 ObjClosure *new_closure(ObjFunction *function) {
     ObjClosure *cl = malloc(sizeof(ObjClosure));
     if (!cl) { fprintf(stderr, "OOM\n"); exit(1); }
-    cl->obj.type = OBJ_CLOSURE; cl->obj.refcount = 0; cl->obj.next = NULL;
+    init_object((Object*)cl, OBJ_CLOSURE, sizeof(ObjClosure) + sizeof(ObjUpvalue*) * function->upvalue_count);
     cl->function = function;
     retain_obj((Object*)function);
     cl->upvalue_count = function->upvalue_count;
@@ -286,6 +302,18 @@ static void free_dict_internal(ObjDict *d) {
 
 void free_object(Object *obj) {
     if (!obj) return;
+
+    if (obj->prev) {
+        obj->prev->next = obj->next;
+    } else if (all_objects == obj) {
+        all_objects = obj->next;
+    }
+    if (obj->next) {
+        obj->next->prev = obj->prev;
+    }
+    allocated_objects--;
+    bytes_allocated -= obj->size;
+
     switch (obj->type) {
         case OBJ_STRING: { ObjString *s = (ObjString *)obj; intern_remove(s); free(s->chars); free(s); break; }
         case OBJ_LIST: {

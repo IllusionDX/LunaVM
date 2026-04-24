@@ -89,6 +89,7 @@ typedef struct VM {
     IC_GlobalEntry global_ic[IC_CACHE_SIZE];
     IC_MemberEntry member_ic[IC_CACHE_SIZE];
     IC_MemberEntry method_ic[IC_CACHE_SIZE];
+    uint64_t       instr_count;
 } VM;
 
 /* ---- Result codes ---- */

@@ -192,6 +192,29 @@ static Value bn_clock(VM *vm, Value *args, int n) {
     return make_double((double)clock() / CLOCKS_PER_SEC);
 }
 
+extern Object *all_objects;
+extern int allocated_objects;
+
+static Value bn_gc_info(VM *vm, Value *args, int n) {
+    (void)vm; (void)args; (void)n;
+    int count = 0;
+    Object *obj = all_objects;
+    while(obj) {
+        count++;
+        obj = obj->next;
+    }
+    printf("Allocated objects via counter: %d, via list: %d\n", allocated_objects, count);
+    return make_int(count);
+}
+
+void mark_and_sweep(VM *vm);
+
+static Value bn_gc(VM *vm, Value *args, int n) {
+    (void)args; (void)n;
+    mark_and_sweep(vm);
+    return make_null();
+}
+
 void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);
     vm_define_native(vm, "input", bn_input);
@@ -202,6 +225,8 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "len",   bn_len);
     vm_define_native(vm, "type",  bn_type);
     vm_define_native(vm, "clock", bn_clock);
+    vm_define_native(vm, "gc_info", bn_gc_info);
+    vm_define_native(vm, "gc", bn_gc);
 }
 
 /* ============================================================ */
