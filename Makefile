@@ -8,7 +8,7 @@ LDFLAGS = -lm
 # Platform detection
 ifeq ($(OS),Windows_NT)
     TARGET = luna.exe
-    RM = del /Q
+    RM = cmd /c del /Q
     EXE_EXT = .exe
 else
     TARGET = luna
