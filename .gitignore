@@ -4,3 +4,4 @@
 __pycache__/
 *.luna
 !tests/*.luna
+tests/tests_output.txt
