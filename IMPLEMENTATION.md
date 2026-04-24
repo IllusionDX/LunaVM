@@ -3,8 +3,10 @@
 ## Pipeline
 
 ```
-Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM → JIT
+Source → Lexer → Parser → AST → Compiler → Bytecode → VM
 ```
+
+> JIT compilation is planned for a future engine generation (see Engine Evolution Roadmap below).
 
 ## AST
 
