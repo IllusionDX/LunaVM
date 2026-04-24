@@ -1,0 +1,10 @@
+# Test one-liner function syntax
+
+def add(a, b): return a + b
+print(add(2, 3))
+
+var mul = def(x, y): return x * y
+print(mul(4, 5))
+
+def greet(name): return "Hello, " + name
+print(greet("Luna"))
