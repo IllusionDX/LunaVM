@@ -19,7 +19,7 @@ LunaScript draws inspiration from **Python** (indentation-based blocks, list com
 
 ### Variable Declarations
 
-Three declaration keywords:
+Two declaration keywords:
 
 ```luna
 var count = 0                    # mutable, block scoped
