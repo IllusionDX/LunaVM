@@ -23,6 +23,7 @@ void chunk_init(Chunk *chunk, const char *name) {
     chunk->const_count   = 0;
     chunk->const_capacity = 0;
     chunk->global_cache  = NULL;
+    chunk->max_registers = 0;
 
     chunk->name = name ? strdup(name) : strdup("<chunk>");
 }
@@ -33,8 +34,8 @@ void chunk_free(Chunk *chunk) {
 
     /* Release object-type constants */
     for (int i = 0; i < chunk->const_count; i++) {
-        if (chunk->constants[i].type == VAL_OBJ && chunk->constants[i].as.obj) {
-            release_obj(chunk->constants[i].as.obj);
+        if (IS_OBJ(chunk->constants[i]) && AS_OBJ(chunk->constants[i])) {
+            release_obj(AS_OBJ(chunk->constants[i]));
         }
     }
     free(chunk->constants);
@@ -102,8 +103,8 @@ int chunk_add_const(Chunk *chunk, Value value) {
         chunk->const_capacity = new_cap;
     }
     /* Retain heap objects entering the constant pool */
-    if (value.type == VAL_OBJ && value.as.obj) {
-        retain_obj(value.as.obj);
+    if (IS_OBJ(value) && AS_OBJ(value)) {
+        retain_obj(AS_OBJ(value));
     }
     int idx = chunk->const_count++;
     chunk->constants[idx] = value;
@@ -114,8 +115,8 @@ int chunk_add_string(Chunk *chunk, const char *cstr) {
     /* De-duplicate: return existing index if already interned */
     for (int i = 0; i < chunk->const_count; i++) {
         Value v = chunk->constants[i];
-        if (v.type == VAL_OBJ && v.as.obj && v.as.obj->type == OBJ_STRING) {
-            ObjString *s = (ObjString *)v.as.obj;
+        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING) {
+            ObjString *s = (ObjString *)AS_OBJ(v);
             if (strcmp(s->chars, cstr) == 0) return i;
         }
     }

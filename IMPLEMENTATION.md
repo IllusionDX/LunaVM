@@ -250,7 +250,9 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.4-alpha` | Done | Computed GOTO dispatch loop. |
 | `0.1.5-alpha` | Done | String interning. `clock()` builtin. |
 | `0.1.6-alpha` | Done | Anonymous function expressions (`def(): ...`). |
-| `0.1.7-alpha` | **Current** | List comprehensions (`[x for x in list]`). |
+| `0.1.7-alpha` | Done | List comprehensions (`[x for x in list]`). |
+| `0.1.8-alpha` | Done | NaN boxing — unified `Value` into single `uint64_t`. |
+| `0.1.9-alpha` | **Current** | Closure return-value routing fix. INVOKE convention fix. Method invocation fix. Class instantiation fix. Compound assignment via upvalues fix. `DEBUG` preprocessor flag for conditional debug output. |
 | `0.2.0` | Planned | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. |
 | `0.3.0` | Planned | Modules and imports actually work. |
 | `0.4.0` | Planned | Standard library (strings, math, io, os). |
@@ -284,7 +286,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
 | Priority | Optimization | Impact | Complexity |
 |----------|--------------|--------|------------|
-| High | **NaN Boxing** | Unify all Value types into a single `uint64_t`. Faster copying, less memory, better cache usage. | Moderate — mechanical refactor across value.h / vm.c. |
+| High | **NaN Boxing** | *Done in 0.1.8-alpha* — unified all Value types into a single `uint64_t`. Faster copying, less memory, better cache usage. |
 | High | **Small Object Optimization** | Inline small lists/dicts (e.g., <= 4 elements) directly into the object struct to avoid separate heap allocations. | Moderate — changes object layout and collection helpers. |
 | Medium | **Hidden Classes / Shapes** | Give instances a fixed field layout (array indexing) instead of open hash maps. Makes property access O(1) instead of O(n). | High — requires shape objects, transition trees, compiler changes for shape-aware ops. |
 | Low | **String Interning** | *Done in 0.1.5-alpha* | — |

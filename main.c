@@ -57,6 +57,9 @@ static char *read_file(const char *path) {
 }
 
 static int execute_native_program(const char *source) {
+#ifdef DEBUG
+    fprintf(stderr, "DEBUG: execute_native_program start\n");
+#endif
     Lexer *lexer = lexer_new(source);
     TokenList *tokens = lexer_tokenize(lexer);
 
@@ -79,6 +82,9 @@ static int execute_native_program(const char *source) {
 
     VM vm;
     vm_init(&vm);
+#ifdef DEBUG
+    fprintf(stderr, "DEBUG: vm_init done\n");
+#endif
 
     Chunk chunk;
     if (!compile_program(program, &chunk, &vm, false)) {
@@ -92,7 +98,13 @@ static int execute_native_program(const char *source) {
         return 1;
     }
 
+#ifdef DEBUG
+    fprintf(stderr, "DEBUG: about to run chunk\n");
+#endif
     VMResult result = vm_run_chunk(&vm, &chunk);
+#ifdef DEBUG
+    fprintf(stderr, "DEBUG: vm_run_chunk returned %d\n", result);
+#endif
     if (result == VM_EXCEPTION) {
         fprintf(stderr, "Uncaught exception: ");
         char *exc_str = value_to_string(vm.last_exception);
@@ -247,7 +259,7 @@ static void repl(void) {
         int result = execute_repl_line(&vm, buffer);
         if (result == 0) {
             Value last;
-            if (vm_get_global(&vm, "_", &last) && last.type != VAL_NULL) {
+            if (vm_get_global(&vm, "_", &last) && !IS_NIL(last)) {
                 char *s = value_to_string(last);
                 printf("%s\n", s);
                 free(s);
@@ -266,6 +278,9 @@ static void repl(void) {
 }
 
 int main(int argc, char *argv[]) {
+#ifdef DEBUG
+    fprintf(stderr, "DEBUG: main start\n");
+#endif
     int unbuffered = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -312,10 +327,19 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+#ifdef DEBUG
+    fprintf(stderr, "DEBUG: about to read file %s\n", argv[file_idx]);
+#endif
     char *source = read_file(argv[file_idx]);
     if (!source) {
+#ifdef DEBUG
+        fprintf(stderr, "DEBUG: read_file failed\n");
+#endif
         return 1;
     }
+#ifdef DEBUG
+    fprintf(stderr, "DEBUG: read_file succeeded, calling execute_native_program\n");
+#endif
 
     int result = execute_native_program(source);
     free(source);

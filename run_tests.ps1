@@ -1,5 +1,5 @@
-# Test runner for Luna interpreter regression tests
-# Runs all .luna files in the tests/ directory
+# Test runner for Luna interpreter — dumps all outputs to a single file
+# so you can visually verify correctness (nulls, errors, etc.)
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
@@ -10,34 +10,47 @@ if (-not (Test-Path $Exe)) {
     exit 1
 }
 
+$OutFile = "tests\tests_output.txt"
+Remove-Item $OutFile -ErrorAction SilentlyContinue
+
 $Passed = 0
 $Failed = 0
 
 Write-Host "Running Luna regression tests..." -ForegroundColor Cyan
-Write-Host "================================"
 
 Get-ChildItem "tests\*.luna" | ForEach-Object {
     $testName = $_.Name
     Write-Host -NoNewline "Running $testName... "
 
-    $output = & $Exe $_.FullName 2>&1
+    # Merge stdout + stderr
+    $tmpFile = [System.IO.Path]::GetTempFileName()
+    & cmd /c "$Exe $($_.FullName) >$tmpFile 2>&1"
     $exitCode = $LASTEXITCODE
+    $output = Get-Content $tmpFile -Raw -ErrorAction SilentlyContinue
+    Remove-Item $tmpFile -ErrorAction SilentlyContinue
+
+    # Strip DEBUG: lines from output (keep errors/vm messages)
+    $cleanOutput = ($output -split "`r?`n" | Where-Object { $_ -notmatch '^DEBUG:' }) -join "`n"
+    if ($cleanOutput) { $cleanOutput = $cleanOutput.TrimEnd() }
+
+    Add-Content -Path $OutFile -Value "===== $testName ====="
+    Add-Content -Path $OutFile -Value $cleanOutput
+    Add-Content -Path $OutFile -Value ""
 
     if ($exitCode -eq 0) {
         Write-Host "PASSED" -ForegroundColor Green
         $Passed++
-    }
-    else {
+    } else {
         Write-Host "FAILED (exit code: $exitCode)" -ForegroundColor Red
-        $output | Select-Object -First 10
         $Failed++
     }
 }
 
 Write-Host "================================"
 Write-Host "Results: $Passed passed, $Failed failed" -ForegroundColor $(if ($Failed -eq 0) { "Green" } else { "Red" })
+Write-Host "Full output written to: $OutFile"
+Write-Host ""
+Get-Content $OutFile | Write-Host
 
-if ($Failed -gt 0) {
-    exit 1
-}
+if ($Failed -gt 0) { exit 1 }
 exit 0

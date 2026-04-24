@@ -1,23 +1,15 @@
-/* value.h — Luna VM value and object types.
+/* value.h — Luna VM value and object types (NaN-boxed).
  *
- * Matches IMPLEMENTATION.md V1 type tags exactly.
- * No AST dependency — this file is self-contained.
+ * Value layout (64-bit):
+ *   Real doubles are stored as raw IEEE-754 bits.
+ *   All other values are tagged with a quiet-NaN signature (0x7FFC in
+ *   the top 16 bits) so they are never confused with valid doubles.
  *
- * Value type tags:
- *   0  VAL_NULL    null
- *   1  VAL_BOOL    true / false
- *   2  VAL_INT     int64_t
- *   3  VAL_UINT    uint64_t
- *   4  VAL_FLOAT   float (32-bit)
- *   5  VAL_DOUBLE  double (64-bit)
- *   6  VAL_NAN     IEEE-754 NaN sentinel
- *   7  VAL_OBJ → OBJ_STRING
- *   8  VAL_OBJ → OBJ_LIST
- *   9  VAL_OBJ → OBJ_DICT
- *   10 VAL_OBJ → OBJ_INSTANCE
- *   11 VAL_OBJ → OBJ_FUNCTION
- *   12 VAL_OBJ → OBJ_NATIVE   (same struct, is_native == true)
- *   13 VAL_CHAR   uint32_t (Unicode code-point)
+ *   Pointer (Obj*):  QNAN | ptr          (ptr is 8-byte aligned => low 3 bits = 000)
+ *   int32_t:         QNAN | TAG_INT | (i << 3)
+ *   true:            QNAN | TAG_TRUE
+ *   false:           QNAN | TAG_FALSE
+ *   nil:             QNAN | TAG_NIL
  */
 
 #ifndef LUNA_VALUE_H
@@ -25,6 +17,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 /* Forward declarations */
 typedef struct Object   Object;
@@ -32,37 +25,65 @@ struct Chunk;   /* defined in chunk.h — avoid circular include */
 struct VM;      /* defined in vm.h */
 
 /* ============================================================ */
-/* Value type enum                                               */
+/* NaN-boxed value                                               */
 /* ============================================================ */
 
-typedef enum {
-    VAL_NULL,    /* 0  */
-    VAL_BOOL,    /* 1  */
-    VAL_INT,     /* 2  — int64_t  */
-    VAL_UINT,    /* 3  — uint64_t */
-    VAL_FLOAT,   /* 4  — float    */
-    VAL_DOUBLE,  /* 5  — double   */
-    VAL_NAN,     /* 6  — IEEE 754 NaN sentinel (no payload) */
-    VAL_CHAR,    /* 13 — Unicode code-point uint32_t */
-    VAL_OBJ      /* heap pointer — ObjType sub-tag identifies 7-12 */
-} ValueType;
+typedef uint64_t Value;
 
-/* ============================================================ */
-/* Tagged value                                                  */
-/* ============================================================ */
+/* Quiet NaN base: sign=0, exponent=all-1s, quiet-bit=1, bit50=1
+ * Top 16 bits = 0x7FFC. */
+#define QNAN_TAG     ((uint64_t)0x7ffc000000000000)
 
-typedef struct Value {
-    ValueType type;
-    union {
-        bool     boolean;
-        int64_t  integer;    /* VAL_INT    */
-        uint64_t uint_val;   /* VAL_UINT   */
-        float    float_val;  /* VAL_FLOAT  */
-        double   double_val; /* VAL_DOUBLE */
-        uint32_t char_val;   /* VAL_CHAR   (Unicode code-point) */
-        Object  *obj;        /* VAL_OBJ    */
-    } as;
-} Value;
+/* Sub-tags in the lowest 3 payload bits.
+ * Pointers from malloc are at least 8-byte aligned → low 3 bits = 000. */
+#define TAG_NIL      1  /* 0x001 */
+#define TAG_TRUE     2  /* 0x010 */
+#define TAG_FALSE    3  /* 0x011 */
+#define TAG_INT      4  /* 0x100 */
+
+#define IS_DOUBLE(v) (((v) & QNAN_TAG) != QNAN_TAG)
+#define IS_OBJ(v)    (((v) & (QNAN_TAG | 7)) == QNAN_TAG)
+#define IS_NIL(v)    ((v) == (QNAN_TAG | TAG_NIL))
+#define IS_TRUE(v)   ((v) == (QNAN_TAG | TAG_TRUE))
+#define IS_FALSE(v)  ((v) == (QNAN_TAG | TAG_FALSE))
+#define IS_BOOL(v)   (IS_TRUE(v) || IS_FALSE(v))
+#define IS_INT(v)    (((v) & (QNAN_TAG | 7)) == (QNAN_TAG | TAG_INT))
+#define IS_NUMBER(v) (IS_DOUBLE(v) || IS_INT(v))
+
+#define AS_OBJ(v)    ((Object*)(uintptr_t)((v) & 0x0000ffffffffffff))
+#define AS_BOOL(v)   IS_TRUE(v)
+#define AS_INT(v)    ((int32_t)((v) >> 3))
+
+static inline Value make_double(double d) {
+    Value v;
+    memcpy(&v, &d, sizeof(v));
+    return v;
+}
+static inline double AS_DOUBLE(Value v) {
+    double d;
+    memcpy(&d, &v, sizeof(d));
+    return d;
+}
+
+static inline double as_double(Value v) {
+    return IS_DOUBLE(v) ? AS_DOUBLE(v) : (double)AS_INT(v);
+}
+static inline int64_t as_int64(Value v) {
+    return IS_INT(v) ? (int64_t)AS_INT(v) : (int64_t)AS_DOUBLE(v);
+}
+
+#define OBJ_VAL(obj) (QNAN_TAG | (uint64_t)(uintptr_t)(obj))
+#define INT_VAL(i)   (QNAN_TAG | TAG_INT | ((uint64_t)(uint32_t)(i) << 3))
+#define NIL_VAL      (QNAN_TAG | TAG_NIL)
+#define TRUE_VAL     (QNAN_TAG | TAG_TRUE)
+#define FALSE_VAL    (QNAN_TAG | TAG_FALSE)
+#define BOOL_VAL(b)  ((b) ? TRUE_VAL : FALSE_VAL)
+
+/* Compatibility constructors (same names as before) */
+#define make_null()   NIL_VAL
+#define make_bool(b)  BOOL_VAL(b)
+#define make_int(i)   INT_VAL((int32_t)(i))
+#define make_obj(obj) OBJ_VAL(obj)
 
 /* ============================================================ */
 /* Object type tags                                              */
@@ -198,20 +219,6 @@ typedef struct {
     ObjUpvalue  **upvalues;
     int           upvalue_count;
 } ObjClosure;
-
-/* ============================================================ */
-/* Value constructors                                            */
-/* ============================================================ */
-
-Value make_null(void);
-Value make_bool(bool value);
-Value make_int(int64_t value);
-Value make_uint(uint64_t value);
-Value make_float(float value);
-Value make_double(double value);
-Value make_nan(void);
-Value make_char(uint32_t codepoint);
-Value make_obj(Object *obj);
 
 /* ============================================================ */
 /* Object constructors                                           */

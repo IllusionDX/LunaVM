@@ -50,6 +50,7 @@ typedef struct Compiler {
     Scope      *scope;
     VM         *vm;
     int         temp_base;  /* next free temp register */
+    int         max_temp_base; /* high-water mark of temp_base */
     int         line;       /* V1: always 1 (AST has no lines) */
     int         func_depth; /* 0 = top-level */
     LoopInfo   *loop;
@@ -156,7 +157,9 @@ static int alloc_reg(Compiler *c) {
         fprintf(stderr, "compiler: out of registers\n");
         return VM_MAX_REGISTERS - 1;
     }
-    return c->temp_base++;
+    int r = c->temp_base++;
+    if (c->temp_base > c->max_temp_base) c->max_temp_base = c->temp_base;
+    return r;
 }
 
 static void free_reg(Compiler *c) {
@@ -557,13 +560,13 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     case EXPR_LIST_LITERAL: {
         emit_ABC(c, OP_NEWLIST, (uint8_t)target, 0, 0);
         for (int i = 0; i < expr->data.list_literal.element_count; i++) {
-            /* INVOKE destination at target+2, arg at target+2, method name at target+3 */
+            /* INVOKE: method name at obj_reg+1 (target+1), arg at obj_reg+2 (target+2), dest at target+2 */
             int saved_base = c->temp_base;
-            c->temp_base = target + 4;
+            c->temp_base = target + 3;
             compile_expr_into(c, expr->data.list_literal.elements[i], target + 2);
             c->temp_base = saved_base;
             int mk = chunk_add_string(c->chunk, "add");
-            emit_ABx(c, OP_LOADK, (uint8_t)(target + 3), (uint16_t)mk);
+            emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
             emit_ABC(c, OP_INVOKE, (uint8_t)(target + 2), (uint8_t)target, 1);
         }
         break;
@@ -611,11 +614,11 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             skip_jump = emit_jump(c, OP_JZ, (uint8_t)cond);
         }
 
-        /* INVOKE convention: dest at target+2, method name at dest+1 (target+3), arg at obj+2 (target+2) */
+        /* INVOKE: method name at obj_reg+1 (target+1), arg at obj_reg+2 (target+2), dest at target+2 */
         compile_expr_into(c, expr->data.list_comprehension.element, target + 2);
 
         int mk = chunk_add_string(c->chunk, "add");
-        emit_ABx(c, OP_LOADK, (uint8_t)(target + 3), (uint16_t)mk);
+        emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
         emit_ABC(c, OP_INVOKE, (uint8_t)(target + 2), (uint8_t)target, 1);
 
         if (skip_jump >= 0) patch_jump(c, skip_jump);
@@ -654,14 +657,14 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         int nargs = expr->data.new_expr.arg_count;
         if (nargs > 0) {
             int saved_base = c->temp_base;
-            /* Args at target+2..target+1+nargs; method name at target+nargs+2; dest at target+nargs+1 */
-            c->temp_base = target + nargs + 3;
+            /* INVOKE: method name at obj_reg+1 (target+1), args at obj_reg+2.., dest at target+nargs+1 */
+            c->temp_base = target + nargs + 2;
             for (int i = 0; i < nargs; i++) {
                 compile_expr_into(c, expr->data.new_expr.arguments[i], target + 2 + i);
             }
             c->temp_base = saved_base;
             int mk = chunk_add_string(c->chunk, "_init");
-            emit_ABx(c, OP_LOADK, (uint8_t)(target + nargs + 2), (uint16_t)mk);
+            emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
             emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
         }
         break;
@@ -1036,6 +1039,7 @@ static int compile_function_value(Compiler *c, const char *name,
         .scope       = NULL,
         .vm          = c->vm,
         .temp_base   = 0,
+        .max_temp_base = 0,
         .line        = c->line,
         .func_depth  = c->func_depth + 1,
         .loop        = NULL,
@@ -1060,6 +1064,7 @@ static int compile_function_value(Compiler *c, const char *name,
 
     scope_exit(&sub);
 
+    fn_chunk.max_registers = sub.max_temp_base;
     ObjFunction *fn = new_function(name ? name : "");
     fn->chunk       = malloc(sizeof(Chunk));
     *fn->chunk      = fn_chunk;
@@ -1130,6 +1135,7 @@ static void compile_class(Compiler *c, Decl *decl) {
             .scope       = NULL,
             .vm          = c->vm,
             .temp_base   = 0,
+            .max_temp_base = 0,
             .line        = c->line,
             .func_depth  = c->func_depth + 1,
             .loop        = NULL
@@ -1148,6 +1154,7 @@ static void compile_class(Compiler *c, Decl *decl) {
         emit_ret(&sub, 0);
         scope_exit(&sub);
 
+        mchunk.max_registers = sub.max_temp_base;
         ObjFunction *mf = new_function(m->data.function.name);
         mf->chunk       = malloc(sizeof(Chunk));
         *mf->chunk      = mchunk;
@@ -1194,6 +1201,7 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl) {
         .scope      = NULL,
         .vm         = vm,
         .temp_base  = 0,
+        .max_temp_base = 0,
         .line       = 1,
         .func_depth = 0,
         .loop       = NULL,
@@ -1225,6 +1233,7 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl) {
 
     scope_exit(&c);
 
+    chunk->max_registers = c.max_temp_base;
     emit_ABC(&c, OP_HALT, 0, 0, 0);
     return true;
 }

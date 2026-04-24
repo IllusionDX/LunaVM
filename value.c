@@ -1,4 +1,4 @@
-/* value.c — Luna VM value and object implementation. */
+/* value.c — Luna VM value and object implementation (NaN-boxed). */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,20 +6,6 @@
 #include <stdarg.h>
 #include <math.h>
 #include "value.h"
-
-/* ============================================================ */
-/* Value constructors                                            */
-/* ============================================================ */
-
-Value make_null(void)              { Value v; v.type = VAL_NULL; v.as.integer = 0; return v; }
-Value make_bool(bool b)            { Value v; v.type = VAL_BOOL;   v.as.boolean   = b;     return v; }
-Value make_int(int64_t i)          { Value v; v.type = VAL_INT;    v.as.integer   = i;     return v; }
-Value make_uint(uint64_t u)        { Value v; v.type = VAL_UINT;   v.as.uint_val  = u;     return v; }
-Value make_float(float f)          { Value v; v.type = VAL_FLOAT;  v.as.float_val = f;     return v; }
-Value make_double(double d)        { Value v; v.type = VAL_DOUBLE; v.as.double_val= d;     return v; }
-Value make_nan(void)               { Value v; v.type = VAL_NAN;    v.as.integer   = 0;     return v; }
-Value make_char(uint32_t cp)       { Value v; v.type = VAL_CHAR;   v.as.char_val  = cp;    return v; }
-Value make_obj(Object *obj)        { Value v; v.type = VAL_OBJ;    v.as.obj       = obj;   return v; }
 
 /* ============================================================ */
 /* Hashing                                                       */
@@ -32,22 +18,25 @@ static uint32_t fnv1a(const char *key, int len) {
 }
 
 uint32_t hash_value(Value v) {
-    switch (v.type) {
-        case VAL_NULL:   return 0;
-        case VAL_BOOL:   return v.as.boolean ? 1u : 2u;
-        case VAL_INT:    return (uint32_t)(v.as.integer ^ (v.as.integer >> 32));
-        case VAL_UINT:   return (uint32_t)(v.as.uint_val ^ (v.as.uint_val >> 32));
-        case VAL_FLOAT:  { uint32_t u; memcpy(&u, &v.as.float_val,  4); return u; }
-        case VAL_DOUBLE: { uint64_t u; memcpy(&u, &v.as.double_val, 8); return (uint32_t)(u^(u>>32)); }
-        case VAL_NAN:    return 3u;
-        case VAL_CHAR:   return v.as.char_val * 2654435761u;
-        case VAL_OBJ:
-            if (!v.as.obj) return 0;
-            if (v.as.obj->type == OBJ_STRING)
-                return ((ObjString *)v.as.obj)->hash;
-            return (uint32_t)(uintptr_t)v.as.obj;
-        default: return 0;
+    if (IS_NIL(v)) return 0;
+    if (IS_BOOL(v)) return AS_BOOL(v) ? 1u : 2u;
+    if (IS_INT(v)) {
+        int32_t i = AS_INT(v);
+        return (uint32_t)(i ^ (i >> 16));
     }
+    if (IS_DOUBLE(v)) {
+        uint64_t u;
+        memcpy(&u, &v, sizeof(u));
+        return (uint32_t)(u ^ (u >> 32));
+    }
+    if (IS_OBJ(v)) {
+        Object *obj = AS_OBJ(v);
+        if (!obj) return 0;
+        if (obj->type == OBJ_STRING)
+            return ((ObjString *)obj)->hash;
+        return (uint32_t)(uintptr_t)obj;
+    }
+    return 0;
 }
 
 /* ============================================================ */
@@ -236,7 +225,7 @@ void retain_obj(Object *obj) {
 }
 
 static void release_value_inline(Value v) {
-    if (v.type == VAL_OBJ && v.as.obj) release_obj(v.as.obj);
+    if (IS_OBJ(v) && AS_OBJ(v)) release_obj(AS_OBJ(v));
 }
 
 static void free_dict_internal(ObjDict *d) {
@@ -310,143 +299,96 @@ void release_obj(Object *obj) {
 /* Value predicates                                              */
 /* ============================================================ */
 
-bool is_null(Value v) { return v.type == VAL_NULL; }
+bool is_null(Value v) { return IS_NIL(v); }
 
 bool is_truthy(Value v) {
-    switch (v.type) {
-        case VAL_NULL:   return false;
-        case VAL_BOOL:   return v.as.boolean;
-        case VAL_INT:    return v.as.integer != 0;
-        case VAL_UINT:   return v.as.uint_val != 0;
-        case VAL_FLOAT:  return v.as.float_val != 0.0f;
-        case VAL_DOUBLE: return v.as.double_val != 0.0;
-        case VAL_NAN:    return false;
-        case VAL_CHAR:   return v.as.char_val != 0;
-        case VAL_OBJ:    return v.as.obj != NULL;
-        default:         return false;
-    }
+    if (IS_NIL(v)) return false;
+    if (IS_BOOL(v)) return AS_BOOL(v);
+    if (IS_INT(v)) return AS_INT(v) != 0;
+    if (IS_DOUBLE(v)) return AS_DOUBLE(v) != 0.0;
+    if (IS_OBJ(v)) return AS_OBJ(v) != NULL;
+    return false;
 }
 
 bool values_equal(Value a, Value b) {
-    if (a.type != b.type) {
-        /* cross-type numeric equality */
-        if ((a.type == VAL_INT || a.type == VAL_UINT || a.type == VAL_FLOAT || a.type == VAL_DOUBLE) &&
-            (b.type == VAL_INT || b.type == VAL_UINT || b.type == VAL_FLOAT || b.type == VAL_DOUBLE)) {
-            double da = (a.type==VAL_INT)?    (double)a.as.integer :
-                        (a.type==VAL_UINT)?   (double)a.as.uint_val :
-                        (a.type==VAL_FLOAT)?  (double)a.as.float_val : a.as.double_val;
-            double db = (b.type==VAL_INT)?    (double)b.as.integer :
-                        (b.type==VAL_UINT)?   (double)b.as.uint_val :
-                        (b.type==VAL_FLOAT)?  (double)b.as.float_val : b.as.double_val;
-            return da == db;
-        }
-        return false;
+    if (a == b) return true;
+    if ((IS_DOUBLE(a) || IS_INT(a)) && (IS_DOUBLE(b) || IS_INT(b))) {
+        return as_double(a) == as_double(b);
     }
-    switch (a.type) {
-        case VAL_NULL:   return true;
-        case VAL_BOOL:   return a.as.boolean   == b.as.boolean;
-        case VAL_INT:    return a.as.integer   == b.as.integer;
-        case VAL_UINT:   return a.as.uint_val  == b.as.uint_val;
-        case VAL_FLOAT:  return a.as.float_val == b.as.float_val;
-        case VAL_DOUBLE: return a.as.double_val== b.as.double_val;
-        case VAL_NAN:    return false;  /* NaN != NaN */
-        case VAL_CHAR:   return a.as.char_val  == b.as.char_val;
-        case VAL_OBJ:
-            if (!a.as.obj || !b.as.obj) return a.as.obj == b.as.obj;
-            if (a.as.obj->type == OBJ_STRING && b.as.obj->type == OBJ_STRING) {
-                /* Interned strings: same content == same pointer */
-                return a.as.obj == b.as.obj;
-            }
-            return a.as.obj == b.as.obj;
-        default: return false;
-    }
+    return false;
 }
 
 char *value_to_string(Value v) {
     char buf[64];
-    switch (v.type) {
-        case VAL_NULL:   return strdup("null");
-        case VAL_BOOL:   return strdup(v.as.boolean ? "true" : "false");
-        case VAL_INT:    snprintf(buf,sizeof(buf),"%lld",(long long)v.as.integer);  return strdup(buf);
-        case VAL_UINT:   snprintf(buf,sizeof(buf),"%llu",(unsigned long long)v.as.uint_val); return strdup(buf);
-        case VAL_FLOAT:  snprintf(buf,sizeof(buf),"%g",  v.as.float_val);  return strdup(buf);
-        case VAL_DOUBLE: snprintf(buf,sizeof(buf),"%g",  v.as.double_val); return strdup(buf);
-        case VAL_NAN:    return strdup("NaN");
-        case VAL_CHAR: {
-            /* encode Unicode codepoint to UTF-8 */
-            uint32_t cp = v.as.char_val;
-            char tmp[5] = {0};
-            if      (cp < 0x80)   { tmp[0]=(char)cp; }
-            else if (cp < 0x800)  { tmp[0]=0xC0|(cp>>6); tmp[1]=0x80|(cp&0x3F); }
-            else if (cp < 0x10000){ tmp[0]=0xE0|(cp>>12); tmp[1]=0x80|((cp>>6)&0x3F); tmp[2]=0x80|(cp&0x3F); }
-            else { tmp[0]=0xF0|(cp>>18); tmp[1]=0x80|((cp>>12)&0x3F); tmp[2]=0x80|((cp>>6)&0x3F); tmp[3]=0x80|(cp&0x3F); }
-            return strdup(tmp);
-        }
-        case VAL_OBJ: {
-            if (!v.as.obj) return strdup("null");
-            switch (v.as.obj->type) {
-                case OBJ_STRING:  return strdup(((ObjString *)v.as.obj)->chars);
-                case OBJ_FUNCTION: {
-                    ObjFunction *f = (ObjFunction *)v.as.obj;
-                    snprintf(buf,sizeof(buf),"<%s %s>", f->is_native?"native fn":"fn", f->name?f->name:"?");
-                    return strdup(buf);
-                }
-                case OBJ_INSTANCE:
-                    snprintf(buf,sizeof(buf),"<instance of %s>",((ObjInstance*)v.as.obj)->class_name);
-                    return strdup(buf);
-                case OBJ_EXCEPTION:
-                    return strdup(((ObjException *)v.as.obj)->message);
-                case OBJ_LIST: {
-                    ObjList *l = (ObjList *)v.as.obj;
-                    int cap = 32; char *out = malloc(cap); int pos = 0;
-                    out[pos++] = '[';
-                    for (int i = 0; i < l->count; i++) {
-                        char *e = value_to_string(l->items[i]);
-                        bool is_str = l->items[i].type==VAL_OBJ && l->items[i].as.obj &&
-                                      l->items[i].as.obj->type==OBJ_STRING;
-                        int need = pos+(int)strlen(e)+(is_str?2:0)+4;
-                        if (need >= cap) { cap=need*2; out=realloc(out,cap); }
-                        if (i > 0) { out[pos++]=','; out[pos++]=' '; }
-                        if (is_str) out[pos++]='"';
-                        int el=(int)strlen(e); memcpy(out+pos,e,el); pos+=el;
-                        if (is_str) out[pos++]='"';
-                        free(e);
-                    }
-                    if (pos+2>=cap) { cap=pos+4; out=realloc(out,cap); }
-                    out[pos++]=']'; out[pos]='\0';
-                    char *r=strdup(out); free(out); return r;
-                }
-                case OBJ_DICT: {
-                    ObjDict *d = (ObjDict *)v.as.obj;
-                    int cap=32; char *out=malloc(cap); int pos=0; bool first=true;
-                    out[pos++]='{';
-                    for (int i=0;i<d->bucket_count;i++) {
-                        for (DictNode *e=d->buckets[i];e;e=e->next) {
-                            char *k=value_to_string(e->key), *val=value_to_string(e->value);
-                            bool ks=e->key.type==VAL_OBJ&&e->key.as.obj&&e->key.as.obj->type==OBJ_STRING;
-                            bool vs=e->value.type==VAL_OBJ&&e->value.as.obj&&e->value.as.obj->type==OBJ_STRING;
-                            int need=pos+(int)strlen(k)+(int)strlen(val)+(ks?2:0)+(vs?2:0)+8;
-                            if (need>=cap){cap=need*2;out=realloc(out,cap);}
-                            if (!first){out[pos++]=',';out[pos++]=' ';} first=false;
-                            if(ks)out[pos++]='"';
-                            int kl=(int)strlen(k);memcpy(out+pos,k,kl);pos+=kl;
-                            if(ks)out[pos++]='"';
-                            out[pos++]=':';out[pos++]=' ';
-                            if(vs)out[pos++]='"';
-                            int vl=(int)strlen(val);memcpy(out+pos,val,vl);pos+=vl;
-                            if(vs)out[pos++]='"';
-                            free(k);free(val);
-                        }
-                    }
-                    if(pos+2>=cap){cap=pos+4;out=realloc(out,cap);}
-                    out[pos++]='}';out[pos]='\0';
-                    char *r=strdup(out);free(out);return r;
-                }
-                default: return strdup("<object>");
+    if (IS_NIL(v)) return strdup("null");
+    if (IS_BOOL(v)) return strdup(AS_BOOL(v) ? "true" : "false");
+    if (IS_INT(v)) { snprintf(buf, sizeof(buf), "%d", AS_INT(v)); return strdup(buf); }
+    if (IS_DOUBLE(v)) { snprintf(buf, sizeof(buf), "%g", AS_DOUBLE(v)); return strdup(buf); }
+    if (IS_OBJ(v)) {
+        Object *obj = AS_OBJ(v);
+        if (!obj) return strdup("null");
+        switch (obj->type) {
+            case OBJ_STRING:  return strdup(((ObjString *)obj)->chars);
+            case OBJ_FUNCTION: {
+                ObjFunction *f = (ObjFunction *)obj;
+                snprintf(buf, sizeof(buf), "<%s %s>", f->is_native ? "native fn" : "fn", f->name ? f->name : "?");
+                return strdup(buf);
             }
+            case OBJ_INSTANCE:
+                snprintf(buf, sizeof(buf), "<instance of %s>", ((ObjInstance*)obj)->class_name);
+                return strdup(buf);
+            case OBJ_EXCEPTION:
+                return strdup(((ObjException *)obj)->message);
+            case OBJ_LIST: {
+                ObjList *l = (ObjList *)obj;
+                int cap = 32; char *out = malloc(cap); int pos = 0;
+                out[pos++] = '[';
+                for (int i = 0; i < l->count; i++) {
+                    char *e = value_to_string(l->items[i]);
+                    bool is_str = IS_OBJ(l->items[i]) && AS_OBJ(l->items[i]) &&
+                                  AS_OBJ(l->items[i])->type == OBJ_STRING;
+                    int need = pos + (int)strlen(e) + (is_str ? 2 : 0) + 4;
+                    if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
+                    if (i > 0) { out[pos++] = ','; out[pos++] = ' '; }
+                    if (is_str) out[pos++] = '"';
+                    int el = (int)strlen(e); memcpy(out + pos, e, el); pos += el;
+                    if (is_str) out[pos++] = '"';
+                    free(e);
+                }
+                if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
+                out[pos++] = ']'; out[pos] = '\0';
+                char *r = strdup(out); free(out); return r;
+            }
+            case OBJ_DICT: {
+                ObjDict *d = (ObjDict *)obj;
+                int cap = 32; char *out = malloc(cap); int pos = 0; bool first = true;
+                out[pos++] = '{';
+                for (int i = 0; i < d->bucket_count; i++) {
+                    for (DictNode *e = d->buckets[i]; e; e = e->next) {
+                        char *k = value_to_string(e->key), *val = value_to_string(e->value);
+                        bool ks = IS_OBJ(e->key) && AS_OBJ(e->key) && AS_OBJ(e->key)->type == OBJ_STRING;
+                        bool vs = IS_OBJ(e->value) && AS_OBJ(e->value) && AS_OBJ(e->value)->type == OBJ_STRING;
+                        int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
+                        if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
+                        if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
+                        if (ks) out[pos++] = '"';
+                        int kl = (int)strlen(k); memcpy(out + pos, k, kl); pos += kl;
+                        if (ks) out[pos++] = '"';
+                        out[pos++] = ':'; out[pos++] = ' ';
+                        if (vs) out[pos++] = '"';
+                        int vl = (int)strlen(val); memcpy(out + pos, val, vl); pos += vl;
+                        if (vs) out[pos++] = '"';
+                        free(k); free(val);
+                    }
+                }
+                if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
+                out[pos++] = '}'; out[pos] = '\0';
+                char *r = strdup(out); free(out); return r;
+            }
+            default: return strdup("<object>");
         }
-        default: return strdup("<unknown>");
     }
+    return strdup("<unknown>");
 }
 
 /* ============================================================ */
@@ -464,7 +406,7 @@ void instance_set_field(ObjInstance *inst, const char *name, Value value) {
     for (int i = 0; i < inst->field_count; i++) {
         if (inst->field_names[i] && strcmp(inst->field_names[i], name) == 0) {
             release_value_inline(inst->fields[i]);
-            if (value.type == VAL_OBJ && value.as.obj) retain_obj(value.as.obj);
+            if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
             inst->fields[i] = value;
             return;
         }
@@ -474,7 +416,7 @@ void instance_set_field(ObjInstance *inst, const char *name, Value value) {
         inst->field_names = realloc(inst->field_names, inst->field_capacity * sizeof(char *));
         inst->fields      = realloc(inst->fields,      inst->field_capacity * sizeof(Value));
     }
-    if (value.type == VAL_OBJ && value.as.obj) retain_obj(value.as.obj);
+    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     inst->field_names[inst->field_count] = strdup(name);
     inst->fields     [inst->field_count] = value;
     inst->field_count++;
@@ -488,34 +430,34 @@ void list_add(ObjList *list, Value value) {
     if (list->count >= list->capacity) {
         list->capacity = list->capacity < 8 ? 8 : list->capacity * 2;
         list->items = realloc(list->items, list->capacity * sizeof(Value));
-        if (!list->items) { fprintf(stderr,"OOM\n"); exit(1); }
+        if (!list->items) { fprintf(stderr, "OOM\n"); exit(1); }
     }
-    if (value.type == VAL_OBJ && value.as.obj) retain_obj(value.as.obj);
+    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     list->items[list->count++] = value;
 }
 
 void list_insert(ObjList *list, int index, Value value) {
-    if (index < 0 || index > list->count) { fprintf(stderr,"list.insert: out of bounds\n"); return; }
+    if (index < 0 || index > list->count) { fprintf(stderr, "list.insert: out of bounds\n"); return; }
     if (list->count >= list->capacity) {
         list->capacity = list->capacity < 8 ? 8 : list->capacity * 2;
         list->items = realloc(list->items, list->capacity * sizeof(Value));
     }
-    memmove(&list->items[index+1], &list->items[index], (list->count-index)*sizeof(Value));
-    if (value.type == VAL_OBJ && value.as.obj) retain_obj(value.as.obj);
+    memmove(&list->items[index + 1], &list->items[index], (list->count - index) * sizeof(Value));
+    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     list->items[index] = value;
     list->count++;
 }
 
 Value list_remove(ObjList *list, int index) {
-    if (index < 0 || index >= list->count) { fprintf(stderr,"list.remove: out of bounds\n"); return make_null(); }
+    if (index < 0 || index >= list->count) { fprintf(stderr, "list.remove: out of bounds\n"); return make_null(); }
     Value v = list->items[index];
-    memmove(&list->items[index], &list->items[index+1], (list->count-index-1)*sizeof(Value));
+    memmove(&list->items[index], &list->items[index + 1], (list->count - index - 1) * sizeof(Value));
     list->count--;
     return v;
 }
 
 Value list_pop(ObjList *list) {
-    if (!list->count) { fprintf(stderr,"list.pop: empty\n"); return make_null(); }
+    if (!list->count) { fprintf(stderr, "list.pop: empty\n"); return make_null(); }
     return list_remove(list, list->count - 1);
 }
 
@@ -525,14 +467,14 @@ void list_clear(ObjList *list) {
 }
 
 Value list_get(ObjList *list, int index) {
-    if (index < 0 || index >= list->count) { fprintf(stderr,"list: index out of bounds\n"); return make_null(); }
+    if (index < 0 || index >= list->count) { fprintf(stderr, "list: index out of bounds\n"); return make_null(); }
     return list->items[index];
 }
 
 void list_set(ObjList *list, int index, Value value) {
-    if (index < 0 || index >= list->count) { fprintf(stderr,"list: index out of bounds\n"); return; }
+    if (index < 0 || index >= list->count) { fprintf(stderr, "list: index out of bounds\n"); return; }
     release_value_inline(list->items[index]);
-    if (value.type == VAL_OBJ && value.as.obj) retain_obj(value.as.obj);
+    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     list->items[index] = value;
 }
 
@@ -564,16 +506,16 @@ void dict_set(ObjDict *d, Value key, Value value) {
     for (DictNode *e = d->buckets[idx]; e; e = e->next) {
         if (values_equal(e->key, key)) {
             release_value_inline(e->value);
-            if (value.type==VAL_OBJ&&value.as.obj) retain_obj(value.as.obj);
+            if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
             e->value = value; return;
         }
     }
     DictNode *ne = malloc(sizeof(DictNode));
-    if (!ne) { fprintf(stderr,"OOM\n"); return; }
+    if (!ne) { fprintf(stderr, "OOM\n"); return; }
     ne->key = key; ne->value = value;
     ne->next = d->buckets[idx]; d->buckets[idx] = ne;
-    if (key.type==VAL_OBJ&&key.as.obj) retain_obj(key.as.obj);
-    if (value.type==VAL_OBJ&&value.as.obj) retain_obj(value.as.obj);
+    if (IS_OBJ(key) && AS_OBJ(key)) retain_obj(AS_OBJ(key));
+    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     d->entry_count++;
 }
 
@@ -611,7 +553,7 @@ Value dict_remove(ObjDict *d, Value key) {
 void dict_clear(ObjDict *d) {
     for (int i = 0; i < d->bucket_count; i++) {
         DictNode *e = d->buckets[i];
-        while (e) { DictNode *nx=e->next; release_value_inline(e->key); release_value_inline(e->value); free(e); e=nx; }
+        while (e) { DictNode *nx = e->next; release_value_inline(e->key); release_value_inline(e->value); free(e); e = nx; }
         d->buckets[i] = NULL;
     }
     d->entry_count = 0;

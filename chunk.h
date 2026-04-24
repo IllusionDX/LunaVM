@@ -32,6 +32,9 @@ typedef struct Chunk {
     /* Inline cache: GlobalEntry* per instruction, used by OP_GETGLOBAL */
     struct GlobalEntry **global_cache;
 
+    /* Max registers needed by this chunk */
+    int         max_registers;
+
     /* Debug name (function name or "<module>") */
     char       *name;
 } Chunk;

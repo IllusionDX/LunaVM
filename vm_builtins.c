@@ -21,13 +21,17 @@ static uint32_t hash_cstr(const char *s) {
 }
 
 void vm_set_global(VM *vm, const char *name, Value value, bool is_const) {
-    uint32_t bucket = hash_cstr(name) & (VM_GLOBAL_BUCKETS - 1);
+    uint32_t h = hash_cstr(name);
+    uint32_t bucket = h & (VM_GLOBAL_BUCKETS - 1);
     for (GlobalEntry *e = vm->globals[bucket]; e; e = e->next) {
         if (strcmp(e->name, name) == 0) {
             if (e->is_const) { fprintf(stderr, "vm: cannot reassign const '%s'\n", name); return; }
-            release_obj(e->value.type == VAL_OBJ ? e->value.as.obj : NULL);
+            if (IS_OBJ(e->value) && AS_OBJ(e->value)) release_obj(AS_OBJ(e->value));
             e->value = value;
-            if (value.type == VAL_OBJ && value.as.obj) retain_obj(value.as.obj);
+            if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
+            /* invalidate possible cache entry */
+            int ic_idx = h & (IC_CACHE_SIZE - 1);
+            if (vm->global_ic[ic_idx].entry == e) vm->global_ic[ic_idx].key = NULL;
             return;
         }
     }
@@ -37,13 +41,33 @@ void vm_set_global(VM *vm, const char *name, Value value, bool is_const) {
     ne->is_const = is_const;
     ne->next     = vm->globals[bucket];
     vm->globals[bucket] = ne;
-    if (value.type == VAL_OBJ && value.as.obj) retain_obj(value.as.obj);
+    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
 }
 
 bool vm_get_global(VM *vm, const char *name, Value *out) {
     uint32_t bucket = hash_cstr(name) & (VM_GLOBAL_BUCKETS - 1);
     for (GlobalEntry *e = vm->globals[bucket]; e; e = e->next) {
         if (strcmp(e->name, name) == 0) { *out = e->value; return true; }
+    }
+    return false;
+}
+
+bool vm_get_global_fast(VM *vm, ObjString *name, Value *out) {
+    uint32_t h = name->hash;
+    int idx = h & (IC_CACHE_SIZE - 1);
+    IC_GlobalEntry *ic = &vm->global_ic[idx];
+    if (ic->key == name) {
+        *out = ic->entry->value;
+        return true;
+    }
+    uint32_t bucket = h & (VM_GLOBAL_BUCKETS - 1);
+    for (GlobalEntry *e = vm->globals[bucket]; e; e = e->next) {
+        if (e->name == name->chars || strcmp(e->name, name->chars) == 0) {
+            *out = e->value;
+            ic->key = name;
+            ic->entry = e;
+            return true;
+        }
     }
     return false;
 }
@@ -91,13 +115,13 @@ static Value bn_input(VM *vm, Value *args, int n) {
 static Value bn_range(VM *vm, Value *args, int n) {
     (void)vm;
     int64_t start=0, end=0;
-    if (n==1 && args[0].type==VAL_INT) end=args[0].as.integer;
+    if (n==1 && IS_INT(args[0])) end = AS_INT(args[0]);
     else if (n>=2) {
-        if (args[0].type==VAL_INT) start=args[0].as.integer;
-        if (args[1].type==VAL_INT) end  =args[1].as.integer;
+        if (IS_INT(args[0])) start = AS_INT(args[0]);
+        if (IS_INT(args[1])) end   = AS_INT(args[1]);
     }
     ObjList *l = new_list();
-    for (int64_t i=start; i<end; i++) list_add(l, make_int(i));
+    for (int64_t i=start; i<end; i++) list_add(l, make_int((int32_t)i));
     return make_obj((Object *)l);
 }
 
@@ -112,47 +136,32 @@ static Value bn_str(VM *vm, Value *args, int n) {
 static Value bn_int(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n) return make_int(0);
-    switch (args[0].type) {
-        case VAL_INT:    return args[0];
-        case VAL_UINT:   return make_int((int64_t)args[0].as.uint_val);
-        case VAL_FLOAT:  return make_int((int64_t)args[0].as.float_val);
-        case VAL_DOUBLE: return make_int((int64_t)args[0].as.double_val);
-        case VAL_BOOL:   return make_int(args[0].as.boolean ? 1 : 0);
-        case VAL_CHAR:   return make_int((int64_t)args[0].as.char_val);
-        case VAL_OBJ:
-            if (args[0].as.obj && args[0].as.obj->type==OBJ_STRING)
-                return make_int(atoll(((ObjString*)args[0].as.obj)->chars));
-            break;
-        default: break;
-    }
+    if (IS_INT(args[0])) return args[0];
+    if (IS_DOUBLE(args[0])) return make_int((int64_t)AS_DOUBLE(args[0]));
+    if (IS_BOOL(args[0])) return make_int(AS_BOOL(args[0]) ? 1 : 0);
+    if (IS_OBJ(args[0]) && AS_OBJ(args[0]) && AS_OBJ(args[0])->type == OBJ_STRING)
+        return make_int(atoll(((ObjString*)AS_OBJ(args[0]))->chars));
     return make_int(0);
 }
 
 static Value bn_float(VM *vm, Value *args, int n) {
     (void)vm;
-    if (!n) return make_float(0.0f);
-    switch (args[0].type) {
-        case VAL_INT:    return make_float((float)args[0].as.integer);
-        case VAL_UINT:   return make_float((float)args[0].as.uint_val);
-        case VAL_FLOAT:  return args[0];
-        case VAL_DOUBLE: return make_float((float)args[0].as.double_val);
-        case VAL_BOOL:   return make_float(args[0].as.boolean ? 1.f : 0.f);
-        case VAL_OBJ:
-            if (args[0].as.obj && args[0].as.obj->type==OBJ_STRING)
-                return make_float((float)atof(((ObjString*)args[0].as.obj)->chars));
-            break;
-        default: break;
-    }
-    return make_float(0.0f);
+    if (!n) return make_double(0.0);
+    if (IS_DOUBLE(args[0])) return args[0];
+    if (IS_INT(args[0])) return make_double((double)AS_INT(args[0]));
+    if (IS_BOOL(args[0])) return make_double(AS_BOOL(args[0]) ? 1.0 : 0.0);
+    if (IS_OBJ(args[0]) && AS_OBJ(args[0]) && AS_OBJ(args[0])->type == OBJ_STRING)
+        return make_double(atof(((ObjString*)AS_OBJ(args[0]))->chars));
+    return make_double(0.0);
 }
 
 static Value bn_len(VM *vm, Value *args, int n) {
     (void)vm;
-    if (!n || args[0].type!=VAL_OBJ || !args[0].as.obj) return make_int(0);
-    switch (args[0].as.obj->type) {
-        case OBJ_STRING:  return make_int(((ObjString*)args[0].as.obj)->length);
-        case OBJ_LIST:    return make_int(((ObjList*)  args[0].as.obj)->count);
-        case OBJ_DICT:    return make_int(((ObjDict*)  args[0].as.obj)->entry_count);
+    if (!n || !IS_OBJ(args[0]) || !AS_OBJ(args[0])) return make_int(0);
+    switch (AS_OBJ(args[0])->type) {
+        case OBJ_STRING:  return make_int(((ObjString*)AS_OBJ(args[0]))->length);
+        case OBJ_LIST:    return make_int(((ObjList*)  AS_OBJ(args[0]))->count);
+        case OBJ_DICT:    return make_int(((ObjDict*)  AS_OBJ(args[0]))->entry_count);
         default:          return make_int(0);
     }
 }
@@ -160,25 +169,21 @@ static Value bn_len(VM *vm, Value *args, int n) {
 static Value bn_type(VM *vm, Value *args, int n) {
     (void)vm;
     const char *t = "null";
-    if (n) switch (args[0].type) {
-        case VAL_BOOL:   t="bool";   break;
-        case VAL_INT:    t="int";    break;
-        case VAL_UINT:   t="uint";   break;
-        case VAL_FLOAT:  t="float";  break;
-        case VAL_DOUBLE: t="double"; break;
-        case VAL_NAN:    t="NaN";    break;
-        case VAL_CHAR:   t="char";   break;
-        case VAL_OBJ:
-            if (!args[0].as.obj) break;
-            switch (args[0].as.obj->type) {
-                case OBJ_STRING:   t="string";   break;
-                case OBJ_LIST:     t="list";     break;
-                case OBJ_DICT:     t="dict";     break;
-                case OBJ_INSTANCE: t=((ObjInstance*)args[0].as.obj)->class_name; break;
-                case OBJ_FUNCTION: t="function"; break;
-                default:           t="object";   break;
-            } break;
-        default: break;
+    if (n) {
+        if (IS_NIL(args[0])) t = "null";
+        else if (IS_BOOL(args[0])) t = "bool";
+        else if (IS_INT(args[0])) t = "int";
+        else if (IS_DOUBLE(args[0])) t = "double";
+        else if (IS_OBJ(args[0]) && AS_OBJ(args[0])) {
+            switch (AS_OBJ(args[0])->type) {
+                case OBJ_STRING:   t = "string";   break;
+                case OBJ_LIST:     t = "list";     break;
+                case OBJ_DICT:     t = "dict";     break;
+                case OBJ_INSTANCE: t = ((ObjInstance*)AS_OBJ(args[0]))->class_name; break;
+                case OBJ_FUNCTION: t = "function"; break;
+                default:           t = "object";   break;
+            }
+        }
     }
     return make_obj((Object *)new_string(t,(int)strlen(t)));
 }
@@ -208,8 +213,8 @@ bool vm_invoke_list(VM *vm, ObjList *list, const char *method,
                     Value *args, int nargs, Value *result) {
     (void)vm;
     if (!strcmp(method,"add")    && nargs>=1) { list_add(list,args[0]);                       *result=make_null(); return true; }
-    if (!strcmp(method,"insert") && nargs>=2 && args[0].type==VAL_INT) { list_insert(list,(int)args[0].as.integer,args[1]); *result=make_null(); return true; }
-    if (!strcmp(method,"remove") && nargs>=1 && args[0].type==VAL_INT) { *result=list_remove(list,(int)args[0].as.integer); return true; }
+    if (!strcmp(method,"insert") && nargs>=2 && IS_INT(args[0])) { list_insert(list, AS_INT(args[0]), args[1]); *result=make_null(); return true; }
+    if (!strcmp(method,"remove") && nargs>=1 && IS_INT(args[0])) { *result=list_remove(list, AS_INT(args[0])); return true; }
     if (!strcmp(method,"pop"))   { *result=list_pop(list);    return true; }
     if (!strcmp(method,"clear")) { list_clear(list); *result=make_null(); return true; }
     if (!strcmp(method,"length"))    { *result=make_int(list_length(list)); return true; }

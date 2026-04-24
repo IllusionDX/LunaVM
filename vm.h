@@ -2,6 +2,9 @@
  *
  * Instruction format: 32-bit uint32_t (ABC / ABx / AsBx).
  * See opcode.h for encoding/decoding macros.
+ *
+ * The VM uses a single shared value stack; each CallFrame stores
+ * a base offset so its registers are slices of that stack.
  */
 
 #ifndef LUNA_VM_H
@@ -14,17 +17,15 @@
 /* ---- Limits ---- */
 #define VM_MAX_FRAMES    256
 #define VM_MAX_REGISTERS 256
+#define MAX_FRAMES       VM_MAX_FRAMES
 
 /* ---- Call Frame ---- */
 typedef struct {
-    Chunk   *chunk;                      /* bytecode being executed       */
-    int      ip;                         /* index into chunk->code[]      */
-    Value    regs[VM_MAX_REGISTERS];     /* register window               */
-    int      ret_reg;                    /* caller's destination register */
-    bool     has_self;
-    Value    self_val;
-    ObjUpvalue *upvalues[VM_MAX_REGISTERS]; /* captured upvalues          */
-    int      upvalue_count;
+    Chunk       *chunk;      /* bytecode being executed       */
+    int          ip;         /* index into chunk->code[]      */
+    int          base;       /* stack offset for this frame   */
+    ObjClosure  *closure;    /* closure for upvalue access    */
+    int          ret_reg;    /* caller's destination register */
 } CallFrame;
 
 /* ---- Global variable entry (chained hash table) ---- */
@@ -40,13 +41,25 @@ typedef struct GlobalEntry {
 /* ---- Exception handling frame ---- */
 typedef struct TryFrame {
     int catch_ip;
-    int exc_reg;
     int frame_depth;   /* vm->frame_count when TRY was pushed */
+    int stack_count;   /* vm->stack_count when TRY was pushed */
+    int exc_reg;       /* register to receive exception value */
     struct TryFrame *next;
 } TryFrame;
 
-/* Forward declaration */
-typedef struct ObjUpvalue ObjUpvalue;
+/* ---- Inline caches ---- */
+#define IC_CACHE_SIZE 64  /* must be power of 2 */
+
+typedef struct {
+    ObjString   *key;      /* interned string (pointer compare) */
+    GlobalEntry *entry;    /* cached hash bucket entry */
+} IC_GlobalEntry;
+
+typedef struct {
+    ObjInstance *inst;     /* cached instance */
+    ObjString   *name;     /* field/method name */
+    int          index;    /* cached index */
+} IC_MemberEntry;
 
 /* ---- VM State ---- */
 typedef struct VM {
@@ -54,6 +67,11 @@ typedef struct VM {
     int         frame_count;
 
     GlobalEntry *globals[VM_GLOBAL_BUCKETS];
+
+    /* Shared value stack */
+    Value      *stack;
+    int         stack_cap;
+    int         stack_count;
 
     /* GC intrusive list */
     Object     *objects;
@@ -66,6 +84,11 @@ typedef struct VM {
 
     /* Last unhandled exception */
     Value       last_exception;
+
+    /* Inline caches */
+    IC_GlobalEntry global_ic[IC_CACHE_SIZE];
+    IC_MemberEntry member_ic[IC_CACHE_SIZE];
+    IC_MemberEntry method_ic[IC_CACHE_SIZE];
 } VM;
 
 /* ---- Result codes ---- */
@@ -81,8 +104,12 @@ void     vm_free(VM *vm);
 void     vm_define_native(VM *vm, const char *name, NativeFn fn);
 void     vm_set_global(VM *vm, const char *name, Value value, bool is_const);
 bool     vm_get_global(VM *vm, const char *name, Value *out);
+bool     vm_get_global_fast(VM *vm, ObjString *name, Value *out);
 GlobalEntry *vm_resolve_global(VM *vm, const char *name);
 
 VMResult vm_run_chunk(VM *vm, Chunk *chunk);
+
+/* Upvalue capture — declared here because vm.c defines it after vm_run_chunk */
+ObjUpvalue *capture_upvalue(VM *vm, int stack_idx);
 
 #endif /* LUNA_VM_H */

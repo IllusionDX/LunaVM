@@ -1,0 +1,97 @@
+===== bench_clock.luna =====
+Un millon de iteraciones en: 0.032 segundos
+
+===== minimal.luna =====
+hello
+
+===== test.luna =====
+5 + 10 =
+15
+Hello, Luna!
+Result is greater than 10
+Loop iteration:
+0
+Loop iteration:
+1
+Loop iteration:
+2
+List length:
+5
+After adding 6:
+6
+
+===== test2.luna =====
+Processing combat for: Zim
+Critical hit detected!
+Survivor status:
+false
+Final Attributes for Zim:
+{"STR": 15, "INT": 5, "DEX": 13}
+
+===== test_closure.luna =====
+5
+
+===== test_closure_advanced.luna =====
+18
+3
+5
+15
+18
+
+===== test_closure_counter.luna =====
+1
+2
+3
+1
+2
+
+===== test_import.luna =====
+import test done
+
+===== test_interning.luna =====
+true
+true
+true
+
+===== test_list_comprehension.luna =====
+[1, 4, 9, 16, 25]
+[2, 4]
+[0, 2, 4, 6]
+[1, 9, 25, 49, 81]
+
+===== test_modulo.luna =====
+1
+0.9
+
+===== test_switch.luna =====
+two
+default case
+hello matched
+
+===== test_switch_nodefault.luna =====
+after switch
+
+===== test_try.luna =====
+10
+caught:
+negative!
+after try/catch
+inner caught:
+inner
+outer caught:
+rethrown
+
+===== test_try_uncaught.luna =====
+vm: unhandled exception
+Uncaught exception: uncaught
+
+===== test_upvalues.luna =====
+Contador Alfa: 1
+Contador Alfa: 2
+Contador Beta: 1
+Contador Alfa: 3
+
+===== test_upvalues_simple.luna =====
+1
+2
+

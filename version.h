@@ -3,6 +3,6 @@
 #ifndef LUNA_VERSION_H
 #define LUNA_VERSION_H
 
-#define LUNA_VERSION_STRING "0.1.7-alpha"
+#define LUNA_VERSION_STRING "0.1.9-alpha"
 
 #endif /* LUNA_VERSION_H */

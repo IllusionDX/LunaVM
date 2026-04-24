@@ -28,37 +28,29 @@ bool vm_invoke_dict(VM *vm, ObjDict  *dict, const char *method, Value *args, int
 /* ============================================================ */
 
 static inline double to_f64(Value v) {
-    switch(v.type){
-        case VAL_INT:    return (double)v.as.integer;
-        case VAL_UINT:   return (double)v.as.uint_val;
-        case VAL_FLOAT:  return (double)v.as.float_val;
-        case VAL_DOUBLE: return v.as.double_val;
-        default:         return 0.0;
-    }
+    if (IS_INT(v)) return (double)AS_INT(v);
+    if (IS_DOUBLE(v)) return AS_DOUBLE(v);
+    return 0.0;
 }
 static inline int64_t to_i64(Value v) {
-    switch(v.type){
-        case VAL_INT:    return v.as.integer;
-        case VAL_UINT:   return (int64_t)v.as.uint_val;
-        case VAL_FLOAT:  return (int64_t)v.as.float_val;
-        case VAL_DOUBLE: return (int64_t)v.as.double_val;
-        default:         return 0;
-    }
+    if (IS_INT(v)) return (int64_t)AS_INT(v);
+    if (IS_DOUBLE(v)) return (int64_t)AS_DOUBLE(v);
+    return 0;
 }
 static inline bool is_num(Value v) {
-    return v.type==VAL_INT||v.type==VAL_UINT||v.type==VAL_FLOAT||v.type==VAL_DOUBLE;
+    return IS_NUMBER(v);
 }
-static inline bool is_int_type(Value v) { return v.type==VAL_INT||v.type==VAL_UINT; }
+static inline bool is_int_type(Value v) { return IS_INT(v); }
 
-static Value do_arith(Value L, Value R, OpCode op) {
+static inline Value do_arith(Value L, Value R, OpCode op) {
     /* String concat for ADD */
-    if (op==OP_ADD && L.type==VAL_OBJ && L.as.obj && L.as.obj->type==OBJ_STRING) {
-        ObjString *ls = (ObjString*)L.as.obj;
+    if (op == OP_ADD && IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type == OBJ_STRING) {
+        ObjString *ls = (ObjString*)AS_OBJ(L);
         const char *rs;
         int rs_len;
         char *rs_tmp = NULL;
-        if (R.type==VAL_OBJ && R.as.obj && R.as.obj->type==OBJ_STRING) {
-            ObjString *rs_str = (ObjString*)R.as.obj;
+        if (IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type == OBJ_STRING) {
+            ObjString *rs_str = (ObjString*)AS_OBJ(R);
             rs = rs_str->chars;
             rs_len = rs_str->length;
         } else {
@@ -75,35 +67,62 @@ static Value do_arith(Value L, Value R, OpCode op) {
         free(buf);
         return make_obj((Object*)s);
     }
-    if (!is_num(L)||!is_num(R)) return make_null();
-    bool fp = L.type==VAL_DOUBLE||R.type==VAL_DOUBLE||L.type==VAL_FLOAT||R.type==VAL_FLOAT;
-    switch(op){
-        case OP_ADD: if(fp){double r=to_f64(L)+to_f64(R); return (L.type==VAL_DOUBLE||R.type==VAL_DOUBLE)?make_double(r):make_float((float)r);} return make_int(to_i64(L)+to_i64(R));
-        case OP_SUB: if(fp){double r=to_f64(L)-to_f64(R); return (L.type==VAL_DOUBLE||R.type==VAL_DOUBLE)?make_double(r):make_float((float)r);} return make_int(to_i64(L)-to_i64(R));
-        case OP_MUL: if(fp){double r=to_f64(L)*to_f64(R); return (L.type==VAL_DOUBLE||R.type==VAL_DOUBLE)?make_double(r):make_float((float)r);} return make_int(to_i64(L)*to_i64(R));
-        case OP_DIV: { double d=to_f64(R); if(d==0.0){fprintf(stderr,"vm: div/0\n");return make_null();} if(fp){double r=to_f64(L)/d;return(L.type==VAL_DOUBLE||R.type==VAL_DOUBLE)?make_double(r):make_float((float)r);}return make_int(to_i64(L)/to_i64(R)); }
-        case OP_MOD: { int64_t ri=to_i64(R); if(!ri){fprintf(stderr,"vm: mod/0\n");return make_null();} return make_int(to_i64(L)%ri); }
+    if (!is_num(L) || !is_num(R)) return make_null();
+    /* Integer path */
+    if (IS_INT(L) && IS_INT(R)) {
+        int64_t li = AS_INT(L);
+        int64_t ri = AS_INT(R);
+        switch (op) {
+            case OP_ADD: return make_int(li + ri);
+            case OP_SUB: return make_int(li - ri);
+            case OP_MUL: return make_int(li * ri);
+            case OP_DIV: {
+                if (!ri) { fprintf(stderr, "vm: div/0\n"); return make_null(); }
+                return make_int(li / ri);
+            }
+            case OP_MOD: {
+                if (!ri) { fprintf(stderr, "vm: mod/0\n"); return make_null(); }
+                return make_int(li % ri);
+            }
+            default: return make_null();
+        }
+    }
+    /* Floating-point path */
+    double l = to_f64(L);
+    double r = to_f64(R);
+    switch (op) {
+        case OP_ADD: return make_double(l + r);
+        case OP_SUB: return make_double(l - r);
+        case OP_MUL: return make_double(l * r);
+        case OP_DIV: {
+            if (r == 0.0) { fprintf(stderr, "vm: div/0\n"); return make_null(); }
+            return make_double(l / r);
+        }
+        case OP_MOD: {
+            if (r == 0.0) { fprintf(stderr, "vm: mod/0\n"); return make_null(); }
+            return make_double(fmod(l, r));
+        }
         default: return make_null();
     }
 }
-static Value do_cmp(Value L, Value R, OpCode op) {
-    if (is_num(L)&&is_num(R)){
-        double a=to_f64(L),b=to_f64(R);
-        switch(op){case OP_LT:return make_bool(a<b);case OP_LE:return make_bool(a<=b);case OP_GT:return make_bool(a>b);case OP_GE:return make_bool(a>=b);default:break;}
+static inline Value do_cmp(Value L, Value R, OpCode op) {
+    if (is_num(L) && is_num(R)) {
+        double a = to_f64(L), b = to_f64(R);
+        switch (op) { case OP_LT: return make_bool(a < b); case OP_LE: return make_bool(a <= b); case OP_GT: return make_bool(a > b); case OP_GE: return make_bool(a >= b); default: break; }
     }
     /* Fast path: interned string equality is pointer comparison */
-    if (L.type == VAL_OBJ && R.type == VAL_OBJ && L.as.obj && R.as.obj &&
-        L.as.obj->type == OBJ_STRING && R.as.obj->type == OBJ_STRING) {
-        bool same = L.as.obj == R.as.obj;
-        switch(op){
+    if (IS_OBJ(L) && IS_OBJ(R) && AS_OBJ(L) && AS_OBJ(R) &&
+        AS_OBJ(L)->type == OBJ_STRING && AS_OBJ(R)->type == OBJ_STRING) {
+        bool same = AS_OBJ(L) == AS_OBJ(R);
+        switch (op) {
             case OP_EQ: return make_bool(same);
             case OP_NE: return make_bool(!same);
             default: break;
         }
     }
-    switch(op){
-        case OP_EQ: return make_bool(values_equal(L,R));
-        case OP_NE: return make_bool(!values_equal(L,R));
+    switch (op) {
+        case OP_EQ: return make_bool(values_equal(L, R));
+        case OP_NE: return make_bool(!values_equal(L, R));
         default: return make_null();
     }
 }
@@ -112,7 +131,9 @@ static Value do_cmp(Value L, Value R, OpCode op) {
 /* VM init / free                                                */
 /* ============================================================ */
 
-void vm_init(VM *vm) { memset(vm,0,sizeof(VM)); }
+void vm_init(VM *vm) {
+    memset(vm, 0, sizeof(VM));
+}
 
 static void close_upvalues(VM *vm, int frame_depth);
 
@@ -125,13 +146,17 @@ static void vm_pop_try_frames(VM *vm, int min_depth) {
 }
 
 void vm_free(VM *vm) {
-    for (int i=0;i<VM_GLOBAL_BUCKETS;i++) {
-        GlobalEntry *e=vm->globals[i];
-        while(e){ GlobalEntry *nx=e->next; release_obj(e->value.type==VAL_OBJ?e->value.as.obj:NULL); free(e->name);free(e);e=nx; }
-        vm->globals[i]=NULL;
+    for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
+        GlobalEntry *e = vm->globals[i];
+        while (e) {
+            GlobalEntry *nx = e->next;
+            if (IS_OBJ(e->value) && AS_OBJ(e->value)) release_obj(AS_OBJ(e->value));
+            free(e->name); free(e); e = nx;
+        }
+        vm->globals[i] = NULL;
     }
-    Object *o=vm->objects;
-    while(o){ Object *nx=o->next; free_object(o); o=nx; }
+    Object *o = vm->objects;
+    while (o) { Object *nx = o->next; free_object(o); o = nx; }
     while (vm->try_stack) {
         TryFrame *tf = vm->try_stack;
         vm->try_stack = tf->next;
@@ -148,488 +173,786 @@ void vm_free(VM *vm) {
 #define FRAME       vm->frames[vm->frame_count-1]
 #define CHUNK       (FRAME.chunk)
 #define IP          (FRAME.ip)
-#define RA          DECODE_A(inst)
-#define RB          DECODE_B(inst)
-#define RC          DECODE_C(inst)
-#define BX          DECODE_Bx(inst)
-#define SBX         DECODE_sBx(inst)
-#define REG(n)      (FRAME.regs[(uint8_t)(n)])
-#define CONST(n)    (CHUNK->constants[(int)(n)])
-#define KSTR(n)     (((ObjString*)CONST(n).as.obj)->chars)
+#define RA          (A)
+#define RB          (B)
+#define RC          (C)
+#define RKB         (ISK(B) ? CONST(Bx & 0xFF) : REG(B))
+#define RKC         (ISK(C) ? CONST(Bx & 0xFF) : REG(C))
+#define REG(i)      (vm->stack[FRAME.base + (i)])
+#define CONST(i)    (CHUNK->constants[(i)])
+#define KSTR(n)     (((ObjString*)AS_OBJ(CONST(n)))->chars)
+#define KSTROBJ(n)  ((ObjString*)AS_OBJ(CONST(n)))
 
-static ObjUpvalue *capture_upvalue(VM *vm, Value *slot) {
-    ObjUpvalue *uv = new_upvalue(slot);
-    uv->frame_depth = vm->frame_count;
-    uv->next = vm->open_upvalues;
-    vm->open_upvalues = uv;
-    return uv;
-}
-
-static void close_upvalues(VM *vm, int frame_depth) {
-    ObjUpvalue **current = &vm->open_upvalues;
-    while (*current) {
-        if ((*current)->frame_depth >= frame_depth) {
-            ObjUpvalue *uv = *current;
-            uv->closed = *uv->location;
-            uv->location = &uv->closed;
-            *current = uv->next;
-        } else {
-            current = &(*current)->next;
-        }
+VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
+    if (vm->frame_count >= MAX_FRAMES) { fprintf(stderr, "vm: frame overflow\n"); return VM_ERROR; }
+    CallFrame *frame = &vm->frames[vm->frame_count++];
+    frame->chunk = chunk;
+    frame->ip = 0;
+    frame->base = vm->stack_count;
+    frame->ret_reg = 0;
+    int needed = frame->base + chunk->max_registers;
+    if (needed > vm->stack_cap) {
+        vm->stack_cap = needed < 64 ? 64 : needed * 2;
+        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
     }
-}
+    for (int i = 0; i < chunk->max_registers; i++) vm->stack[frame->base + i] = make_null();
+    vm->stack_count = needed;
 
-static VMResult push_frame(VM *vm, Chunk *chunk, int ret_reg) {
-    if (vm->frame_count >= VM_MAX_FRAMES) { fprintf(stderr,"vm: stack overflow\n"); return VM_ERROR; }
-    CallFrame *f = &vm->frames[vm->frame_count++];
-    f->chunk   = chunk;
-    f->ip      = 0;
-    f->ret_reg = ret_reg;
-    f->has_self= false;
-    f->self_val= make_null();
-    f->upvalue_count = 0;
-    for (int i=0;i<VM_MAX_REGISTERS;i++) f->regs[i]=make_null();
-    for (int i=0;i<VM_MAX_REGISTERS;i++) f->upvalues[i]=NULL;
-    return VM_OK;
-}
+    vm_register_builtins(vm);
 
-VMResult vm_run_chunk(VM *vm, Chunk *top) {
-    static bool init = false;
-    if (!init) { vm_register_builtins(vm); init = true; }
+    uint32_t instr;
+    uint8_t  A, B, C;
+    uint16_t Bx;
+    int      sBx;
 
-    if (push_frame(vm, top, -1) != VM_OK) return VM_ERROR;
+#define DECODE \
+    do { \
+        instr = CHUNK->code[IP++]; \
+        A   = DECODE_A(instr); \
+        B   = DECODE_B(instr); \
+        C   = DECODE_C(instr); \
+        Bx  = DECODE_Bx(instr); \
+        sBx = DECODE_sBx(instr); \
+    } while (0)
 
-dispatch:
-    while (vm->frame_count > 0) {
-        if (IP >= CHUNK->count) {
-            /* implicit return null from top frame */
-            if (vm->frame_count == 1) {
-                while (vm->try_stack) {
-                    TryFrame *tf = vm->try_stack;
-                    vm->try_stack = tf->next;
-                    free(tf);
-                }
-                close_upvalues(vm, 1);
-                vm->frame_count=0; return VM_OK;
-            }
-            int rr = FRAME.ret_reg;
-            int closing_depth = vm->frame_count;
-            vm->frame_count--;
-            close_upvalues(vm, closing_depth);
-            vm_pop_try_frames(vm, vm->frame_count);
-            if (rr >= 0) REG(rr) = make_null();
-            goto dispatch;
-        }
+#define OP(inst) DECODE_OP(inst)
+#define BX       Bx
+#define SBX      sBx
+#define ISK(x)   ((x) & 0x100)
 
-        uint32_t inst = CHUNK->code[IP++];
-        OpCode op = (OpCode)DECODE_OP(inst);
+    static const void *op_labels[] = {
+        &&op_loadk,         // 0  OP_LOADK
+        &&op_loadnull,      // 1  OP_LOADNULL
+        &&op_loadtrue,      // 2  OP_LOADTRUE
+        &&op_loadfalse,     // 3  OP_LOADFALSE
+        &&op_loadi,         // 4  OP_LOADI
+        &&op_move,          // 5  OP_MOVE
+        &&op_copy,          // 6  OP_COPY
+        &&op_swap,          // 7  OP_SWAP
+        &&op_add,           // 8  OP_ADD
+        &&op_sub,           // 9  OP_SUB
+        &&op_mul,           // 10 OP_MUL
+        &&op_div,           // 11 OP_DIV
+        &&op_mod,           // 12 OP_MOD
+        &&op_neg,           // 13 OP_NEG
+        &&op_band,          // 14 OP_BAND
+        &&op_bor,           // 15 OP_BOR
+        &&op_bxor,          // 16 OP_BXOR
+        &&op_bnot,          // 17 OP_BNOT
+        &&op_shl,           // 18 OP_SHL
+        &&op_shr,           // 19 OP_SHR
+        &&op_eq,            // 20 OP_EQ
+        &&op_ne,            // 21 OP_NE
+        &&op_lt,            // 22 OP_LT
+        &&op_le,            // 23 OP_LE
+        &&op_gt,            // 24 OP_GT
+        &&op_ge,            // 25 OP_GE
+        &&op_not,           // 26 OP_NOT
+        &&op_jmp,           // 27 OP_JMP
+        &&op_jz,            // 28 OP_JZ
+        &&op_jnz,           // 29 OP_JNZ
+        &&op_call,          // 30 OP_CALL
+        &&op_ret,           // 31 OP_RET
+        &&op_enter,         // 32 OP_ENTER
+        &&op_leave,         // 33 OP_LEAVE
+        &&op_closure,       // 34 OP_CLOSURE
+        &&op_getglobal,     // 35 OP_GETGLOBAL
+        &&op_setglobal,     // 36 OP_SETGLOBAL
+        &&op_getupval,      // 37 OP_GETUPVAL
+        &&op_setupval,      // 38 OP_SETUPVAL
+        &&op_new,           // 39 OP_NEW
+        &&op_newdict,       // 40 OP_NEWDICT
+        &&op_newlist,       // 41 OP_NEWLIST
+        &&op_indexget,      // 42 OP_INDEXGET
+        &&op_indexset,      // 43 OP_INDEXSET
+        &&op_memberget,     // 44 OP_MEMBERGET
+        &&op_memberset,     // 45 OP_MEMBERSET
+        &&op_invoke,        // 46 OP_INVOKE
+        &&op_unimplemented, // 47 OP_SUPER
+        &&op_throw,         // 48 OP_THROW
+        &&op_try,           // 49 OP_TRY
+        &&op_endtry,        // 50 OP_ENDTRY
+        &&op_halt           // 51 OP_HALT
+    };
 
-        static void *op_labels[OP_COUNT] = {
-            &&op_loadk, &&op_loadnull, &&op_loadtrue, &&op_loadfalse, &&op_loadi,
-            &&op_move, &&op_copy, &&op_swap,
-            &&op_add, &&op_sub, &&op_mul, &&op_div, &&op_mod, &&op_neg,
-            &&op_band, &&op_bor, &&op_bxor, &&op_bnot, &&op_shl, &&op_shr,
-            &&op_eq, &&op_ne, &&op_lt, &&op_le, &&op_gt, &&op_ge,
-            &&op_not,
-            &&op_jmp, &&op_jz, &&op_jnz,
-            &&op_call, &&op_ret, &&op_enter, &&op_leave, &&op_closure,
-            &&op_getglobal, &&op_setglobal,
-            &&op_getupval, &&op_setupval,
-            &&op_new, &&op_newdict, &&op_newlist,
-            &&op_indexget, &&op_indexset, &&op_memberget, &&op_memberset,
-            &&op_invoke, &&op_super,
-            &&op_throw, &&op_try, &&op_endtry,
-            &&op_halt
-        };
+    DECODE;
+    goto *op_labels[OP(instr)];
 
-        goto *op_labels[op];
+    /* -------------------------------------------------------- */
+    /* 0.  MOVE                                                 */
+    /* -------------------------------------------------------- */
+    op_move:
+        REG(RA) = REG(RB);
+        DECODE; goto *op_labels[OP(instr)];
 
-    /* ---- Load / Move ---- */
-    op_loadk:     REG(RA) = CONST(BX);        goto dispatch;
-    op_loadnull:  REG(RA) = make_null();       goto dispatch;
-    op_loadtrue:  REG(RA) = make_bool(true);   goto dispatch;
-    op_loadfalse: REG(RA) = make_bool(false);  goto dispatch;
-    op_loadi:     REG(RA) = make_int(SBX);     goto dispatch;
-    op_move:      REG(RA) = REG(RB);           goto dispatch;
-    op_copy:      {
-        Value v=REG(RB);
-        if(v.type==VAL_OBJ&&v.as.obj) retain_obj(v.as.obj);
-        REG(RA)=v; goto dispatch;
-    }
-    op_swap:      { Value t=REG(RA); REG(RA)=REG(RB); REG(RB)=t; goto dispatch; }
-
-    /* ---- Globals ---- */
-    op_getglobal: {
-        if(CONST(BX).type!=VAL_OBJ||!CONST(BX).as.obj){REG(RA)=make_null();goto dispatch;}
-        const char *nm=KSTR(BX);
-
-        /* Inline cache: check cached GlobalEntry at this instruction */
-        int inst_idx = IP - 1;
-        GlobalEntry *cached = CHUNK->global_cache ? CHUNK->global_cache[inst_idx] : NULL;
-        if (cached && cached->name && strcmp(cached->name, nm) == 0) {
-            REG(RA) = cached->value;
-            goto dispatch;
-        }
-
-        GlobalEntry *e = vm_resolve_global(vm, nm);
-        if (!e) {
-            fprintf(stderr,"vm: undefined '%s'\n",nm);
-            REG(RA)=make_null();
-        } else {
-            REG(RA)=e->value;
-            if (!CHUNK->global_cache) {
-                CHUNK->global_cache = calloc((size_t)CHUNK->capacity, sizeof(GlobalEntry*));
-            }
-            CHUNK->global_cache[inst_idx] = e;
-        }
-        goto dispatch;
-    }
-    op_setglobal: {
-        if(CONST(BX).type!=VAL_OBJ||!CONST(BX).as.obj) goto dispatch;
-        vm_set_global(vm, KSTR(BX), REG(RA), false);
-        goto dispatch;
+    op_copy: {
+        Value v = REG(RB);
+        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
+        Value old = REG(RA);
+        REG(RA) = v;
+        if (IS_OBJ(old) && AS_OBJ(old)) release_obj(AS_OBJ(old));
+        DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* ---- Arithmetic ---- */
-    op_add:
-    op_sub:
-    op_mul:
-    op_div:
-    op_mod:
-        REG(RA) = do_arith(REG(RB), REG(RC), op); goto dispatch;
+    op_swap: {
+        Value t = REG(RA); REG(RA) = REG(RB); REG(RB) = t;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* -------------------------------------------------------- */
+    /* 1-4.  LOADK / LOADBOOL / LOADNULL / LOADI               */
+    /* -------------------------------------------------------- */
+    op_loadk:
+        REG(RA) = CONST(BX);
+        DECODE; goto *op_labels[OP(instr)];
+    op_loadnull:
+        REG(RA) = make_null();
+        DECODE; goto *op_labels[OP(instr)];
+    op_loadi:
+        REG(RA) = make_int(SBX);
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* -------------------------------------------------------- */
+    /* 35-36.  LOADTRUE / LOADFALSE                             */
+    /* -------------------------------------------------------- */
+    op_loadtrue:
+        REG(RA) = make_bool(true);
+        DECODE; goto *op_labels[OP(instr)];
+    op_loadfalse:
+        REG(RA) = make_bool(false);
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* -------------------------------------------------------- */
+    /* 5-9.  Arithmetic                                         */
+    /* -------------------------------------------------------- */
+    op_add:  REG(RA) = do_arith(RKB, RKC, OP_ADD);  DECODE; goto *op_labels[OP(instr)];
+    op_sub:  REG(RA) = do_arith(RKB, RKC, OP_SUB);  DECODE; goto *op_labels[OP(instr)];
+    op_mul:  REG(RA) = do_arith(RKB, RKC, OP_MUL);  DECODE; goto *op_labels[OP(instr)];
+    op_div:  REG(RA) = do_arith(RKB, RKC, OP_DIV);  DECODE; goto *op_labels[OP(instr)];
+    op_mod:  REG(RA) = do_arith(RKB, RKC, OP_MOD);  DECODE; goto *op_labels[OP(instr)];
+
+    /* -------------------------------------------------------- */
+    /* 11-16.  Comparisons                                      */
+    /* -------------------------------------------------------- */
+    op_lt: REG(RA) = do_cmp(RKB, RKC, OP_LT); DECODE; goto *op_labels[OP(instr)];
+    op_le: REG(RA) = do_cmp(RKB, RKC, OP_LE); DECODE; goto *op_labels[OP(instr)];
+    op_eq: REG(RA) = do_cmp(RKB, RKC, OP_EQ); DECODE; goto *op_labels[OP(instr)];
+    op_ne: REG(RA) = do_cmp(RKB, RKC, OP_NE); DECODE; goto *op_labels[OP(instr)];
+    op_gt: REG(RA) = do_cmp(RKB, RKC, OP_GT); DECODE; goto *op_labels[OP(instr)];
+    op_ge: REG(RA) = do_cmp(RKB, RKC, OP_GE); DECODE; goto *op_labels[OP(instr)];
+
+    /* -------------------------------------------------------- */
+    /* 17-22.  Bitwise                                          */
+    /* -------------------------------------------------------- */
+    op_band: REG(RA) = make_int(to_i64(REG(RB)) & to_i64(REG(RC)));  DECODE; goto *op_labels[OP(instr)];
+    op_bor:  REG(RA) = make_int(to_i64(REG(RB)) | to_i64(REG(RC)));  DECODE; goto *op_labels[OP(instr)];
+    op_bxor: REG(RA) = make_int(to_i64(REG(RB)) ^ to_i64(REG(RC)));  DECODE; goto *op_labels[OP(instr)];
+    op_shl:  REG(RA) = make_int(to_i64(REG(RB)) << to_i64(REG(RC))); DECODE; goto *op_labels[OP(instr)];
+    op_shr:  REG(RA) = make_int(to_i64(REG(RB)) >> to_i64(REG(RC))); DECODE; goto *op_labels[OP(instr)];
+    op_bnot: REG(RA) = make_int(~to_i64(REG(RB))); DECODE; goto *op_labels[OP(instr)];
+
+    /* -------------------------------------------------------- */
+    /* 23-24.  NOT / NEG                                        */
+    /* -------------------------------------------------------- */
+    op_not: REG(RA) = make_bool(!is_truthy(REG(RB))); DECODE; goto *op_labels[OP(instr)];
+
     op_neg: {
-        Value v=REG(RB);
-        if(v.type==VAL_INT)    { REG(RA)=make_int(-v.as.integer);    goto dispatch; }
-        if(v.type==VAL_FLOAT)  { REG(RA)=make_float(-v.as.float_val); goto dispatch; }
-        if(v.type==VAL_DOUBLE) { REG(RA)=make_double(-v.as.double_val);goto dispatch; }
-        REG(RA)=make_null(); goto dispatch;
+        Value v = REG(RB);
+        if (IS_INT(v))    { REG(RA) = make_int(-AS_INT(v));     DECODE; goto *op_labels[OP(instr)]; }
+        if (IS_DOUBLE(v)) { REG(RA) = make_double(-AS_DOUBLE(v)); DECODE; goto *op_labels[OP(instr)]; }
+        REG(RA) = make_null();
+        DECODE; goto *op_labels[OP(instr)];
     }
-    op_band: REG(RA)=make_int(to_i64(REG(RB))&to_i64(REG(RC)));  goto dispatch;
-    op_bor:  REG(RA)=make_int(to_i64(REG(RB))|to_i64(REG(RC)));  goto dispatch;
-    op_bxor: REG(RA)=make_int(to_i64(REG(RB))^to_i64(REG(RC)));  goto dispatch;
-    op_shl:  REG(RA)=make_int(to_i64(REG(RB))<<to_i64(REG(RC))); goto dispatch;
-    op_shr:  REG(RA)=make_int(to_i64(REG(RB))>>to_i64(REG(RC))); goto dispatch;
-    op_bnot: REG(RA)=make_int(~to_i64(REG(RB))); goto dispatch;
 
-    /* ---- Comparison / Logical ---- */
-    op_eq:
-    op_ne:
-    op_lt:
-    op_le:
-    op_gt:
-    op_ge:
-        REG(RA) = do_cmp(REG(RB), REG(RC), op); goto dispatch;
-    op_not: REG(RA) = make_bool(!is_truthy(REG(RB))); goto dispatch;
+    /* -------------------------------------------------------- */
+    /* 25-27.  Jumps                                            */
+    /* -------------------------------------------------------- */
+    op_jmp:
+        IP += sBx;
+        DECODE; goto *op_labels[OP(instr)];
+    op_jz:
+        if (!is_truthy(REG(RA))) IP += sBx;
+        DECODE; goto *op_labels[OP(instr)];
+    op_jnz:
+        if (is_truthy(REG(RA))) IP += sBx;
+        DECODE; goto *op_labels[OP(instr)];
 
-    /* ---- Control Flow ---- */
-    op_jmp:  IP += SBX; goto dispatch;
-    op_jz:   if(!is_truthy(REG(RA))) IP += SBX; goto dispatch;
-    op_jnz:  if( is_truthy(REG(RA))) IP += SBX; goto dispatch;
-
-    /* ---- CALL ---- */
+    /* -------------------------------------------------------- */
+    /* 28.  CALL                                                */
+    /* -------------------------------------------------------- */
     op_call: {
-        /* A=dest, B=fn-reg, C=nargs; args in B+1..B+C */
-        Value fn_val = REG(RB);
-        int   nargs  = (int)RC;
-        if (fn_val.type!=VAL_OBJ||!fn_val.as.obj) {
-            fprintf(stderr,"vm: call non-function\n"); REG(RA)=make_null(); goto dispatch;
+        uint8_t ret_reg = RA;
+        uint8_t fn_reg  = B;
+        uint8_t nargs   = C;
+        Value fn_val = REG(fn_reg);
+        if (!IS_OBJ(fn_val) || !AS_OBJ(fn_val)) {
+            char *s = value_to_string(fn_val);
+            fprintf(stderr, "vm: attempt to call non-function (got %s)\n", s);
+            free(s);
+            REG(ret_reg) = make_null();
+            DECODE; goto *op_labels[OP(instr)];
         }
-        ObjFunction *fn = NULL;
-        ObjClosure *cl = NULL;
-        if (fn_val.as.obj->type == OBJ_FUNCTION) {
-            fn = (ObjFunction *)fn_val.as.obj;
-        } else if (fn_val.as.obj->type == OBJ_CLOSURE) {
-            cl = (ObjClosure *)fn_val.as.obj;
-            fn = cl->function;
-        } else {
-            fprintf(stderr,"vm: not callable\n"); REG(RA)=make_null(); goto dispatch;
-        }
-        if (fn->is_native) {
-            /* collect args into temporary buffer (stack scratch, fallback to heap) */
-            Value scratch[256];
-            Value *argv = (nargs > 0 && nargs <= 256) ? scratch : (nargs > 0 ? malloc(sizeof(Value)*nargs) : NULL);
-            for (int i = 0; i < nargs; i++) argv[i] = REG(RB+1+i);
-            Value res = fn->native_fn(vm, argv, nargs);
-            if (argv != scratch) free(argv);
-            REG(RA) = res;
-            goto dispatch;
-        }
-        /* Luna function — push new frame */
-        if (!fn->chunk) { fprintf(stderr,"vm: fn '%s' no bytecode\n", fn->name); REG(RA)=make_null(); goto dispatch; }
-        int ret_dest = (int)RA;
-        /* save args from current frame before push */
-        Value saved[256]; int sn = nargs < 256 ? nargs : 255;
-        for (int i=0;i<sn;i++) saved[i]=REG(RB+1+i);
-        if (push_frame(vm, fn->chunk, ret_dest) != VM_OK) return VM_ERROR;
-        for (int i=0;i<sn;i++) FRAME.regs[i]=saved[i];
-        /* Copy closure upvalues into the new frame */
-        if (cl) {
-            for (int i=0;i<cl->upvalue_count && i<VM_MAX_REGISTERS;i++) {
-                FRAME.upvalues[i] = cl->upvalues[i];
-                if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
-            }
-            FRAME.upvalue_count = cl->upvalue_count;
-        }
-        goto dispatch;
-    }
-
-    /* ---- RET ---- */
-    op_ret: {
-        Value ret_val = REG(RA);
-        if (vm->frame_count <= 1) {
-            while (vm->try_stack) {
-                TryFrame *tf = vm->try_stack;
-                vm->try_stack = tf->next;
-                free(tf);
-            }
-            close_upvalues(vm, 1);
-            vm->frame_count=0; return VM_OK;
-        }
-        int rr = FRAME.ret_reg;
-        int closing_depth = vm->frame_count;
-        vm->frame_count--;
-        close_upvalues(vm, closing_depth);
-        vm_pop_try_frames(vm, vm->frame_count);
-        if (rr >= 0) REG(rr) = ret_val;
-        goto dispatch;
-    }
-
-    op_enter:
-    op_leave:
-        goto dispatch; /* hints, no-op in register VM */
-
-    /* ---- Collections ---- */
-    op_newlist: REG(RA) = make_obj((Object*)new_list()); goto dispatch;
-    op_newdict: REG(RA) = make_obj((Object*)new_dict()); goto dispatch;
-
-    /* ---- NEW instance ---- */
-    op_new: {
-        if(CONST(BX).type!=VAL_OBJ||!CONST(BX).as.obj){REG(RA)=make_null();goto dispatch;}
-        const char *cls_name = KSTR(BX);
-        ObjInstance *new_inst = new_instance(cls_name, NULL, 4);
-        /* Copy methods from class prototype if it exists as a global */
-        Value proto_val;
-        if (vm_get_global(vm, cls_name, &proto_val) && proto_val.type==VAL_OBJ && proto_val.as.obj && proto_val.as.obj->type==OBJ_INSTANCE) {
-            ObjInstance *proto = (ObjInstance*)proto_val.as.obj;
-            if (proto->method_count > 0) {
-                new_inst->methods = malloc(sizeof(ObjFunction*) * proto->method_count);
-                new_inst->method_count = proto->method_count;
-                new_inst->method_capacity = proto->method_count;
-                for (int mi=0; mi<proto->method_count; mi++) {
-                    new_inst->methods[mi] = proto->methods[mi];
+        if (AS_OBJ(fn_val)->type == OBJ_FUNCTION) {
+            ObjFunction *fn = (ObjFunction *)AS_OBJ(fn_val);
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = fn->native_fn(vm, scratch, nargs);
+                REG(ret_reg) = result;
+                DECODE; goto *op_labels[OP(instr)];
+            } else {
+                if (vm->frame_count >= MAX_FRAMES) {
+                    fprintf(stderr, "vm: call stack overflow\n");
+                    REG(ret_reg) = make_null();
+                    DECODE; goto *op_labels[OP(instr)];
                 }
+                CallFrame *caller = &FRAME;
+                CallFrame *callee = &vm->frames[vm->frame_count];
+                callee->chunk = fn->chunk;
+                callee->ip = 0;
+                callee->base = caller->base + fn_reg + 1;
+                callee->closure = NULL;
+                callee->ret_reg = ret_reg;
+                int needed = callee->base + fn->chunk->max_registers;
+                if (needed > vm->stack_cap) {
+                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                for (int i = nargs; i < fn->chunk->max_registers; i++)
+                    vm->stack[callee->base + i] = make_null();
+                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                vm->frame_count++;
+                CHUNK = callee->chunk;
+                IP = 0;
+                DECODE;
+                goto *op_labels[OP(instr)];
             }
-            /* Copy fields from prototype */
-            for (int fi=0; fi<proto->field_count; fi++) {
-                instance_set_field(new_inst, proto->field_names[fi], proto->fields[fi]);
+        } else if (AS_OBJ(fn_val)->type == OBJ_CLOSURE) {
+            ObjClosure *cl = (ObjClosure *)AS_OBJ(fn_val);
+            ObjFunction *fn = cl->function;
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = fn->native_fn(vm, scratch, nargs);
+                REG(ret_reg) = result;
+                DECODE; goto *op_labels[OP(instr)];
+            } else {
+                if (vm->frame_count >= MAX_FRAMES) {
+                    fprintf(stderr, "vm: call stack overflow\n");
+                    REG(ret_reg) = make_null();
+                    DECODE; goto *op_labels[OP(instr)];
+                }
+                CallFrame *caller = &FRAME;
+                CallFrame *callee = &vm->frames[vm->frame_count];
+                callee->chunk = fn->chunk;
+                callee->ip = 0;
+                callee->base = caller->base + fn_reg + 1;
+                callee->closure = cl;
+                callee->ret_reg = ret_reg;
+                int needed = callee->base + fn->chunk->max_registers;
+                if (needed > vm->stack_cap) {
+                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                for (int i = nargs; i < fn->chunk->max_registers; i++)
+                    vm->stack[callee->base + i] = make_null();
+                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                vm->frame_count++;
+                CHUNK = callee->chunk;
+                IP = 0;
+                DECODE;
+                goto *op_labels[OP(instr)];
             }
+        } else {
+            char *s = value_to_string(fn_val);
+            fprintf(stderr, "vm: attempt to call non-function (type=%d, value=%s)\n", AS_OBJ(fn_val)->type, s);
+            free(s);
+            REG(ret_reg) = make_null();
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* -------------------------------------------------------- */
+    /* 29.  RET                                                 */
+    /* -------------------------------------------------------- */
+    op_ret: {
+        uint8_t ret_reg = RA;
+        Value retval = REG(ret_reg);
+        if (vm->frame_count <= 1) {
+            vm->stack_count = 0;
+            vm->frame_count = 0;
+            return VM_OK;
+        }
+        CallFrame *callee = &FRAME;
+        int old_base = callee->base;
+        close_upvalues(vm, vm->frame_count);
+        vm_pop_try_frames(vm, vm->frame_count - 1);
+        vm->frame_count--;
+        CallFrame *caller = &FRAME;
+        CHUNK = caller->chunk;
+        IP = caller->ip;
+        vm->stack[caller->base + callee->ret_reg] = retval;
+        vm->stack_count = old_base;
+        DECODE;
+        goto *op_labels[OP(instr)];
+    }
+
+    /* -------------------------------------------------------- */
+    /* 30.  CLS  (close upvalues)                               */
+    /* -------------------------------------------------------- */
+    op_leave:
+        close_upvalues(vm, vm->frame_count);
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* -------------------------------------------------------- */
+    /* 31-32.  NEWLIST / NEWDICT                                */
+    /* -------------------------------------------------------- */
+    op_newlist: REG(RA) = make_obj((Object*)new_list()); DECODE; goto *op_labels[OP(instr)];
+    op_newdict: REG(RA) = make_obj((Object*)new_dict()); DECODE; goto *op_labels[OP(instr)];
+
+    /* -------------------------------------------------------- */
+    /* 37.  NEWINSTANCE                                         */
+    /* -------------------------------------------------------- */
+    op_new: {
+        ObjString *cls_str = KSTROBJ(BX);
+        if (!cls_str) { REG(RA) = make_null(); DECODE; goto *op_labels[OP(instr)]; }
+        const char *cls_name = cls_str->chars;
+        Value proto_val;
+        ObjInstance *proto = NULL;
+        if (vm_get_global(vm, cls_name, &proto_val) && IS_OBJ(proto_val) && AS_OBJ(proto_val) && AS_OBJ(proto_val)->type == OBJ_INSTANCE) {
+            proto = (ObjInstance*)AS_OBJ(proto_val);
+        }
+        ObjInstance *new_inst = new_instance(cls_name, proto ? proto->base_class : NULL, 4);
+        if (proto) {
+            for (int i = 0; i < proto->field_count; i++)
+                instance_set_field(new_inst, proto->field_names[i], proto->fields[i]);
+            new_inst->methods = proto->methods;
+            new_inst->method_count = proto->method_count;
         }
         REG(RA) = make_obj((Object*)new_inst);
-        goto dispatch;
+        DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* ---- Index access ---- */
+    /* -------------------------------------------------------- */
+    /* 33-34.  INDEXGET / INDEXSET                              */
+    /* -------------------------------------------------------- */
     op_indexget: {
-        Value obj=REG(RB), key=REG(RC);
-        if(obj.type==VAL_OBJ&&obj.as.obj){
-            switch(obj.as.obj->type){
+        Value obj = REG(RB);
+        Value key = REG(RC);
+        if (IS_OBJ(obj) && AS_OBJ(obj)) {
+            switch (AS_OBJ(obj)->type) {
                 case OBJ_LIST:
-                    REG(RA)= key.type==VAL_INT ? list_get((ObjList*)obj.as.obj,(int)key.as.integer) : make_null(); break;
+                    REG(RA) = IS_INT(key) ? list_get((ObjList*)AS_OBJ(obj), AS_INT(key)) : make_null();
+                    break;
                 case OBJ_DICT:
-                    REG(RA)= dict_get((ObjDict*)obj.as.obj, key); break;
+                    REG(RA) = dict_get((ObjDict*)AS_OBJ(obj), key);
+                    break;
                 case OBJ_STRING: {
-                    ObjString *s=(ObjString*)obj.as.obj;
-                    if(key.type==VAL_INT&&key.as.integer>=0&&key.as.integer<s->length)
-                        REG(RA)=make_obj((Object*)new_string(&s->chars[(int)key.as.integer],1));
-                    else REG(RA)=make_null();
+                    ObjString *s = (ObjString*)AS_OBJ(obj);
+                    if (IS_INT(key) && AS_INT(key) >= 0 && AS_INT(key) < s->length)
+                        REG(RA) = make_obj((Object*)new_string(&s->chars[AS_INT(key)], 1));
+                    else
+                        REG(RA) = make_null();
                     break;
                 }
-                default: REG(RA)=make_null(); break;
+                default: REG(RA) = make_null(); break;
             }
-        } else REG(RA)=make_null();
-        goto dispatch;
+        } else REG(RA) = make_null();
+        DECODE; goto *op_labels[OP(instr)];
     }
     op_indexset: {
-        /* A=obj, B=key, C=value */
-        Value obj=REG(RA), key=REG(RB), val=REG(RC);
-        if(obj.type==VAL_OBJ&&obj.as.obj){
-            if(obj.as.obj->type==OBJ_LIST&&key.type==VAL_INT) list_set((ObjList*)obj.as.obj,(int)key.as.integer,val);
-            else if(obj.as.obj->type==OBJ_DICT) dict_set((ObjDict*)obj.as.obj,key,val);
+        Value obj = REG(RA);
+        Value key = REG(RB);
+        Value val = REG(RC);
+        if (IS_OBJ(obj) && AS_OBJ(obj)) {
+            if (AS_OBJ(obj)->type == OBJ_LIST && IS_INT(key)) list_set((ObjList*)AS_OBJ(obj), AS_INT(key), val);
+            else if (AS_OBJ(obj)->type == OBJ_DICT) dict_set((ObjDict*)AS_OBJ(obj), key, val);
         }
-        goto dispatch;
+        DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* ---- Member access: A=dest, B=obj, Bx has field const idx in high bits
-     * We encode MEMBERGET as ABC where C=const-pool-index of field name ---- */
-    op_memberget: {
-        Value obj=REG(RB);
-        /* field name const index is in C (8-bit, up to 255 constants inline) */
-        uint8_t ci = RC;
-        if(CONST(ci).type!=VAL_OBJ||!CONST(ci).as.obj){REG(RA)=make_null();goto dispatch;}
-        const char *field=((ObjString*)CONST(ci).as.obj)->chars;
-        if(obj.type!=VAL_OBJ||!obj.as.obj){REG(RA)=make_null();goto dispatch;}
-        switch(obj.as.obj->type){
-            case OBJ_INSTANCE: REG(RA)=instance_get_field((ObjInstance*)obj.as.obj,field); break;
-            case OBJ_LIST:     REG(RA)=!strcmp(field,"length")?make_int(((ObjList*)obj.as.obj)->count):make_null(); break;
-            case OBJ_DICT:     REG(RA)=!strcmp(field,"length")?make_int(((ObjDict*)obj.as.obj)->entry_count):make_null(); break;
-            case OBJ_STRING:   REG(RA)=!strcmp(field,"length")?make_int(((ObjString*)obj.as.obj)->length):make_null(); break;
-            default: REG(RA)=make_null(); break;
+    /* -------------------------------------------------------- */
+    /* 38-39.  GETUPVAL / SETUPVAL                              */
+    /* -------------------------------------------------------- */
+    op_getupval: {
+        uint8_t upv_idx = B;
+        uint8_t dst = RA;
+        if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
+            ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
+            REG(dst) = uv->location ? *uv->location : uv->closed;
+        } else {
+            REG(dst) = make_null();
         }
-        goto dispatch;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_setupval: {
+        uint8_t upv_idx = B;
+        uint8_t src = RA;
+        if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
+            ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
+            if (uv->location) {
+                *uv->location = REG(src);
+            } else {
+                uv->closed = REG(src);
+            }
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* -------------------------------------------------------- */
+    /* 35-36.  MEMBERGET / MEMBERSET                            */
+    /* -------------------------------------------------------- */
+    op_memberget: {
+        Value obj = REG(RB);
+        ObjString *field = KSTROBJ(RC);
+        if (!IS_OBJ(obj) || !AS_OBJ(obj)) { REG(RA) = make_null(); DECODE; goto *op_labels[OP(instr)]; }
+        switch (AS_OBJ(obj)->type) {
+            case OBJ_INSTANCE: {
+                ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
+                uint32_t h = ((uint32_t)(uintptr_t)inst ^ field->hash);
+                int idx = h & (IC_CACHE_SIZE - 1);
+                IC_MemberEntry *ic = &vm->member_ic[idx];
+                if (ic->inst == inst && ic->name == field) {
+                    REG(RA) = inst->fields[ic->index];
+                } else {
+                    int fi = -1;
+                    for (int i = 0; i < inst->field_count; i++) {
+                        if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
+                    }
+                    if (fi >= 0) {
+                        REG(RA) = inst->fields[fi];
+                        ic->inst = inst; ic->name = field; ic->index = fi;
+                    } else {
+                        REG(RA) = make_null();
+                    }
+                }
+                break;
+            }
+            case OBJ_LIST:     REG(RA) = (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(list_length((ObjList*)AS_OBJ(obj))) : make_null(); break;
+            case OBJ_DICT:     REG(RA) = (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(dict_length((ObjDict*)AS_OBJ(obj))) : make_null(); break;
+            case OBJ_STRING:   REG(RA) = (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(((ObjString*)AS_OBJ(obj))->length) : make_null(); break;
+            default: REG(RA) = make_null(); break;
+        }
+        DECODE; goto *op_labels[OP(instr)];
     }
     op_memberset: {
-        /* A=obj, B=value, C=const-idx of field name */
-        Value obj=REG(RA);
-        uint8_t ci = RC;
-        if(CONST(ci).type!=VAL_OBJ||!CONST(ci).as.obj) goto dispatch;
-        const char *field=((ObjString*)CONST(ci).as.obj)->chars;
-        if(obj.type==VAL_OBJ&&obj.as.obj&&obj.as.obj->type==OBJ_INSTANCE)
-            instance_set_field((ObjInstance*)obj.as.obj, field, REG(RB));
-        goto dispatch;
+        Value obj = REG(RA);
+        ObjString *field = KSTROBJ(RC);
+        if (IS_OBJ(obj) && AS_OBJ(obj) && AS_OBJ(obj)->type == OBJ_INSTANCE) {
+            ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
+            uint32_t h = ((uint32_t)(uintptr_t)inst ^ field->hash);
+            int idx = h & (IC_CACHE_SIZE - 1);
+            IC_MemberEntry *ic = &vm->member_ic[idx];
+            if (ic->inst == inst && ic->name == field) {
+                inst->fields[ic->index] = REG(RB);
+            } else {
+                int fi = -1;
+                for (int i = 0; i < inst->field_count; i++) {
+                    if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
+                }
+                if (fi >= 0) {
+                    inst->fields[fi] = REG(RB);
+                    ic->inst = inst; ic->name = field; ic->index = fi;
+                } else {
+                    instance_set_field(inst, field->chars, REG(RB));
+                }
+            }
+        }
+        DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* ---- INVOKE: A=dest, B=obj, C=nargs; method-name const in A's slot+1
-     * Encoding: method const index packed into imm (we store it as BX of the next word —
-     * simple convention: compiler emits LOADK A+1, methodname before INVOKE) ---- */
+    /* -------------------------------------------------------- */
+    /* 37.  INVOKE                                              */
+    /* -------------------------------------------------------- */
     op_invoke: {
-        /* Convention: A=dest, B=obj-reg, C=nargs
-         * Method name string is pre-loaded into register RA+1 by the compiler */
-        Value obj = REG(RB);
-        int nargs = (int)RC;
-        Value method_val = REG(RA + 1);
-        if(method_val.type!=VAL_OBJ||!method_val.as.obj){REG(RA)=make_null();goto dispatch;}
-        const char *mname=((ObjString*)method_val.as.obj)->chars;
-        /* collect args into temporary buffer (stack scratch, fallback to heap) */
+        uint8_t ret_reg = RA;
+        uint8_t obj_reg = B;
+        uint8_t nargs   = C;
+        Value method_val = REG(obj_reg + 1);
+        Value obj = REG(obj_reg);
+        if (!IS_OBJ(method_val) || !AS_OBJ(method_val) || AS_OBJ(method_val)->type != OBJ_STRING) { REG(ret_reg) = make_null(); DECODE; goto *op_labels[OP(instr)]; }
+        const char *mname = ((ObjString*)AS_OBJ(method_val))->chars;
+
         Value scratch[256];
-        Value *argv = (nargs > 0 && nargs <= 256) ? scratch : (nargs > 0 ? malloc(sizeof(Value)*nargs) : NULL);
-        /* Args start at RB+2; RB+1 holds the method name (loaded by compiler) */
-        for(int i=0;i<nargs;i++) argv[i]=REG(RB+2+i);
-        Value result=make_null(); bool handled=false;
-        if(obj.type==VAL_OBJ&&obj.as.obj){
-            switch(obj.as.obj->type){
-                case OBJ_LIST: handled=vm_invoke_list(vm,(ObjList*)obj.as.obj,mname,argv,nargs,&result); break;
-                case OBJ_DICT: handled=vm_invoke_dict(vm,(ObjDict*)obj.as.obj,mname,argv,nargs,&result); break;
+        for (int i = 0; i < nargs; i++) scratch[i] = REG(obj_reg + 2 + i);
+
+        Value result = make_null();
+        bool handled = false;
+        if (IS_OBJ(obj) && AS_OBJ(obj)) {
+            switch (AS_OBJ(obj)->type) {
+                case OBJ_LIST: handled = vm_invoke_list(vm, (ObjList*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
+                case OBJ_DICT: handled = vm_invoke_dict(vm, (ObjDict*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
                 case OBJ_INSTANCE: {
-                    ObjInstance *obj_inst=(ObjInstance*)obj.as.obj;
-                    for(int mi=0;mi<obj_inst->method_count&&!handled;mi++){
-                        ObjFunction *mf=obj_inst->methods[mi];
-                        if(strcmp(mf->name,mname)==0){
-                            if(mf->is_native){ result=mf->native_fn(vm,argv,nargs); handled=true; }
-                            else if(mf->chunk){
-                                int rr=(int)RA;
-                                Value saved2[256]; int sn2=nargs<255?nargs:255;
-                                for(int i=0;i<sn2;i++) saved2[i]=argv[i];
-                                if(push_frame(vm,mf->chunk,rr)!=VM_OK){if(argv!=scratch)free(argv);return VM_ERROR;}
-                                FRAME.regs[0]=obj; /* self */
-                                for(int i=0;i<sn2;i++) FRAME.regs[i+1]=saved2[i];
-                                FRAME.has_self=true; FRAME.self_val=obj;
-                                handled=true; goto dispatch;
+                    ObjInstance *obj_inst = (ObjInstance*)AS_OBJ(obj);
+                    ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
+                    uint32_t h = ((uint32_t)(uintptr_t)obj_inst ^ mname_obj->hash);
+                    int idx = h & (IC_CACHE_SIZE - 1);
+                    IC_MemberEntry *ic = &vm->method_ic[idx];
+                    int mi = -1;
+                    if (ic->inst == obj_inst && ic->name == mname_obj) {
+                        mi = ic->index;
+                    } else {
+                        for (int i = 0; i < obj_inst->method_count; i++) {
+                            ObjFunction *m = obj_inst->methods[i];
+                            if (m && strcmp(m->name, mname_obj->chars) == 0) { mi = i; break; }
+                        }
+                        if (mi >= 0) { ic->inst = obj_inst; ic->name = mname_obj; ic->index = mi; }
+                    }
+                    if (mi >= 0) {
+                        ObjFunction *m = obj_inst->methods[mi];
+                        if (m->is_native) {
+                            result = m->native_fn(vm, scratch, nargs);
+                        } else {
+                            if (vm->frame_count < MAX_FRAMES) {
+                                CallFrame *caller = &FRAME;
+                                CallFrame *callee = &vm->frames[vm->frame_count];
+                                callee->chunk = m->chunk;
+                                callee->ip = 0;
+                                callee->base = caller->base + obj_reg + 1;
+                                callee->ret_reg = ret_reg;
+                                int need = callee->base + m->chunk->max_registers;
+                                if (need > vm->stack_cap) {
+                                    vm->stack_cap = need < 64 ? 64 : need * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack[callee->base] = obj; /* self at reg 0 */
+                                /* args already aligned: callee reg 1 = caller reg obj_reg+2 */
+                                for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
+                                    vm->stack[callee->base + j] = make_null();
+                                vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                                vm->frame_count++;
+                                CHUNK = callee->chunk;
+                                IP = 0;
+                                DECODE;
+                                goto *op_labels[OP(instr)];
                             }
                         }
+                        handled = true;
                     }
                     break;
                 }
                 default: break;
             }
         }
-        if (argv != scratch) free(argv);
-        if(!handled) fprintf(stderr,"vm: unknown method '%s'\n",mname);
-        REG(RA)=result;
-        goto dispatch;
+        if (handled) REG(ret_reg) = result;
+        else { fprintf(stderr, "vm: unknown method '%s'\n", mname); REG(ret_reg) = make_null(); }
+        DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* ---- Exceptions ---- */
+    /* -------------------------------------------------------- */
+    /* 40.  CLOSURE                                             */
+    /* -------------------------------------------------------- */
+    op_closure: {
+        uint8_t k = B;
+        uint8_t dst = RA;
+        Value fn_val = CONST(k);
+        if (!IS_OBJ(fn_val) || AS_OBJ(fn_val)->type != OBJ_FUNCTION) {
+            fprintf(stderr, "vm: CLOSURE needs function constant\n");
+            REG(dst) = make_null();
+            DECODE; goto *op_labels[OP(instr)];
+        }
+        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
+        ObjClosure *cl = new_closure(fn);
+        for (int i = 0; i < fn->upvalue_count; i++) {
+            uint8_t is_local = fn->upvalue_descriptors[i].is_local;
+            uint8_t index    = fn->upvalue_descriptors[i].index;
+            if (is_local) {
+                cl->upvalues[i] = capture_upvalue(vm, FRAME.base + index);
+            } else {
+                if (FRAME.closure && index < (uint8_t)FRAME.closure->upvalue_count)
+                    cl->upvalues[i] = FRAME.closure->upvalues[index];
+                else
+                    cl->upvalues[i] = NULL;
+            }
+        }
+        REG(dst) = make_obj((Object*)cl);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* -------------------------------------------------------- */
+    /* 32.  ENTER                                               */
+    /* -------------------------------------------------------- */
+    op_enter:
+        /* Stack is pre-allocated by vm_run_chunk based on max_registers */
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* -------------------------------------------------------- */
+    /* 35.  GETGLOBAL                                           */
+    /* -------------------------------------------------------- */
+    op_getglobal: {
+        Value v;
+        if (vm_get_global_fast(vm, KSTROBJ(BX), &v)) REG(RA) = v;
+        else REG(RA) = make_null();
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* -------------------------------------------------------- */
+    /* 36.  SETGLOBAL                                           */
+    /* -------------------------------------------------------- */
+    op_setglobal: {
+        vm_set_global(vm, KSTR(BX), REG(RA), false);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* -------------------------------------------------------- */
+    /* 48.  THROW                                               */
+    /* -------------------------------------------------------- */
     op_throw: {
         Value exc = REG(RA);
         vm->last_exception = exc;
+        /* unwind to the nearest catch */
         while (vm->try_stack) {
             TryFrame *tf = vm->try_stack;
-            vm->try_stack = tf->next;
-            while (vm->frame_count > tf->frame_depth) {
-                vm->frame_count--;
-            }
-            if (vm->frame_count > 0) {
-                FRAME.regs[tf->exc_reg] = exc;
-                IP = tf->catch_ip;
+            if (tf->frame_depth <= vm->frame_count) {
+                /* unwind call frames */
+                while (vm->frame_count > tf->frame_depth) {
+                    close_upvalues(vm, vm->frame_count);
+                    vm->frame_count--;
+                }
+                vm->stack_count = tf->stack_count;
+                REG(tf->exc_reg) = exc;
+                int catch_ip = tf->catch_ip;
+                vm->try_stack = tf->next;
                 free(tf);
-                goto dispatch;
+                CHUNK = FRAME.chunk;
+                IP = catch_ip;
+                DECODE;
+                goto *op_labels[OP(instr)];
             }
+            /* stale frame from deeper call, pop it */
+            vm->try_stack = tf->next;
             free(tf);
         }
-        vm->frame_count = 0;
+        fprintf(stderr, "vm: unhandled exception\n");
         return VM_EXCEPTION;
     }
 
+    /* -------------------------------------------------------- */
+    /* 49.  TRY                                                 */
+    /* -------------------------------------------------------- */
     op_try: {
         TryFrame *tf = malloc(sizeof(TryFrame));
-        tf->catch_ip = IP + SBX;
-        tf->exc_reg = RA;
+        tf->catch_ip   = IP + sBx;
         tf->frame_depth = vm->frame_count;
-        tf->next = vm->try_stack;
-        vm->try_stack = tf;
-        goto dispatch;
+        tf->stack_count = vm->stack_count;
+        tf->exc_reg    = RA;
+        tf->next       = vm->try_stack;
+        vm->try_stack  = tf;
+        DECODE; goto *op_labels[OP(instr)];
     }
 
+    /* -------------------------------------------------------- */
+    /* 50.  ENDTRY                                              */
+    /* -------------------------------------------------------- */
     op_endtry: {
         if (vm->try_stack) {
             TryFrame *tf = vm->try_stack;
             vm->try_stack = tf->next;
             free(tf);
         }
-        goto dispatch;
+        DECODE; goto *op_labels[OP(instr)];
     }
 
-    op_closure: {
-        Value fn_val = CONST(BX);
-        if (fn_val.type != VAL_OBJ || fn_val.as.obj->type != OBJ_FUNCTION) {
-            REG(RA) = make_null(); goto dispatch;
-        }
-        ObjFunction *fn = (ObjFunction*)fn_val.as.obj;
-        ObjClosure *cl = new_closure(fn);
-        for (int i = 0; i < fn->upvalue_count; i++) {
-            uint8_t idx = fn->upvalue_descriptors[i].index;
-            bool is_local = fn->upvalue_descriptors[i].is_local;
-            if (is_local) {
-                cl->upvalues[i] = capture_upvalue(vm, &FRAME.regs[idx]);
-            } else {
-                cl->upvalues[i] = FRAME.upvalues[idx];
-                if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
-            }
-        }
-        REG(RA) = make_obj((Object*)cl);
-        goto dispatch;
-    }
+    /* -------------------------------------------------------- */
+    /* 51.  HALT                                               */
+    /* -------------------------------------------------------- */
+    op_halt:
+        return VM_OK;
 
-    op_getupval: {
-        ObjUpvalue *uv = FRAME.upvalues[BX];
-        if (uv) REG(RA) = *uv->location;
-        else REG(RA) = make_null();
-        goto dispatch;
-    }
+    /* -------------------------------------------------------- */
+    /* Unimplemented / stub opcodes                             */
+    /* -------------------------------------------------------- */
+    op_unimplemented:
+        fprintf(stderr, "vm: unimplemented opcode %d\n", OP(instr));
+        return VM_ERROR;
 
-    op_setupval: {
-        ObjUpvalue *uv = FRAME.upvalues[BX];
-        if (uv) *uv->location = REG(RA);
-        goto dispatch;
-    }
-
-    op_super:
-        /* stub — V2 */ goto dispatch;
-
-    op_halt: vm->frame_count=0; return VM_OK;
-
-    }
-    return VM_OK;
-
+    /* ============================================================ */
+#undef DECODE
 #undef FRAME
 #undef CHUNK
 #undef IP
 #undef RA
 #undef RB
 #undef RC
-#undef BX
-#undef SBX
+#undef RKB
+#undef RKC
 #undef REG
 #undef CONST
 #undef KSTR
+}
+
+/* ============================================================ */
+/* Upvalue helpers                                               */
+/* ============================================================ */
+
+ObjUpvalue *capture_upvalue(VM *vm, int stack_idx) {
+    Value *slot = &vm->stack[stack_idx];
+    ObjUpvalue *prev = NULL;
+    ObjUpvalue *uv = vm->open_upvalues;
+    while (uv && uv->location > slot) {
+        prev = uv;
+        uv = uv->next;
+    }
+    if (uv && uv->location == slot) return uv;
+    ObjUpvalue *created = new_upvalue(slot);
+    created->next = uv;
+    created->frame_depth = vm->frame_count;
+    if (prev) prev->next = created;
+    else vm->open_upvalues = created;
+    return created;
+}
+
+static void close_upvalues(VM *vm, int frame_depth) {
+    while (vm->open_upvalues && vm->open_upvalues->frame_depth >= frame_depth) {
+        ObjUpvalue *uv = vm->open_upvalues;
+        uv->closed = *uv->location;
+        uv->location = &uv->closed;
+        vm->open_upvalues = uv->next;
+    }
+}
+
+/* ============================================================ */
+/* Exception helpers                                             */
+/* ============================================================ */
+
+void vm_push_try(VM *vm, int catch_ip) {
+    TryFrame *tf = malloc(sizeof(TryFrame));
+    tf->catch_ip = catch_ip;
+    tf->frame_depth = vm->frame_count;
+    tf->stack_count = vm->stack_count;
+    tf->next = vm->try_stack;
+    vm->try_stack = tf;
+}
+
+void vm_pop_try(VM *vm) {
+    if (vm->try_stack) {
+        TryFrame *tf = vm->try_stack;
+        vm->try_stack = tf->next;
+        free(tf);
+    }
+}
+
+int vm_throw(VM *vm, Value exception) {
+    if (vm->try_stack && vm->try_stack->frame_depth <= vm->frame_count) {
+        TryFrame *tf = vm->try_stack;
+        vm->try_stack = tf->next;
+        vm_pop_try_frames(vm, tf->frame_depth);
+        while (vm->frame_count > tf->frame_depth) {
+            vm->frame_count--;
+        }
+        vm->stack_count = tf->stack_count;
+        CallFrame *frame = &vm->frames[vm->frame_count - 1];
+        frame->ip = tf->catch_ip;
+        free(tf);
+        return 1;
+    }
+    if (IS_OBJ(exception) && AS_OBJ(exception) && AS_OBJ(exception)->type == OBJ_EXCEPTION) {
+        ObjException *ex = (ObjException*)AS_OBJ(exception);
+        fprintf(stderr, "Uncaught exception: %s\n", ex->message);
+    } else {
+        char *s = value_to_string(exception);
+        fprintf(stderr, "Uncaught exception: %s\n", s);
+        free(s);
+    }
+    return 1;
 }
