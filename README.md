@@ -1,9 +1,9 @@
-# LunaScript Programming Language
+# 🌙 LunaScript Programming Language
 
-## Overview
+## 🌌 Overview
 LunaScript is a dynamically-typed programming language with indentation-based syntax.
 
-## Design Principles
+## ✨ Design Principles
 
 - **Dynamic typing** - Types inferred at runtime, optional hints for documentation/optimization
 - **Indentation-based blocks** - No braces; structure is determined by whitespace
@@ -12,7 +12,7 @@ LunaScript is a dynamically-typed programming language with indentation-based sy
 
 ---
 
-## Syntax Specifications
+## 📜 Syntax Specifications
 
 ### Variable Declarations
 
@@ -62,7 +62,7 @@ var x : int = 5                 # also valid
 | `string` | UTF-8 string | `var name = "Luna"` |
 | `null` | null value | `var player = null` |
 
-> V1 types above. Granular types (int8, int16, int32, int64, uint8, etc.) available in V2+.
+> Basic types above are available now. Granular types (int8, int16, int32, int64, uint8, etc.) are planned for a future release.
 
 ### Collections
 
@@ -376,7 +376,7 @@ finally:
 
 ---
 
-## Naming Conventions
+## 🏷️ Naming Conventions
 
 Functions and variables: `snake_case`
 Classes and types: `PascalCase`
@@ -384,7 +384,7 @@ Constants: `UPPER_SNAKE_CASE`
 
 ---
 
-## Example Program
+## 💻 Example Program
 
 ```luna
 const VERSION = "1.0.0"
@@ -409,7 +409,7 @@ main()
 
 ---
 
-## Decisions
+## ⚖️ Decisions
 
 | Feature | Decision |
 |--------|----------|

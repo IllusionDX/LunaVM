@@ -239,7 +239,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 - Type hints enable compile-time optimization
 - Full JIT with inline caches (consider DynASM or LLVM backend)
 
-## Release Roadmap (SemVer)
+## Changelog
 
 | Version | Status | Milestone |
 |---------|--------|-----------|
@@ -260,25 +260,37 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.14-alpha` | Done | GC sweep refactor: replaced the 1,000,000-refcount "pinning hack" with a clean `gc_collecting` flag and a `free_object_container()` helper. `release_obj()` skips calling `free_object()` while `gc_collecting == true`, preventing re-entrant ARC during sweep. Eliminates the double-decrement bug on live children of garbage objects. |
 | `0.1.15-alpha` | Done | GC hardening: re-entrant GC guard (`if (gc_collecting) return;`), inline cache invalidation on every collection to prevent dangling pointers, and proper `vm_free` shutdown path that releases stack values and frees all remaining objects via `free_object_container()`. |
 | `0.1.16-alpha` | **Current** | Memory audit follow-up: fixed `dict_transition_to_heap` inline entry leak (SOO→heap transition now releases old inline references). Fixed `vm_free` use-after-free (stack freed before `close_upvalues` — reordered to close upvalues first, then free stack). Verified 8 of 12 audit findings as false positives. |
-| `0.2.0` | Planned | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. Type-hint keywords (`list`, `dict`, `int`, `string`, etc.) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. NaN-boxed object type tags (encode `OBJ_STRING`, `OBJ_LIST`, etc. into unused payload bits so `IS_STRING`/`IS_LIST` become single bitwise checks without pointer dereference). Multi-line string comments (`"""..."""`). Array slicing (`list[1:5]`, `list[::-1]`). |
-| `0.3.0` | Planned | Modules and imports actually work. |
-| `0.4.0` | Planned | Standard library (strings, math, io, os). |
-| `0.5.0` | Planned | Package manager (`luna install`). |
-| `0.6.0` | Planned | Debugger / profiler. Coroutines / async (`await`, `async def`). |
-| `0.7.0` | Planned | V2 optimized VM lands. Type specialization from hints (e.g. monomorphic inline caches for `int`-hinted variables). |
-| `0.8.0` | Planned | V3 simple JIT. |
-| `0.9.0-beta` | Planned | Spec freeze, release candidate phase. |
-| `1.0.0` | Planned | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
 
-**Rule of thumb:** bump the minor version when a user-facing feature ships (e.g. package manager, stdlib module); bump the engine version (V1→V2) when the *runtime* gets a major architectural upgrade. They do not have to stay in lockstep.
+## Roadmap
+
+| Version | Milestone |
+|---------|-----------|
+| `0.2.0` | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. Type-hint keywords (`list`, `dict`, `int`, `string`, etc.) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. NaN-boxed object type tags (encode `OBJ_STRING`, `OBJ_LIST`, etc. into unused payload bits so `IS_STRING`/`IS_LIST` become single bitwise checks without pointer dereference). Multi-line string comments (`"""..."""`). Array slicing (`list[1:5]`, `list[::-1]`). |
+| `0.3.0` | Modules and imports actually work. |
+| `0.4.0` | Standard library (strings, math, io, os). |
+| `0.5.0` | Debugger / profiler. |
+| `0.6.0` | Coroutines / async (`await`, `async def`). |
+| `0.7.0` | V2 optimized VM lands. Type specialization from hints (e.g. monomorphic inline caches for `int`-hinted variables). |
+| `0.8.0` | V3 simple JIT. |
+| `0.9.0-beta` | Spec freeze, release candidate phase. |
+| `1.0.0` | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
+
+> **Note:** A package manager (`luna install`) is not guaranteed and may ship after 1.0 depending on community demand and maintenance bandwidth.
+| `0.7.0` | V2 optimized VM lands. Type specialization from hints (e.g. monomorphic inline caches for `int`-hinted variables). |
+| `0.8.0` | V3 simple JIT. |
+| `0.9.0-beta` | Spec freeze, release candidate phase. |
+| `1.0.0` | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
+
+**Rule of thumb:** bump the minor version when a user-facing feature ships (e.g. package manager, stdlib module); bump the engine generation when the *runtime* gets a major architectural upgrade. They do not have to stay in lockstep.
 
 ## Memory Management
 
-### V1
-- Simple mark-and-sweep GC
-- Incremental collection
+### Current
+- Hybrid ARC + Mark-and-Sweep GC. ARC handles acyclic objects; GC detects and collects reference cycles.
+- Small Object Optimization (SOO): inline small lists/dicts (<= 4 elements) directly into the object struct.
+- String interning via global hash table.
 
-### V2+
+### Future
 - Generational GC
 - Object finalizers
 - Weak references
