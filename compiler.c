@@ -382,6 +382,20 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         }
 
         /* Not short-circuit: evaluate both sides eagerly */
+
+        /* ADDI/SUBI fast path: x +/- small_literal  →  single imm instruction,
+           no temp register needed. Range -128..127 fits in the B byte field. */
+        if ((strcmp(op_str, "+") == 0 || strcmp(op_str, "-") == 0) &&
+            expr->data.binary.right->kind == EXPR_INTEGER) {
+            int64_t imm = atoll(expr->data.binary.right->data.integer.value);
+            if (imm >= -128 && imm <= 127) {
+                compile_expr_into(c, expr->data.binary.left, target);
+                OpCode iop = (strcmp(op_str, "+") == 0) ? OP_ADDI : OP_SUBI;
+                emit_ABC(c, iop, (uint8_t)target, (uint8_t)(int8_t)imm, 0);
+                break;
+            }
+        }
+
         compile_expr_into(c, expr->data.binary.left, target);
         int temp = alloc_reg(c);
         compile_expr_into(c, expr->data.binary.right, temp);

@@ -106,6 +106,19 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
     }
 }
 static inline Value do_cmp(Value L, Value R, OpCode op) {
+    /* Integer fast path: avoid float conversion for int vs int */
+    if (IS_INT(L) && IS_INT(R)) {
+        int32_t a = AS_INT(L), b = AS_INT(R);
+        switch (op) {
+            case OP_LT: return make_bool(a <  b);
+            case OP_LE: return make_bool(a <= b);
+            case OP_GT: return make_bool(a >  b);
+            case OP_GE: return make_bool(a >= b);
+            case OP_EQ: return make_bool(a == b);
+            case OP_NE: return make_bool(a != b);
+            default: break;
+        }
+    }
     if (is_num(L) && is_num(R)) {
         double a = to_f64(L), b = to_f64(R);
         switch (op) { case OP_LT: return make_bool(a < b); case OP_LE: return make_bool(a <= b); case OP_GT: return make_bool(a > b); case OP_GE: return make_bool(a >= b); default: break; }
@@ -268,41 +281,43 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_bnot,          // 17 OP_BNOT
         &&op_shl,           // 18 OP_SHL
         &&op_shr,           // 19 OP_SHR
-        &&op_eq,            // 20 OP_EQ
-        &&op_ne,            // 21 OP_NE
-        &&op_lt,            // 22 OP_LT
-        &&op_le,            // 23 OP_LE
-        &&op_gt,            // 24 OP_GT
-        &&op_ge,            // 25 OP_GE
-        &&op_not,           // 26 OP_NOT
-        &&op_jmp,           // 27 OP_JMP
-        &&op_jz,            // 28 OP_JZ
-        &&op_jnz,           // 29 OP_JNZ
-        &&op_call,          // 30 OP_CALL
-        &&op_ret,           // 31 OP_RET
-        &&op_enter,         // 32 OP_ENTER
-        &&op_leave,         // 33 OP_LEAVE
-        &&op_closure,       // 34 OP_CLOSURE
-        &&op_getglobal,     // 35 OP_GETGLOBAL
-        &&op_setglobal,     // 36 OP_SETGLOBAL
-        &&op_getupval,      // 37 OP_GETUPVAL
-        &&op_setupval,      // 38 OP_SETUPVAL
-        &&op_new,           // 39 OP_NEW
-        &&op_newdict,       // 40 OP_NEWDICT
-        &&op_newlist,       // 41 OP_NEWLIST
-        &&op_listappend,    // 42 OP_LISTAPPEND
-        &&op_getiter,       // 43 OP_GETITER
-        &&op_forloop,       // 44 OP_FORLOOP
-        &&op_indexget,      // 45 OP_INDEXGET
-        &&op_indexset,      // 46 OP_INDEXSET
-        &&op_memberget,     // 47 OP_MEMBERGET
-        &&op_memberset,     // 48 OP_MEMBERSET
-        &&op_invoke,        // 49 OP_INVOKE
-        &&op_unimplemented, // 50 OP_SUPER
-        &&op_throw,         // 51 OP_THROW
-        &&op_try,           // 52 OP_TRY
-        &&op_endtry,        // 53 OP_ENDTRY
-        &&op_halt           // 54 OP_HALT
+        &&op_addi,          // 20 OP_ADDI
+        &&op_subi,          // 21 OP_SUBI
+        &&op_eq,            // 22 OP_EQ
+        &&op_ne,            // 23 OP_NE
+        &&op_lt,            // 24 OP_LT
+        &&op_le,            // 25 OP_LE
+        &&op_gt,            // 26 OP_GT
+        &&op_ge,            // 27 OP_GE
+        &&op_not,           // 28 OP_NOT
+        &&op_jmp,           // 29 OP_JMP
+        &&op_jz,            // 30 OP_JZ
+        &&op_jnz,           // 31 OP_JNZ
+        &&op_call,          // 32 OP_CALL
+        &&op_ret,           // 33 OP_RET
+        &&op_enter,         // 34 OP_ENTER
+        &&op_leave,         // 35 OP_LEAVE
+        &&op_closure,       // 36 OP_CLOSURE
+        &&op_getglobal,     // 37 OP_GETGLOBAL
+        &&op_setglobal,     // 38 OP_SETGLOBAL
+        &&op_getupval,      // 39 OP_GETUPVAL
+        &&op_setupval,      // 40 OP_SETUPVAL
+        &&op_new,           // 41 OP_NEW
+        &&op_newdict,       // 42 OP_NEWDICT
+        &&op_newlist,       // 43 OP_NEWLIST
+        &&op_listappend,    // 44 OP_LISTAPPEND
+        &&op_getiter,       // 45 OP_GETITER
+        &&op_forloop,       // 46 OP_FORLOOP
+        &&op_indexget,      // 47 OP_INDEXGET
+        &&op_indexset,      // 48 OP_INDEXSET
+        &&op_memberget,     // 49 OP_MEMBERGET
+        &&op_memberset,     // 50 OP_MEMBERSET
+        &&op_invoke,        // 51 OP_INVOKE
+        &&op_unimplemented, // 52 OP_SUPER
+        &&op_throw,         // 53 OP_THROW
+        &&op_try,           // 54 OP_TRY
+        &&op_endtry,        // 55 OP_ENDTRY
+        &&op_halt           // 56 OP_HALT
     };
 
     DECODE;
@@ -361,20 +376,34 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         }
         DECODE; goto *op_labels[OP(instr)];
     }
-    op_sub:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_SUB));  DECODE; goto *op_labels[OP(instr)];
-    op_mul:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_MUL));  DECODE; goto *op_labels[OP(instr)];
+    op_sub: { Value _L=RKB,_R=RKC; if(IS_INT(_L)&&IS_INT(_R)){SET_REG_PRIM(RA,make_int(AS_INT(_L)-AS_INT(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
+    op_mul: { Value _L=RKB,_R=RKC; if(IS_INT(_L)&&IS_INT(_R)){SET_REG_PRIM(RA,make_int(AS_INT(_L)*AS_INT(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_MUL));} DECODE; goto *op_labels[OP(instr)]; }
     op_div:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_DIV));  DECODE; goto *op_labels[OP(instr)];
     op_mod:  SET_REG_PRIM(RA, do_arith(RKB, RKC, OP_MOD));  DECODE; goto *op_labels[OP(instr)];
+
+    /* ---- Integer-immediate fast paths ---- */
+    op_addi: {
+        Value v = REG(RA);
+        if (IS_INT(v))         REG(RA) = make_int(AS_INT(v) + (int8_t)B);
+        else if (IS_DOUBLE(v)) REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)B);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_subi: {
+        Value v = REG(RA);
+        if (IS_INT(v))         REG(RA) = make_int(AS_INT(v) - (int8_t)B);
+        else if (IS_DOUBLE(v)) REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)B);
+        DECODE; goto *op_labels[OP(instr)];
+    }
 
     /* -------------------------------------------------------- */
     /* 11-16.  Comparisons                                      */
     /* -------------------------------------------------------- */
-    op_lt: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_LT)); DECODE; goto *op_labels[OP(instr)];
-    op_le: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_LE)); DECODE; goto *op_labels[OP(instr)];
+    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)< AS_INT(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
+    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)<=AS_INT(_R)):do_cmp(_L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
+    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)> AS_INT(_R)):do_cmp(_L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
+    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)>=AS_INT(_R)):do_cmp(_L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
     op_eq: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_EQ)); DECODE; goto *op_labels[OP(instr)];
     op_ne: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_NE)); DECODE; goto *op_labels[OP(instr)];
-    op_gt: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_GT)); DECODE; goto *op_labels[OP(instr)];
-    op_ge: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_GE)); DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
     /* 17-22.  Bitwise                                          */
