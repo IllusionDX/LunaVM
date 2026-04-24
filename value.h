@@ -40,6 +40,7 @@ typedef uint64_t Value;
 #define TAG_TRUE     2  /* 0x010 */
 #define TAG_FALSE    3  /* 0x011 */
 #define TAG_INT      4  /* 0x100 */
+#define TAG_EMPTY    5  /* 0x101 (internal tombstone) */
 
 #define IS_DOUBLE(v) (((v) & QNAN_TAG) != QNAN_TAG)
 #define IS_OBJ(v)    (((v) & (QNAN_TAG | 7)) == QNAN_TAG)
@@ -78,6 +79,7 @@ static inline int64_t as_int64(Value v) {
 #define TRUE_VAL     (QNAN_TAG | TAG_TRUE)
 #define FALSE_VAL    (QNAN_TAG | TAG_FALSE)
 #define BOOL_VAL(b)  ((b) ? TRUE_VAL : FALSE_VAL)
+#define EMPTY_VAL    (QNAN_TAG | TAG_EMPTY)
 
 /* Compatibility constructors (same names as before) */
 #define make_null()   NIL_VAL
@@ -136,19 +138,22 @@ typedef struct {
     int     capacity;
 } ObjList;
 
-/* Dict entry (internal chaining node) */
-typedef struct DictNode {
-    Value             key;
-    Value             value;
-    struct DictNode *next;
-} DictNode;
+/* Dict entry in the dense array */
+typedef struct {
+    uint32_t hash;
+    Value    key;
+    Value    value;
+} ObjDictEntry;
 
-/* Dict — hash-map with Value keys and Value values */
+/* Dict — Compact Ordered Dict maintaining insertion order */
 typedef struct {
     Object     obj;
-    DictNode **buckets;
-    int         bucket_count;
-    int         entry_count;
+    int       *indices;      /* Sparse hash table (-1=empty, -2=deleted, >=0=index) */
+    ObjDictEntry *entries;      /* Dense array of entries */
+    int        capacity;     /* Size of indices array (power of 2) */
+    int        entry_count;  /* Number of valid entries */
+    int        next_entry;   /* Next available index in entries array */
+    int        deleted_count;/* Number of tombstones */
 } ObjDict;
 
 /* Class instance — fields as a parallel-array open dict */
@@ -225,7 +230,7 @@ typedef struct {
 /* ============================================================ */
 
 ObjString   *new_string(const char *chars, int length);
-ObjList     *new_list(void);
+ObjList     *new_list(int capacity);
 ObjDict     *new_dict(void);
 ObjInstance *new_instance(const char *class_name, const char *base_class,
                           int initial_capacity);

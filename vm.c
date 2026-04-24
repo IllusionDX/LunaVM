@@ -133,6 +133,7 @@ static inline Value do_cmp(Value L, Value R, OpCode op) {
 
 void vm_init(VM *vm) {
     memset(vm, 0, sizeof(VM));
+    vm_register_builtins(vm);
 }
 
 static void close_upvalues(VM *vm, int frame_depth);
@@ -198,8 +199,6 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     for (int i = 0; i < chunk->max_registers; i++) vm->stack[frame->base + i] = make_null();
     vm->stack_count = needed;
 
-    vm_register_builtins(vm);
-
     uint32_t instr;
     uint8_t  A, B, C;
     uint16_t Bx;
@@ -263,16 +262,19 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_new,           // 39 OP_NEW
         &&op_newdict,       // 40 OP_NEWDICT
         &&op_newlist,       // 41 OP_NEWLIST
-        &&op_indexget,      // 42 OP_INDEXGET
-        &&op_indexset,      // 43 OP_INDEXSET
-        &&op_memberget,     // 44 OP_MEMBERGET
-        &&op_memberset,     // 45 OP_MEMBERSET
-        &&op_invoke,        // 46 OP_INVOKE
-        &&op_unimplemented, // 47 OP_SUPER
-        &&op_throw,         // 48 OP_THROW
-        &&op_try,           // 49 OP_TRY
-        &&op_endtry,        // 50 OP_ENDTRY
-        &&op_halt           // 51 OP_HALT
+        &&op_listappend,    // 42 OP_LISTAPPEND
+        &&op_getiter,       // 43 OP_GETITER
+        &&op_forloop,       // 44 OP_FORLOOP
+        &&op_indexget,      // 45 OP_INDEXGET
+        &&op_indexset,      // 46 OP_INDEXSET
+        &&op_memberget,     // 47 OP_MEMBERGET
+        &&op_memberset,     // 48 OP_MEMBERSET
+        &&op_invoke,        // 49 OP_INVOKE
+        &&op_unimplemented, // 50 OP_SUPER
+        &&op_throw,         // 51 OP_THROW
+        &&op_try,           // 52 OP_TRY
+        &&op_endtry,        // 53 OP_ENDTRY
+        &&op_halt           // 54 OP_HALT
     };
 
     DECODE;
@@ -507,8 +509,82 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     /* -------------------------------------------------------- */
     /* 31-32.  NEWLIST / NEWDICT                                */
     /* -------------------------------------------------------- */
-    op_newlist: REG(RA) = make_obj((Object*)new_list()); DECODE; goto *op_labels[OP(instr)];
+    op_newlist: REG(RA) = make_obj((Object*)new_list((int)Bx)); DECODE; goto *op_labels[OP(instr)];
     op_newdict: REG(RA) = make_obj((Object*)new_dict()); DECODE; goto *op_labels[OP(instr)];
+    
+    op_listappend: {
+        Value lst = REG(RA);
+        Value val = REG(RB);
+        if (IS_OBJ(lst) && AS_OBJ(lst) && AS_OBJ(lst)->type == OBJ_LIST) {
+            list_add((ObjList*)AS_OBJ(lst), val);
+        } else {
+            fprintf(stderr, "vm: listappend on non-list\n");
+            return VM_ERROR;
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    op_getiter: {
+        Value iter = REG(RB);
+        if (IS_OBJ(iter) && AS_OBJ(iter) && AS_OBJ(iter)->type == OBJ_DICT) {
+            ObjDict *dict = (ObjDict*)AS_OBJ(iter);
+            ObjList *keys = new_list(dict->entry_count);
+            for (int i = 0; i < dict->next_entry; i++) {
+                if (dict->entries[i].key != EMPTY_VAL) {
+                    list_add(keys, dict->entries[i].key);
+                }
+            }
+            REG(RA) = make_obj((Object*)keys);
+        } else {
+            REG(RA) = iter;
+        }
+        REG(RA + 1) = make_int(0);
+        REG(RA + 2) = make_null();
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    op_forloop: {
+        Value iter = REG(RA);
+        Value state = REG(RA + 1);
+        bool has_next = false;
+        
+        if (IS_OBJ(iter) && AS_OBJ(iter)) {
+            switch (AS_OBJ(iter)->type) {
+                case OBJ_LIST: {
+                    ObjList *lst = (ObjList*)AS_OBJ(iter);
+                    int idx = AS_INT(state);
+                    if (idx < lst->count) {
+                        REG(RA + 2) = lst->items[idx];
+                        REG(RA + 1) = make_int(idx + 1);
+                        has_next = true;
+                    }
+                    break;
+                }
+                case OBJ_STRING: {
+                    ObjString *str = (ObjString*)AS_OBJ(iter);
+                    int idx = AS_INT(state);
+                    if (idx < str->length) {
+                        char buf[2] = {str->chars[idx], '\0'};
+                        REG(RA + 2) = make_obj((Object*)new_string(buf, 1));
+                        REG(RA + 1) = make_int(idx + 1);
+                        has_next = true;
+                    }
+                    break;
+                }
+                default:
+                    fprintf(stderr, "vm: object is not iterable\n");
+                    return VM_ERROR;
+            }
+        } else {
+            fprintf(stderr, "vm: non-object is not iterable\n");
+            return VM_ERROR;
+        }
+
+        if (has_next) {
+            IP += SBX;
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
 
     /* -------------------------------------------------------- */
     /* 37.  NEWINSTANCE                                         */

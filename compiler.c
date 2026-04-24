@@ -344,11 +344,49 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_BINARY: {
+        const char *op_str = expr->data.binary.operator;
+
+        if (strcmp(op_str, "and") == 0) {
+            compile_expr_into(c, expr->data.binary.left, target);
+            /* Short-circuit AND */
+            int t = alloc_reg(c);
+            emit_loadbool(c, (uint8_t)t, false);
+            int jz1 = emit_jump(c, OP_JZ, (uint8_t)target);
+            compile_expr_into(c, expr->data.binary.right, target);
+            int jz2 = emit_jump(c, OP_JZ, (uint8_t)target);
+            emit_loadbool(c, (uint8_t)target, true);
+            int j1 = emit_jump(c, OP_JMP, 0);
+            patch_jump(c, jz1);
+            patch_jump(c, jz2);
+            emit_move(c, (uint8_t)target, (uint8_t)t);
+            patch_jump(c, j1);
+            free_reg(c); /* t */
+            break;
+        }
+        else if (strcmp(op_str, "or") == 0) {
+            compile_expr_into(c, expr->data.binary.left, target);
+            /* Short-circuit OR */
+            int t = alloc_reg(c);
+            emit_loadbool(c, (uint8_t)t, true);
+            int jnz1 = emit_jump(c, OP_JNZ, (uint8_t)target);
+            compile_expr_into(c, expr->data.binary.right, target);
+            int jnz2 = emit_jump(c, OP_JNZ, (uint8_t)target);
+            emit_loadbool(c, (uint8_t)target, false);
+            int j1 = emit_jump(c, OP_JMP, 0);
+            patch_jump(c, jnz1);
+            patch_jump(c, jnz2);
+            emit_move(c, (uint8_t)target, (uint8_t)t);
+            patch_jump(c, j1);
+            free_reg(c);
+            break;
+        }
+
+        /* Not short-circuit: evaluate both sides eagerly */
         compile_expr_into(c, expr->data.binary.left, target);
         int temp = alloc_reg(c);
         compile_expr_into(c, expr->data.binary.right, temp);
+        
         OpCode op;
-        const char *op_str = expr->data.binary.operator;
         if (strcmp(op_str, "+") == 0) op = OP_ADD;
         else if (strcmp(op_str, "-") == 0) op = OP_SUB;
         else if (strcmp(op_str, "*") == 0) op = OP_MUL;
@@ -365,43 +403,10 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         else if (strcmp(op_str, "^") == 0) op = OP_BXOR;
         else if (strcmp(op_str, "<<") == 0) op = OP_SHL;
         else if (strcmp(op_str, ">>") == 0) op = OP_SHR;
-        else if (strcmp(op_str, "&&") == 0) {
-            /* Short-circuit AND */
-            int t = alloc_reg(c);
-            emit_loadbool(c, (uint8_t)t, false);
-            int jz1 = emit_jump(c, OP_JZ, (uint8_t)target);
-            compile_expr_into(c, expr->data.binary.right, target);
-            int jz2 = emit_jump(c, OP_JZ, (uint8_t)target);
-            emit_loadbool(c, (uint8_t)target, true);
-            int j1 = emit_jump(c, OP_JMP, 0);
-            patch_jump(c, jz1);
-            patch_jump(c, jz2);
-            emit_move(c, (uint8_t)target, (uint8_t)t);
-            patch_jump(c, j1);
-            free_reg(c); /* t */
-            free_reg(c); /* temp unused in AND path, but we allocated it earlier */
-            break;
-        }
-        else if (strcmp(op_str, "||") == 0) {
-            /* Short-circuit OR */
-            int t = alloc_reg(c);
-            emit_loadbool(c, (uint8_t)t, true);
-            int jnz1 = emit_jump(c, OP_JNZ, (uint8_t)target);
-            compile_expr_into(c, expr->data.binary.right, target);
-            int jnz2 = emit_jump(c, OP_JNZ, (uint8_t)target);
-            emit_loadbool(c, (uint8_t)target, false);
-            int j1 = emit_jump(c, OP_JMP, 0);
-            patch_jump(c, jnz1);
-            patch_jump(c, jnz2);
-            emit_move(c, (uint8_t)target, (uint8_t)t);
-            patch_jump(c, j1);
-            free_reg(c);
-            free_reg(c);
-            break;
-        }
         else {
             op = OP_ADD; /* fallback */
         }
+        
         emit_ABC(c, op, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
         free_reg(c); /* temp */
         break;
@@ -519,30 +524,87 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_COMPOUND_ASSIGN: {
-        /* desugar: a += b  =>  a = a + b */
         Expr *lhs = expr->data.compound_assign.target;
         Expr *rhs = expr->data.compound_assign.value;
         const char *op_str = expr->data.compound_assign.operator;
-        char bin_op[3] = {0};
-        if (strcmp(op_str, "+=") == 0) bin_op[0] = '+';
-        else if (strcmp(op_str, "-=") == 0) bin_op[0] = '-';
-        else if (strcmp(op_str, "*=") == 0) bin_op[0] = '*';
-        else if (strcmp(op_str, "/=") == 0) bin_op[0] = '/';
-        else if (strcmp(op_str, "%=") == 0) bin_op[0] = '%';
-        else if (strcmp(op_str, "&=") == 0) bin_op[0] = '&';
-        else if (strcmp(op_str, "|=") == 0) bin_op[0] = '|';
-        else if (strcmp(op_str, "^=") == 0) bin_op[0] = '^';
+        OpCode op = OP_ADD;
+        if (strcmp(op_str, "+=") == 0) op = OP_ADD;
+        else if (strcmp(op_str, "-=") == 0) op = OP_SUB;
+        else if (strcmp(op_str, "*=") == 0) op = OP_MUL;
+        else if (strcmp(op_str, "/=") == 0) op = OP_DIV;
+        else if (strcmp(op_str, "%=") == 0) op = OP_MOD;
+        else if (strcmp(op_str, "&=") == 0) op = OP_BAND;
+        else if (strcmp(op_str, "|=") == 0) op = OP_BOR;
+        else if (strcmp(op_str, "^=") == 0) op = OP_BXOR;
 
-        Expr fake_rhs = *rhs;
-        Expr fake_bin = {
-            .kind = EXPR_BINARY,
-            .data.binary = { .left = lhs, .operator = bin_op, .right = &fake_rhs }
-        };
-        Expr fake_assign = {
-            .kind = EXPR_ASSIGNMENT,
-            .data.assignment = { .target = lhs, .value = &fake_bin }
-        };
-        compile_expr_into(c, &fake_assign, target);
+        if (lhs->kind == EXPR_IDENTIFIER) {
+            /* simple identifiers can be re-evaluated cleanly */
+            Expr fake_rhs = *rhs;
+            char bin_op[3] = {op_str[0], '\0'};
+            Expr fake_bin = {
+                .kind = EXPR_BINARY,
+                .data.binary = { .left = lhs, .operator = bin_op, .right = &fake_rhs }
+            };
+            Expr fake_assign = {
+                .kind = EXPR_ASSIGNMENT,
+                .data.assignment = { .target = lhs, .value = &fake_bin }
+            };
+            compile_expr_into(c, &fake_assign, target);
+        } else if (lhs->kind == EXPR_FIELD_ACCESS) {
+            int obj = alloc_reg(c);
+            compile_expr_into(c, lhs->data.field_access.obj, obj);
+            
+            int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+            int temp_val = alloc_reg(c);
+            
+            if (fk > 255) {
+                int temp_k = alloc_reg(c);
+                emit_ABx(c, OP_LOADK, (uint8_t)temp_k, (uint16_t)fk);
+                emit_ABC(c, OP_INDEXGET, (uint8_t)temp_val, (uint8_t)obj, (uint8_t)temp_k);
+                
+                int temp_rhs = alloc_reg(c);
+                compile_expr_into(c, rhs, temp_rhs);
+                emit_ABC(c, op, (uint8_t)temp_val, (uint8_t)temp_val, (uint8_t)temp_rhs);
+                
+                emit_ABC(c, OP_INDEXSET, (uint8_t)obj, (uint8_t)temp_k, (uint8_t)temp_val);
+                free_reg(c);
+                free_reg(c);
+            } else {
+                emit_ABC(c, OP_MEMBERGET, (uint8_t)temp_val, (uint8_t)obj, (uint8_t)fk);
+                
+                int temp_rhs = alloc_reg(c);
+                compile_expr_into(c, rhs, temp_rhs);
+                emit_ABC(c, op, (uint8_t)temp_val, (uint8_t)temp_val, (uint8_t)temp_rhs);
+                
+                emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)temp_val, (uint8_t)fk);
+                free_reg(c);
+            }
+            if (target != temp_val) emit_move(c, (uint8_t)target, (uint8_t)temp_val);
+            free_reg(c);
+            free_reg(c);
+        } else if (lhs->kind == EXPR_INDEX_ACCESS) {
+            int obj = alloc_reg(c);
+            int idx = alloc_reg(c);
+            compile_expr_into(c, lhs->data.index_access.obj, obj);
+            compile_expr_into(c, lhs->data.index_access.index, idx);
+            
+            int temp_val = alloc_reg(c);
+            emit_ABC(c, OP_INDEXGET, (uint8_t)temp_val, (uint8_t)obj, (uint8_t)idx);
+            
+            int temp_rhs = alloc_reg(c);
+            compile_expr_into(c, rhs, temp_rhs);
+            emit_ABC(c, op, (uint8_t)temp_val, (uint8_t)temp_val, (uint8_t)temp_rhs);
+            
+            emit_ABC(c, OP_INDEXSET, (uint8_t)obj, (uint8_t)idx, (uint8_t)temp_val);
+            if (target != temp_val) emit_move(c, (uint8_t)target, (uint8_t)temp_val);
+            
+            free_reg(c);
+            free_reg(c);
+            free_reg(c);
+            free_reg(c);
+        } else {
+            compile_expr_into(c, rhs, target);
+        }
         break;
     }
 
@@ -558,16 +620,12 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_LIST_LITERAL: {
-        emit_ABC(c, OP_NEWLIST, (uint8_t)target, 0, 0);
+        emit_ABx(c, OP_NEWLIST, (uint8_t)target, expr->data.list_literal.element_count);
         for (int i = 0; i < expr->data.list_literal.element_count; i++) {
-            /* INVOKE: method name at obj_reg+1 (target+1), arg at obj_reg+2 (target+2), dest at target+2 */
-            int saved_base = c->temp_base;
-            c->temp_base = target + 3;
-            compile_expr_into(c, expr->data.list_literal.elements[i], target + 2);
-            c->temp_base = saved_base;
-            int mk = chunk_add_string(c->chunk, "add");
-            emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
-            emit_ABC(c, OP_INVOKE, (uint8_t)(target + 2), (uint8_t)target, 1);
+            int temp = alloc_reg(c);
+            compile_expr_into(c, expr->data.list_literal.elements[i], temp);
+            emit_ABC(c, OP_LISTAPPEND, (uint8_t)target, (uint8_t)temp, 0);
+            free_reg(c);
         }
         break;
     }
@@ -614,12 +672,10 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             skip_jump = emit_jump(c, OP_JZ, (uint8_t)cond);
         }
 
-        /* INVOKE: method name at obj_reg+1 (target+1), arg at obj_reg+2 (target+2), dest at target+2 */
-        compile_expr_into(c, expr->data.list_comprehension.element, target + 2);
-
-        int mk = chunk_add_string(c->chunk, "add");
-        emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
-        emit_ABC(c, OP_INVOKE, (uint8_t)(target + 2), (uint8_t)target, 1);
+        int temp = alloc_reg(c);
+        compile_expr_into(c, expr->data.list_comprehension.element, temp);
+        emit_ABC(c, OP_LISTAPPEND, (uint8_t)target, (uint8_t)temp, 0);
+        free_reg(c);
 
         if (skip_jump >= 0) patch_jump(c, skip_jump);
 
@@ -828,37 +884,21 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
     case STMT_FOR: {
         scope_enter(c);
 
-        int iter = alloc_reg(c);
-        compile_expr_into(c, stmt->data.for_stmt.iterable, iter);
+        int iter_expr = alloc_reg(c);
+        compile_expr_into(c, stmt->data.for_stmt.iterable, iter_expr);
 
-        int len = alloc_reg(c);
-        int lk = chunk_add_string(c->chunk, "length");
-        if (lk > 255) {
-            int temp = alloc_reg(c);
-            emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)lk);
-            emit_ABC(c, OP_INDEXGET, (uint8_t)len, (uint8_t)iter, (uint8_t)temp);
-            free_reg(c);
-        } else {
-            emit_ABC(c, OP_MEMBERGET, (uint8_t)len, (uint8_t)iter, (uint8_t)lk);
-        }
-
-        int i = alloc_reg(c);
-        emit_loadi(c, (uint8_t)i, 0);
-
+        int iter_base = alloc_reg(c);
+        alloc_reg(c);
         int var = alloc_reg(c);
+        
+        emit_ABC(c, OP_GETITER, (uint8_t)iter_base, (uint8_t)iter_expr, 0);
+        
         add_local(c, stmt->data.for_stmt.variable, var);
+
+        int jmp_to_forloop = emit_jump(c, OP_JMP, 0);
 
         int loop_start = c->chunk->count;
         loop_push(c, loop_start);
-
-        /* condition: i < len */
-        int cond = alloc_reg(c);
-        emit_ABC(c, OP_LT, (uint8_t)cond, (uint8_t)i, (uint8_t)len);
-        int jz = emit_jump(c, OP_JZ, (uint8_t)cond);
-        free_reg(c);
-
-        /* var = iter[i] */
-        emit_ABC(c, OP_INDEXGET, (uint8_t)var, (uint8_t)iter, (uint8_t)i);
 
         /* body */
         scope_enter(c);
@@ -870,20 +910,16 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         int continue_ip = c->chunk->count;
         c->loop->continue_ip = continue_ip;
 
-        /* i = i + 1 */
-        int one = alloc_reg(c);
-        emit_loadi(c, (uint8_t)one, 1);
-        emit_ABC(c, OP_ADD, (uint8_t)i, (uint8_t)i, (uint8_t)one);
-        free_reg(c);
+        patch_jump(c, jmp_to_forloop);
 
-        /* jump back */
+        /* jump back if has next */
         int sbx = loop_start - (c->chunk->count + 1);
-        emit_AsBx(c, OP_JMP, 0, sbx);
+        emit_AsBx(c, OP_FORLOOP, (uint8_t)iter_base, sbx);
 
-        patch_jump(c, jz);
         loop_patch_breaks(c);
         loop_patch_continues(c);
         loop_pop(c);
+        
         scope_exit(c);
         break;
     }

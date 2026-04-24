@@ -252,7 +252,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.6-alpha` | Done | Anonymous function expressions (`def(): ...`). |
 | `0.1.7-alpha` | Done | List comprehensions (`[x for x in list]`). |
 | `0.1.8-alpha` | Done | NaN boxing — unified `Value` into single `uint64_t`. |
-| `0.1.9-alpha` | **Current** | Closure return-value routing fix. INVOKE convention fix. Method invocation fix. Class instantiation fix. Compound assignment via upvalues fix. `DEBUG` preprocessor flag for conditional debug output. |
+| `0.1.9-alpha` | Done | Closure return-value routing fix. INVOKE convention fix. Method invocation fix. Class instantiation fix. Compound assignment via upvalues fix. `DEBUG` preprocessor flag for conditional debug output. |
+| `0.1.10-alpha` | **Current** | Short-circuit boolean operators (`and`/`or`). Iterator protocol (`OP_GETITER`/`OP_FORLOOP`) for dicts, lists, strings. Ordered compact dict (Python 3.7+ style). `OP_LISTAPPEND` for fast list construction. Compound assignment double-evaluation fix. Refcount fixes for `dict_remove`/`list_remove`/`list_pop`. |
 | `0.2.0` | Planned | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. |
 | `0.3.0` | Planned | Modules and imports actually work. |
 | `0.4.0` | Planned | Standard library (strings, math, io, os). |
@@ -291,6 +292,11 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | Medium | **Hidden Classes / Shapes** | Give instances a fixed field layout (array indexing) instead of open hash maps. Makes property access O(1) instead of O(n). | High — requires shape objects, transition trees, compiler changes for shape-aware ops. |
 | Low | **String Interning** | *Done in 0.1.5-alpha* | — |
 | Low | **Computed GOTOs** | *Done in 0.1.4-alpha* | — |
+
+## Known Bugs / Technical Debt
+
+- **VM register auto-release missing**: VM registers do not automatically release overwritten object references. When a register is reassigned (e.g., via `OP_MOVE`, `OP_LOADK`, or any arithmetic op), the old object in that register is not `release_value_inline()`-d. This means temporary objects assigned to registers can leak if no explicit `OP_COPY` / manual release path covers them. Fixing this requires emitting `release`+`retain` pairs around register overwrites in the VM dispatch loop, or switching to a moving-GC scheme.
+- **Dict `remove()` / List `remove()`/`pop()` refcount dance**: These methods must `retain` before returning and `release` the container's reference to avoid use-after-free (fixed in 0.1.9). The broader register issue above means returned values can still leak if the caller ignores the result.
 
 ## Security
 

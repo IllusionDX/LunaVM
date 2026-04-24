@@ -120,7 +120,7 @@ static Value bn_range(VM *vm, Value *args, int n) {
         if (IS_INT(args[0])) start = AS_INT(args[0]);
         if (IS_INT(args[1])) end   = AS_INT(args[1]);
     }
-    ObjList *l = new_list();
+    ObjList *l = new_list((int)(end - start));
     for (int64_t i=start; i<end; i++) list_add(l, make_int((int32_t)i));
     return make_obj((Object *)l);
 }

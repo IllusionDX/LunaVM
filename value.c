@@ -126,22 +126,33 @@ ObjString *new_string(const char *chars, int length) {
     return s;
 }
 
-ObjList *new_list(void) {
+ObjList *new_list(int capacity) {
     ObjList *l = malloc(sizeof(ObjList));
     if (!l) { fprintf(stderr, "OOM\n"); exit(1); }
     l->obj.type = OBJ_LIST; l->obj.refcount = 1; l->obj.next = NULL;
-    l->items = NULL; l->count = 0; l->capacity = 0;
+    l->count = 0;
+    l->capacity = capacity > 0 ? capacity : 0;
+    if (l->capacity > 0) {
+        l->items = malloc(sizeof(Value) * l->capacity);
+        if (!l->items) { fprintf(stderr, "OOM\n"); exit(1); }
+    } else {
+        l->items = NULL;
+    }
     return l;
 }
 
 ObjDict *new_dict(void) {
     ObjDict *d = malloc(sizeof(ObjDict));
     if (!d) { fprintf(stderr, "OOM\n"); exit(1); }
-    d->obj.type = OBJ_DICT; d->obj.refcount = 1; d->obj.next = NULL;
-    d->bucket_count = 16;
-    d->entry_count  = 0;
-    d->buckets = calloc(d->bucket_count, sizeof(DictNode *));
-    if (!d->buckets) { fprintf(stderr, "OOM\n"); exit(1); }
+    d->obj.type = OBJ_DICT;
+    d->obj.refcount = 1;
+    d->obj.next = NULL;
+    d->indices = NULL;
+    d->entries = NULL;
+    d->capacity = 0;
+    d->entry_count = 0;
+    d->next_entry = 0;
+    d->deleted_count = 0;
     return d;
 }
 
@@ -229,11 +240,15 @@ static void release_value_inline(Value v) {
 }
 
 static void free_dict_internal(ObjDict *d) {
-    for (int i = 0; i < d->bucket_count; i++) {
-        DictNode *e = d->buckets[i];
-        while (e) { DictNode *nx = e->next; release_value_inline(e->key); release_value_inline(e->value); free(e); e = nx; }
+    for (int i = 0; i < d->next_entry; i++) {
+        if (d->entries[i].key != EMPTY_VAL) {
+            release_value_inline(d->entries[i].key);
+            release_value_inline(d->entries[i].value);
+        }
     }
-    free(d->buckets); free(d);
+    if (d->indices) free(d->indices);
+    if (d->entries) free(d->entries);
+    free(d);
 }
 
 void free_object(Object *obj) {
@@ -363,23 +378,23 @@ char *value_to_string(Value v) {
                 ObjDict *d = (ObjDict *)obj;
                 int cap = 32; char *out = malloc(cap); int pos = 0; bool first = true;
                 out[pos++] = '{';
-                for (int i = 0; i < d->bucket_count; i++) {
-                    for (DictNode *e = d->buckets[i]; e; e = e->next) {
-                        char *k = value_to_string(e->key), *val = value_to_string(e->value);
-                        bool ks = IS_OBJ(e->key) && AS_OBJ(e->key) && AS_OBJ(e->key)->type == OBJ_STRING;
-                        bool vs = IS_OBJ(e->value) && AS_OBJ(e->value) && AS_OBJ(e->value)->type == OBJ_STRING;
-                        int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
-                        if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
-                        if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
-                        if (ks) out[pos++] = '"';
-                        int kl = (int)strlen(k); memcpy(out + pos, k, kl); pos += kl;
-                        if (ks) out[pos++] = '"';
-                        out[pos++] = ':'; out[pos++] = ' ';
-                        if (vs) out[pos++] = '"';
-                        int vl = (int)strlen(val); memcpy(out + pos, val, vl); pos += vl;
-                        if (vs) out[pos++] = '"';
-                        free(k); free(val);
-                    }
+                for (int i = 0; i < d->next_entry; i++) {
+                    if (d->entries[i].key == EMPTY_VAL) continue;
+                    ObjDictEntry *e = &d->entries[i];
+                    char *k = value_to_string(e->key), *val = value_to_string(e->value);
+                    bool ks = IS_OBJ(e->key) && AS_OBJ(e->key) && AS_OBJ(e->key)->type == OBJ_STRING;
+                    bool vs = IS_OBJ(e->value) && AS_OBJ(e->value) && AS_OBJ(e->value)->type == OBJ_STRING;
+                    int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
+                    if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
+                    if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
+                    if (ks) out[pos++] = '"';
+                    int kl = (int)strlen(k); memcpy(out + pos, k, kl); pos += kl;
+                    if (ks) out[pos++] = '"';
+                    out[pos++] = ':'; out[pos++] = ' ';
+                    if (vs) out[pos++] = '"';
+                    int vl = (int)strlen(val); memcpy(out + pos, val, vl); pos += vl;
+                    if (vs) out[pos++] = '"';
+                    free(k); free(val);
                 }
                 if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
                 out[pos++] = '}'; out[pos] = '\0';
@@ -451,8 +466,10 @@ void list_insert(ObjList *list, int index, Value value) {
 Value list_remove(ObjList *list, int index) {
     if (index < 0 || index >= list->count) { fprintf(stderr, "list.remove: out of bounds\n"); return make_null(); }
     Value v = list->items[index];
+    if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
     memmove(&list->items[index], &list->items[index + 1], (list->count - index - 1) * sizeof(Value));
     list->count--;
+    release_value_inline(v);
     return v;
 }
 
@@ -485,95 +502,183 @@ int list_length(ObjList *list) { return list->count; }
 /* ============================================================ */
 
 static void dict_resize(ObjDict *d) {
-    int new_cap = d->bucket_count * 2;
-    DictNode **nb = calloc(new_cap, sizeof(DictNode *));
-    if (!nb) return;
-    for (int i = 0; i < d->bucket_count; i++) {
-        DictNode *e = d->buckets[i];
-        while (e) {
-            DictNode *nx = e->next;
-            int idx = hash_value(e->key) & (new_cap - 1);
-            e->next = nb[idx]; nb[idx] = e;
-            e = nx;
-        }
+    int new_cap = d->capacity == 0 ? 8 : d->capacity * 2;
+    if (d->capacity > 8 && d->entry_count <= d->capacity / 2) {
+        new_cap = d->capacity;
     }
-    free(d->buckets); d->buckets = nb; d->bucket_count = new_cap;
+    
+    int *new_indices = malloc(new_cap * sizeof(int));
+    for (int i = 0; i < new_cap; i++) new_indices[i] = -1;
+    
+    ObjDictEntry *new_entries = malloc(new_cap * sizeof(ObjDictEntry));
+    
+    int new_next = 0;
+    for (int i = 0; i < d->next_entry; i++) {
+        if (d->entries[i].key == EMPTY_VAL) continue;
+        
+        ObjDictEntry *e = &d->entries[i];
+        int new_e_idx = new_next++;
+        new_entries[new_e_idx] = *e;
+        
+        uint32_t perturb = e->hash;
+        uint32_t mask = new_cap - 1;
+        uint32_t idx = e->hash & mask;
+        while (new_indices[idx] != -1) {
+            idx = ((idx << 2) + idx + perturb + 1) & mask;
+            perturb >>= 5;
+        }
+        new_indices[idx] = new_e_idx;
+    }
+    
+    free(d->indices);
+    free(d->entries);
+    d->indices = new_indices;
+    d->entries = new_entries;
+    d->capacity = new_cap;
+    d->next_entry = new_next;
+    d->deleted_count = 0;
 }
 
 void dict_set(ObjDict *d, Value key, Value value) {
-    if (d->entry_count >= d->bucket_count * 3 / 4) dict_resize(d);
-    int idx = hash_value(key) & (d->bucket_count - 1);
-    for (DictNode *e = d->buckets[idx]; e; e = e->next) {
-        if (values_equal(e->key, key)) {
-            release_value_inline(e->value);
-            if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
-            e->value = value; return;
-        }
+    if (d->capacity == 0 || d->next_entry + d->deleted_count >= d->capacity * 2 / 3) {
+        dict_resize(d);
     }
-    DictNode *ne = malloc(sizeof(DictNode));
-    if (!ne) { fprintf(stderr, "OOM\n"); return; }
-    ne->key = key; ne->value = value;
-    ne->next = d->buckets[idx]; d->buckets[idx] = ne;
+    
+    uint32_t hash = hash_value(key);
+    uint32_t perturb = hash;
+    uint32_t mask = d->capacity - 1;
+    uint32_t i = hash & mask;
+    int target_idx = -1;
+    
+    while (d->indices[i] != -1) {
+        if (d->indices[i] == -2) {
+            if (target_idx == -1) target_idx = i;
+        } else {
+            int e_idx = d->indices[i];
+            if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
+                release_value_inline(d->entries[e_idx].value);
+                if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
+                d->entries[e_idx].value = value;
+                return;
+            }
+        }
+        i = ((i << 2) + i + perturb + 1) & mask;
+        perturb >>= 5;
+    }
+    
+    if (target_idx == -1) target_idx = i;
+    
+    int e_idx = d->next_entry++;
+    d->indices[target_idx] = e_idx;
+    d->entries[e_idx].hash = hash;
+    d->entries[e_idx].key = key;
+    d->entries[e_idx].value = value;
     if (IS_OBJ(key) && AS_OBJ(key)) retain_obj(AS_OBJ(key));
     if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     d->entry_count++;
 }
 
 Value dict_get(ObjDict *d, Value key) {
-    int idx = hash_value(key) & (d->bucket_count - 1);
-    for (DictNode *e = d->buckets[idx]; e; e = e->next)
-        if (values_equal(e->key, key)) return e->value;
+    if (d->capacity == 0) return make_null();
+    uint32_t hash = hash_value(key);
+    uint32_t perturb = hash;
+    uint32_t mask = d->capacity - 1;
+    uint32_t i = hash & mask;
+    
+    while (d->indices[i] != -1) {
+        if (d->indices[i] >= 0) {
+            int e_idx = d->indices[i];
+            if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
+                return d->entries[e_idx].value;
+            }
+        }
+        i = ((i << 2) + i + perturb + 1) & mask;
+        perturb >>= 5;
+    }
     return make_null();
 }
 
 bool dict_has(ObjDict *d, Value key) {
-    int idx = hash_value(key) & (d->bucket_count - 1);
-    for (DictNode *e = d->buckets[idx]; e; e = e->next)
-        if (values_equal(e->key, key)) return true;
+    if (d->capacity == 0) return false;
+    uint32_t hash = hash_value(key);
+    uint32_t perturb = hash;
+    uint32_t mask = d->capacity - 1;
+    uint32_t i = hash & mask;
+    
+    while (d->indices[i] != -1) {
+        if (d->indices[i] >= 0) {
+            int e_idx = d->indices[i];
+            if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
+                return true;
+            }
+        }
+        i = ((i << 2) + i + perturb + 1) & mask;
+        perturb >>= 5;
+    }
     return false;
 }
 
 Value dict_remove(ObjDict *d, Value key) {
-    int idx = hash_value(key) & (d->bucket_count - 1);
-    DictNode **cur = &d->buckets[idx];
-    while (*cur) {
-        DictNode *e = *cur;
-        if (values_equal(e->key, key)) {
-            *cur = e->next;
-            Value v = e->value;
-            release_value_inline(e->key);
-            /* don't release value — caller takes ownership */
-            free(e); d->entry_count--; return v;
+    if (d->capacity == 0) return make_null();
+    uint32_t hash = hash_value(key);
+    uint32_t perturb = hash;
+    uint32_t mask = d->capacity - 1;
+    uint32_t i = hash & mask;
+    
+    while (d->indices[i] != -1) {
+        if (d->indices[i] >= 0) {
+            int e_idx = d->indices[i];
+            if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
+                d->indices[i] = -2;
+                Value v = d->entries[e_idx].value;
+                if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
+                release_value_inline(d->entries[e_idx].key);
+                release_value_inline(d->entries[e_idx].value);
+                d->entries[e_idx].key = EMPTY_VAL;
+                d->entries[e_idx].value = make_null();
+                d->entry_count--;
+                d->deleted_count++;
+                return v;
+            }
         }
-        cur = &e->next;
+        i = ((i << 2) + i + perturb + 1) & mask;
+        perturb >>= 5;
     }
     return make_null();
 }
 
 void dict_clear(ObjDict *d) {
-    for (int i = 0; i < d->bucket_count; i++) {
-        DictNode *e = d->buckets[i];
-        while (e) { DictNode *nx = e->next; release_value_inline(e->key); release_value_inline(e->value); free(e); e = nx; }
-        d->buckets[i] = NULL;
+    for (int i = 0; i < d->next_entry; i++) {
+        if (d->entries[i].key != EMPTY_VAL) {
+            release_value_inline(d->entries[i].key);
+            release_value_inline(d->entries[i].value);
+        }
     }
+    for (int i = 0; i < d->capacity; i++) d->indices[i] = -1;
     d->entry_count = 0;
+    d->next_entry = 0;
+    d->deleted_count = 0;
 }
 
 int dict_length(ObjDict *d) { return d->entry_count; }
 
 Value dict_keys(ObjDict *d) {
-    ObjList *list = new_list();
-    for (int i = 0; i < d->bucket_count; i++)
-        for (DictNode *e = d->buckets[i]; e; e = e->next)
-            list_add(list, e->key);
+    ObjList *list = new_list(d->entry_count);
+    for (int i = 0; i < d->next_entry; i++) {
+        if (d->entries[i].key != EMPTY_VAL) {
+            list_add(list, d->entries[i].key);
+        }
+    }
     return make_obj((Object *)list);
 }
 
 Value dict_values(ObjDict *d) {
-    ObjList *list = new_list();
-    for (int i = 0; i < d->bucket_count; i++)
-        for (DictNode *e = d->buckets[i]; e; e = e->next)
-            list_add(list, e->value);
+    ObjList *list = new_list(d->entry_count);
+    for (int i = 0; i < d->next_entry; i++) {
+        if (d->entries[i].key != EMPTY_VAL) {
+            list_add(list, d->entries[i].value);
+        }
+    }
     return make_obj((Object *)list);
 }
 

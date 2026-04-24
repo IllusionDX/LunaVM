@@ -114,13 +114,16 @@ typedef enum {
     OP_NEW,         /* ABx  : A = new Instance(class=constants[Bx])       */
     OP_NEWDICT,     /* A    : A = {} (empty dict)                          */
     OP_NEWLIST,     /* ABx  : A = [] pre-sized to Bx elements             */
+    OP_LISTAPPEND,  /* ABC  : A.append(B)                                 */
+    
+    OP_GETITER,     /* ABC  : init iter state at A, from object B         */
+    OP_FORLOOP,     /* AsBx : next elem in A+2. If iter(A) has next, PC+=sBx */
 
     OP_INDEXGET,    /* ABC  : A = B[C]                                     */
     OP_INDEXSET,    /* ABC  : A[B] = C                                     */
-    OP_MEMBERGET,   /* ABx  : A = B.field  (field = constants[Bx], B in high byte of Bx — see note) */
-    OP_MEMBERSET,   /* ABx  : A.field = B  (field = constants[Bx])        */
-    /* Note: MEMBERGET/SET use ABC where B = object reg, Bx = const index. 
-     * We encode as ABC: A=dest, B=obj, C=const-pool-index (max 255).
+    OP_MEMBERGET,   /* ABC  : A = B.field  (field = constants[C])         */
+    OP_MEMBERSET,   /* ABC  : A.field = B  (field = constants[C])         */
+    /* Note: MEMBERGET/SET use ABC where A=dest/obj, B=obj/val, C=const-index. 
      * For larger pools, use LOADK + INDEXGET pattern.             */
 
     OP_INVOKE,      /* ABC  : A = B.method(nargs=C), method-name in const[A+1 slot] */

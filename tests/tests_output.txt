@@ -1,5 +1,5 @@
 ===== bench_clock.luna =====
-Un millon de iteraciones en: 0.032 segundos
+Un millon de iteraciones en: 0.033 segundos
 
 ===== minimal.luna =====
 hello
@@ -26,7 +26,7 @@ Critical hit detected!
 Survivor status:
 false
 Final Attributes for Zim:
-{"STR": 15, "INT": 5, "DEX": 13}
+{"STR": 15, "DEX": 13, "INT": 5}
 
 ===== test_closure.luna =====
 5
@@ -45,6 +45,16 @@ Final Attributes for Zim:
 1
 2
 
+===== test_compound_idx.luna =====
+1
+11
+
+===== test_for_dict.luna =====
+a
+b
+c
+total keys: 3
+
 ===== test_import.luna =====
 import test done
 
@@ -62,6 +72,14 @@ true
 ===== test_modulo.luna =====
 1
 0.9
+
+===== test_shortcircuit.luna =====
+false
+0
+true
+0
+false
+true
 
 ===== test_switch.luna =====
 two
