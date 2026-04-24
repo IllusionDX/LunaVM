@@ -32,26 +32,22 @@ Source → Lexer → Parser → AST → Semantic Analysis → Bytecode → VM �
 - Local register window per frame
 - Tagged value representation
 
-### Value Types
+### Value Representation (NaN Boxing)
 
-> V1: Simple types. Granular types (int8...int64, uint8...uint64, float32) in V2+.
+All values are stored in a single `uint64_t`. Real IEEE-754 doubles use their raw bit pattern. All other values are tagged with a quiet-NaN signature (`0x7FFC` in the top 16 bits) so they never alias valid doubles.
 
-| Tag | Type | Description |
-|-----|------|-------------|
-| 0 | Null | null value |
-| 1 | Bool | true/false |
-| 2 | Int | signed integer (int64) |
-| 3 | Uint | unsigned integer (uint64) |
-| 4 | Float | 32-bit floating point |
-| 5 | Double | 64-bit floating point |
-| 6 | NaN | Not-a-Number (IEEE 754) |
-| 7 | String | UTF-8 string |
-| 8 | List | dynamic array |
-| 9 | Dict | key-value map |
-| 10 | Object | class instance |
-| 11 | Function | function closure |
-| 12 | Native | C/native function |
-| 13 | Char | Unicode code-point (uint32) |
+| Pattern | Bits | Description |
+|---------|------|-------------|
+| Double | raw IEEE-754 | Any valid floating-point number |
+| Pointer | `QNAN \| ptr` | Heap object (`Obj*`), low 3 bits = 000 (8-byte aligned) |
+| int32 | `QNAN \| TAG_INT \| (i << 3)` | Small signed integer, shifted into payload |
+| true | `QNAN \| TAG_TRUE` | Boolean true |
+| false | `QNAN \| TAG_FALSE` | Boolean false |
+| nil | `QNAN \| TAG_NIL` | Null value |
+
+Object type discrimination (String, List, Dict, Function, etc.) requires a pointer dereference to the `Object.type` field — future work (0.2.0) may encode the object type directly into unused NaN payload bits to avoid the dereference.
+
+> Granular numeric types (int8...int64, uint8...uint64, float32) are not implemented and may be added in a future release.
 
 ### Bytecode Instruction Set
 
@@ -83,100 +79,110 @@ Register-based: operations read from `A`, `B`, `C`; write result to `A`.
 
 #### Constants & Loading
 
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `LOADK` | rd, #const | Load constant from constant pool to rd |
-| `LOADNULL` | rd | Load null to rd |
-| `LOADTRUE` | rd | Load true to rd |
-| `LOADFALSE` | rd | Load false to rd |
-| `LOADI` | rd, imm | Load immediate int to rd |
-| `LOADF` | rd, imm | Load immediate float to rd |
-| `MOVE` | rd, rs | Move rs to rd |
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `LOADK` | ABx | `A = constants[Bx]` |
+| `LOADNULL` | ABC | `A = null` |
+| `LOADTRUE` | ABC | `A = true` |
+| `LOADFALSE` | ABC | `A = false` |
+| `LOADI` | AsBx | `A = (int)sBx` |
+| `MOVE` | ABC | `A = B` |
 
 #### Register Operations
 
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `COPY` | rd, rs | Copy rs to rd (full ref) |
-| `SWAP` | rs, rt | Swap values in rs and rt |
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `COPY` | ABC | `A = copy(B)` — bump refcount |
+| `SWAP` | ABC | `swap(A, B)` |
 
 #### Arithmetic
 
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `ADD` | rd, rs, rt | rd = rs + rt |
-| `SUB` | rd, rs, rt | rd = rs - rt |
-| `MUL` | rd, rs, rt | rd = rs * rt |
-| `DIV` | rd, rs, rt | rd = rs / rt |
-| `MOD` | rd, rs, rt | rd = rs % rt |
-| `NEG` | rd, rs | rd = -rs |
-| `BAND` | rd, rs, rt | rd = rs & rt |
-| `BOR` | rd, rs, rt | rd = rs \| rt |
-| `BXOR` | rd, rs, rt | rd = rs ^ rt |
-| `BNOT` | rd, rs | rd = ~rs |
-| `SHL` | rd, rs, rt | rd = rs << rt |
-| `SHR` | rd, rs, rt | rd = rs >> rt |
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `ADD` | ABC | `A = B + C` |
+| `SUB` | ABC | `A = B - C` |
+| `MUL` | ABC | `A = B * C` |
+| `DIV` | ABC | `A = B / C` |
+| `MOD` | ABC | `A = B % C` |
+| `NEG` | ABC | `A = -B` |
+| `BAND` | ABC | `A = B & C` |
+| `BOR` | ABC | `A = B | C` |
+| `BXOR` | ABC | `A = B ^ C` |
+| `BNOT` | ABC | `A = ~B` |
+| `SHL` | ABC | `A = B << C` |
+| `SHR` | ABC | `A = B >> C` |
+| `ADDI` | ABC | `A = A + (int8_t)B` — integer fast path |
+| `SUBI` | ABC | `A = A - (int8_t)B` — integer fast path |
 
 #### Comparison
 
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `EQ` | rd, rs, rt | rd = (rs == rt) |
-| `NE` | rd, rs, rt | rd = (rs != rt) |
-| `LT` | rd, rs, rt | rd = (rs < rt) |
-| `LE` | rd, rs, rt | rd = (rs <= rt) |
-| `GT` | rd, rs, rt | rd = (rs > rt) |
-| `GE` | rd, rs, rt | rd = (rs >= rt) |
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `EQ` | ABC | `A = (B == C)` |
+| `NE` | ABC | `A = (B != C)` |
+| `LT` | ABC | `A = (B < C)` |
+| `LE` | ABC | `A = (B <= C)` |
+| `GT` | ABC | `A = (B > C)` |
+| `GE` | ABC | `A = (B >= C)` |
 
 #### Logical
 
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `NOT` | rd, rs | rd = not rs |
-| `JMP` | pc | Unconditional jump |
-| `JZ` | rs, pc | Jump if rs is falsy |
-| `JNZ` | rs, pc | Jump if rs is truthy |
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `NOT` | ABC | `A = not B` |
+
+#### Control Flow
+
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `JMP` | AsBx | `PC += sBx` |
+| `JZ` | AsBx | `if !A then PC += sBx` |
+| `JNZ` | AsBx | `if A then PC += sBx` |
 
 #### Functions
 
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `CALL` | ra, fn, nargs | Call function with nargs |
-| `RET` | rd | Return value from function |
-| `ENTER` | nlocals, nstack | Enter function, allocate locals |
-| `LEAVE` | | Exit function |
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `CALL` | ABC | `A = call B(args B+1..B+C)` |
+| `RET` | ABC | `return A` |
+| `ENTER` | ABx | allocate `Bx` local slots |
+| `LEAVE` | ABC | deallocate locals, restore frame |
+| `CLOSURE` | ABx | `A = closure(constants[Bx])` |
+
+#### Globals & Upvalues
+
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `GETGLOBAL` | ABx | `A = globals[constants[Bx]]` |
+| `SETGLOBAL` | ABx | `globals[constants[Bx]] = A` |
+| `GETUPVAL` | ABx | `A = upvalues[Bx]` |
+| `SETUPVAL` | ABx | `upvalues[Bx] = A` |
 
 #### Object Operations
 
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `NEW` | rd, class | Create new instance |
-| `NEWDICT` | rd | Create new dict |
-| `NEWLIST` | rd, size | Create new list |
-| `INDEXGET` | rd, rs, rt | rd = rs[rt] |
-| `INDEXSET` | rs, rt, val | rs[rt] = val |
-| `MEMBERGET` | rd, rs, #field | rd = rs.field |
-| `MEMBERSET` | rs, #field, val | rs.field = val |
-| `INVOKE` | rd, rs, #method, nargs | rd = rs.method(...args) |
-| `SUPER` | rd, base, #method, nargs | Call parent method |
-
-#### Closures & Scope
-
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `CLOSURE` | rd, fn | Create closure |
-| `GETGLOBAL` | rd, #name | Get global variable |
-| `SETGLOBAL` | #name, rs | Set global variable |
-| `GETUPVAL` | rd, upindex | Get upvalue |
-| `SETUPVAL` | upindex, rs | Set upvalue |
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `NEW` | ABx | `A = new Instance(class=constants[Bx])` |
+| `NEWDICT` | ABC | `A = {}` |
+| `NEWLIST` | ABx | `A = []` pre-sized to `Bx` elements |
+| `LISTAPPEND` | ABC | `A.append(B)` |
+| `GETITER` | ABC | init iterator state at `A`, from object `B` |
+| `FORLOOP` | AsBx | next elem in `A+2`. If iter has next, `PC += sBx` |
+| `INDEXGET` | ABC | `A = B[C]` |
+| `INDEXSET` | ABC | `A[B] = C` |
+| `MEMBERGET` | ABC | `A = B.field` (field = constants[C]) |
+| `MEMBERSET` | ABC | `A.field = B` (field = constants[C]) |
+| `INVOKE` | ABC | `A = B.method(nargs=C)` (method-name in const slot) |
+| `SUPER` | ABC | `A = super.method(nargs=C)` |
 
 #### Exceptions
 
-| Opcode | Args | Description |
-|--------|------|-------------|
-| `THROW` | rs | Throw exception |
-| `TRY` | pc | Setup try catch |
-| `ENDTRY` | | End try block |
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `THROW` | ABC | `throw A` |
+| `TRY` | AsBx | push try frame, catch at `PC + sBx` |
+| `ENDTRY` | ABC | pop try frame |
+| `HALT` | ABC | stop VM |
 
 ### Instruction Format
 
@@ -197,47 +203,53 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 ### VM Components
 
 **Value:**
-- Tagged union (type tag + payload)
-- Immediate optimization for small ints
+- NaN-boxed `uint64_t` — doubles use raw IEEE-754 bits; all other values use quiet-NaN tagging
+- Pointers to heap objects are 8-byte aligned (low 3 bits = 000)
+- Immediate `int32_t` stored in payload (shifted left by 3 bits)
 
 **Frame:**
-- Program counter (pc)
-- Register array
-- Stack base pointer
-- Return address
+- Program counter (pc) into chunk->code[]
+- Register window (pointer into VM stack array)
+- Return address (previous frame's pc)
+- Chunk reference (for constant pool access)
 
 **Call Stack:**
-- Array of frames
-- Grows upward (stack-allocated frames possible)
+- Array of `CallFrame` structs
+- Grows upward; max depth is a compile-time constant
 
 **Heap:**
-- Managed allocation
-- Mark-and-sweep GC (V1)
-- Generational GC (V2+)
+- Managed allocation via `malloc`/`free`
+- Hybrid ARC + Mark-and-Sweep GC
+  - ARC handles acyclic objects (strings, lists, dicts, functions)
+  - GC detects and collects reference cycles
+- Small Object Optimization (SOO): small lists/dicts store first 4 elements inline
 
-## JIT Roadmap
+## Engine Evolution Roadmap
 
-> **Note:** The V1-V4 roadmap tracks the *VM engine* evolution (interpreter → optimized VM → JIT). It is orthogonal to the public SemVer release cycle, which tracks *language stability* and *stdlib maturity*.
+> **Note:** The engine roadmap tracks the *VM runtime* evolution (interpreter → optimized VM → JIT). It is orthogonal to the public SemVer release cycle, which tracks *language stability* and *stdlib maturity*.
 
-### V1: Register VM Interpreter
+### Generation 1: Register VM Interpreter (current)
 - Register-based bytecode
-- Simple dispatch loop
+- Computed-GOTO dispatch loop
 - Baseline performance
+- Inline caches for global variable access
+- NaN-boxed values
 
-### V2: Optimized VM
+### Generation 2: Optimized VM
 - Advanced register allocator
-- Inline caches
-- Fast path detection
+- Monomorphic inline caches for property/method access
+- Fast path detection (type-specialized integer arithmetic)
+- Hidden classes / shapes for instance fields
 
-### V3: Simple JIT
+### Generation 3: Simple JIT
 - Trace JIT for hot loops
 - Compile frequently-executed code to machine code
-- No DynASM needed, custom code emitter
+- Custom code emitter (no external dependency)
 
-### V4: Advanced JIT (if needed)
-- Type specialization
-- Type hints enable compile-time optimization
-- Full JIT with inline caches (consider DynASM or LLVM backend)
+### Generation 4: Advanced JIT (if needed)
+- Full method JIT with inline caches
+- Type specialization from hints
+- Consider DynASM or LLVM backend
 
 ## Changelog
 
@@ -271,8 +283,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.4.0` | Standard library (strings, math, io, os). |
 | `0.5.0` | Debugger / profiler. |
 | `0.6.0` | Coroutines / async (`await`, `async def`). |
-| `0.7.0` | V2 optimized VM lands. Type specialization from hints (e.g. monomorphic inline caches for `int`-hinted variables). |
-| `0.8.0` | V3 simple JIT. |
+| `0.7.0` | Generation 2 optimized VM lands. Type specialization from hints (e.g. monomorphic inline caches for `int`-hinted variables). |
+| `0.8.0` | Generation 3 simple JIT. |
 | `0.9.0-beta` | Spec freeze, release candidate phase. |
 | `1.0.0` | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
 
