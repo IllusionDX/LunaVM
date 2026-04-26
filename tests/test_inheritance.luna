@@ -1,0 +1,48 @@
+# Test class inheritance
+
+class Entity:
+    var hp
+    var alive
+    
+    def _init(h):
+        self.hp = h
+        self.alive = 1
+    
+    def take_damage(dmg):
+        self.hp = self.hp - dmg
+        if self.hp <= 0:
+            self.alive = 0
+
+class Player extends Entity:
+    var score
+    
+    def _init(h, s):
+        self.hp = h
+        self.alive = 1
+        self.score = s
+    
+    def add_points(p):
+        self.score = self.score + p
+
+var p = new Player(100, 0)
+print(p.hp)         # 100 (inherited field)
+print(p.alive)      # 1 (inherited field)
+print(p.score)      # 0 (own field)
+
+p.take_damage(30)
+print(p.hp)         # 70 (inherited method)
+
+p.add_points(50)
+print(p.score)      # 50 (own method)
+
+# Test method override
+class Base:
+    def greet():
+        return "base"
+
+class Derived extends Base:
+    def greet():
+        return "derived"
+
+var d = new Derived()
+print(d.greet())    # derived (overrides parent)

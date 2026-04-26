@@ -36,18 +36,49 @@ Source → Lexer → Parser → AST → Compiler → Bytecode → VM
 
 ### Value Representation (NaN Boxing)
 
-All values are stored in a single `uint64_t`. Real IEEE-754 doubles use their raw bit pattern. All other values are tagged with a quiet-NaN signature (`0x7FFC` in the top 16 bits) so they never alias valid doubles.
+All values are stored in a single `uint64_t`. Real IEEE-754 doubles use their raw bit pattern. All other values are tagged with a quiet-NaN signature so they never alias valid doubles.
 
 | Pattern | Bits | Description |
 |---------|------|-------------|
 | Double | raw IEEE-754 | Any valid floating-point number |
-| Pointer | `QNAN \| ptr` | Heap object (`Obj*`), low 3 bits = 000 (8-byte aligned) |
+| Pointer | `QNAN \| type_tag \| ptr` | Heap object (`Obj*`), 4-bit type tag in bits 47-50 |
 | int32 | `QNAN \| TAG_INT \| (i << 3)` | Small signed integer, shifted into payload |
 | true | `QNAN \| TAG_TRUE` | Boolean true |
 | false | `QNAN \| TAG_FALSE` | Boolean false |
 | nil | `QNAN \| TAG_NIL` | Null value |
 
-Object type discrimination (String, List, Dict, Function, etc.) is encoded into unused NaN payload bits (bits 48, 49, 63) so `IS_STRING`, `IS_LIST`, etc. are single bitwise checks without pointer dereference.
+#### Bit Layout (64-bit)
+
+```
+63 62-52 51 50 49 48 47 46 ... 3  2 1 0
+│   │    │  │  │  │  │  │      │  │ │ │
+│   │    │  │  │  │  │  └── Pointer payload (47 bits = 128 TB addressable)
+│   │    │  │  │  │  └────── Type tag bit 0 (OBJ_STRING=0, OBJ_LIST=1, ...)
+│   │    │  │  │  └───────── Type tag bit 1
+│   │    │  │  └──────────── Type tag bit 2
+│   │    │  └─────────────── Type tag bit 3 (OBJ_ENUM=8)
+│   │    └────────────────── Quiet-NaN bit (must be 1)
+│   └─────────────────────── Exponent (all 1s = NaN)
+└─────────────────────────── Sign bit (0, arbitrary for NaN)
+```
+
+- **Bits 0-2**: Sub-tag (`nil`=1, `true`=2, `false`=3, `int`=4, `empty`=5). Object pointers have `000` because `malloc` is 8-byte aligned.
+- **Bits 3-46**: Payload (integer value shifted left by 3, or pointer address).
+- **Bits 47-50**: 4-bit **object type tag** (`OBJ_STRING`..`OBJ_ENUM`).
+- **Bit 51**: Quiet-NaN bit (must be 1, otherwise it's a signaling NaN and the FPU may trap).
+- **Bits 52-62**: Exponent (all 1s, required by IEEE-754 for NaN).
+- **Bit 63**: Sign (0, arbitrary for NaN).
+
+#### Pointer Constraint
+
+The 4-bit type tag consumes bit 47, which means Luna **requires pointers to live in the low 47-bit address space** (128 TB). This is identical to LuaJIT GC64, which uses the same layout in production on x86_64 and ARM64.
+
+On systems with 57-bit addressing (Intel LA57 / ARM64 LVA), Luna's allocator must ensure GC-managed objects stay below `0x00007FFFFFFFFFFF`. This is achieved by:
+- Using `mmap` with explicit address hints or `MAP_32BIT`
+- Rejecting high addresses and retrying until the OS provides a low one
+- Documenting that C-API handles and raw pointers must be in the low 47 bits
+
+> **Future expansion**: If a 5th type-tag bit is ever needed, bit 63 is currently free (it only carries the NaN sign, which is don't-care). This would give 32 object types using bits 47-50 + 63.
 
 > Granular numeric types (int8...int64, uint8...uint64, float32) are not implemented and may be added in a future release.
 
@@ -279,13 +310,14 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.0-alpha` | Done | NaN-boxed object type tags: encode `OBJ_STRING`, `OBJ_LIST`, `OBJ_DICT`, `OBJ_INSTANCE`, `OBJ_FUNCTION`, `OBJ_EXCEPTION`, `OBJ_CLOSURE` into unused NaN payload bits. `IS_STRING`/`IS_LIST`/etc. are now single bitwise checks without pointer dereference. Replaced verbose type-check patterns across `vm.c`, `value.c`, and `vm_builtins.c`. Fixed `OP_CALL` error-reporting path to safely handle non-object callee values. Corrected opcode dispatch section comment numbering to match true `OpCode` enum values. |
 | `0.2.1-alpha` | Done | Array slicing: `list[1:5]`, `list[::-1]`, `string[1:4:2]`. Supports omitted start/stop/step, negative indices, and negative step for reversal. New `EXPR_SLICE` AST node, `OP_SLICE` opcode, and VM implementation for both lists and strings. |
 | `0.2.2-alpha` | Done | Destructuring assignment (Phase 1): `var [a, b] = [1, 2]` and `var {"name": n, "hp": h} = entity`. Supports `_` placeholder for skipped positions. Compiled to existing `OP_INDEXGET` sequences. New `pattern` field in `VarDecl` AST node. |
-| `0.2.3-alpha` | **Current** | Multiple assignment / swap: `a, b = b, a`. The compiler detects the two-local-variable swap pattern and emits a single `OP_SWAP` instruction (1 cycle instead of 3 `MOVE`s). General-case multi-assignment (`a, b = 10, 20`) evaluates all RHS values into temps first, then assigns each to its target. New `EXPR_MULTI_ASSIGN` AST node. |
+| `0.2.3-alpha` | Done | Multiple assignment / swap: `a, b = b, a`. The compiler detects the two-local-variable swap pattern and emits a single `OP_SWAP` instruction (1 cycle instead of 3 `MOVE`s). General-case multi-assignment (`a, b = 10, 20`) evaluates all RHS values into temps first, then assigns each to its target. New `EXPR_MULTI_ASSIGN` AST node. Parser improvements: backtracking (`save_state`/`restore_state`), expression-level destructuring assignments, variadic `parser_error()`. |
+| `0.2.4-alpha` | **Current** | Classes / enums solidified. Expanded NaN-boxing from 3-bit to 4-bit type tags (bits 47-50) to support `OBJ_ENUM`. Compile-time class inheritance: parent fields and methods flattened into child prototype. Method override with backward search (`OP_INVOKE` searches child→parent). `OP_SUPER` implemented for `super.method()` calls. Auto-call `_init` on `new`. First-class enum objects (`ObjEnum`) with `.count()`, `.keys()`, `.values()` runtime API. |
 
 ## Roadmap
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.x` | Classes solidified (`extends`, `super`). Lambdas (`=>`). Multiline strings (`"""..."""`). |
+| `0.2.x` | Lambdas (`=>`). Multiline strings (`"""..."""`). |
 | `0.3.x` | Modules, imports, and standard library (strings, math, io, os). |
 | `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
 | `0.5.x` | Exception handling (`try` / `catch` / `finally`, custom exceptions, stack traces). |
@@ -371,6 +403,12 @@ These would make Luna's destructuring faster than languages that rely on generic
 - Traits / mixins for composable behavior without multiple inheritance.
 - Method cascading (`..`) for chaining mutating calls.
 - Multi-value returns via `OP_RET A, n` — use the `B` field to indicate how many consecutive registers to return. Would pair with destructuring to avoid list wrappers: `def coords(): return 10, 20` → `var [x, y] = coords()`. Requires calling-convention changes in `OP_CALL`.
+
+**VM Architecture (Planned)**
+- **NaN-boxing redesign (sentinel approach or bit-63 negative space):** The current `QNAN_TAG` (`0x7FF8...`) collides with canonical hardware NaN (`0.0/0.0`). Future redesign options:
+  1. *Payload sentinel:* Change base tag to a quiet-NaN pattern the hardware is unlikely to emit (e.g. `0x7FF8...0001`). Requires updating `IS_DOUBLE` and `IS_OBJ` to distinguish hardware NaN (treat as double) from tagged objects. Does not consume sub-tags, but requires care to ensure `IS_OBJ` rejects the canonical hardware NaN (`0x7FF8...0000`).
+  2. *Bit-63 negative space (V8/SpiderMonkey style):* Move Luna's tagged space to `0xFFF8...` (bit 63 = 1). This makes `IS_DOUBLE(v)` a single `CMP v < 0xFFF8...` — the fastest possible type check. But requires normalizing all hardware NaNs in `make_double()` and is a sweeping change across `value.h`.
+- **Integer granularity without NaN-tag bloat:** The 4-bit type tag (16 slots) is too small for `int8..int64`, `uint8..uint64`, `float32`, `BigInt`, etc. The solution is a single `OBJ_INTEGER` type tag with an internal `IntegerKind` subfield (`I8`, `I16`, `I32`, `I64`, `U8`, `U16`, `U32`, `U64`, `BIG`). Small integers stay as `int32` inmediatos; granular ints are boxed `ObjInteger` objects. The JIT does not use NaN tags — it tracks types in SSA IR (`IR_I32`, `IR_F64`, `IR_I64`) and emits native instructions directly. Boxing/unboxing only happens at JIT/VM boundaries. This mirrors how LuaJIT and V8 handle numeric specialization.
 
 ## Security
 

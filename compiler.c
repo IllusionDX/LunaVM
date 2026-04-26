@@ -485,18 +485,34 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         int nargs = expr->data.call.arg_count;
         /* Detect method call: callee is field access */
         if (callee->kind == EXPR_FIELD_ACCESS) {
-            compile_expr_into(c, callee->data.field_access.obj, target);
-            int saved_base = c->temp_base;
-            /* method name at target+1, args at target+2.. */
-            c->temp_base = target + 2 + nargs;
-            for (int i = 0; i < nargs; i++) {
-                compile_expr_into(c, expr->data.call.arguments[i], target + 2 + i);
+            Expr *obj = callee->data.field_access.obj;
+            /* Detect super.method() */
+            bool is_super = (obj->kind == EXPR_IDENTIFIER &&
+                             strcmp(obj->data.identifier.name, "super") == 0);
+            if (is_super) {
+                int saved_base = c->temp_base;
+                c->temp_base = target + 2 + nargs;
+                for (int i = 0; i < nargs; i++) {
+                    compile_expr_into(c, expr->data.call.arguments[i], target + 2 + i);
+                }
+                c->temp_base = saved_base;
+                int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
+                emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
+                emit_ABC(c, OP_SUPER, (uint8_t)target, 0, (uint8_t)nargs);
+            } else {
+                compile_expr_into(c, obj, target);
+                int saved_base = c->temp_base;
+                /* method name at target+1, args at target+2.. */
+                c->temp_base = target + 2 + nargs;
+                for (int i = 0; i < nargs; i++) {
+                    compile_expr_into(c, expr->data.call.arguments[i], target + 2 + i);
+                }
+                c->temp_base = saved_base;
+                /* Load method name into target+1, then INVOKE */
+                int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
+                emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
+                emit_ABC(c, OP_INVOKE, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
             }
-            c->temp_base = saved_base;
-            /* Load method name into target+1, then INVOKE */
-            int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
-            emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
-            emit_ABC(c, OP_INVOKE, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
         } else {
             compile_expr_into(c, callee, target);
             int saved_base = c->temp_base;
@@ -1438,6 +1454,30 @@ static void compile_class(Compiler *c, Decl *decl) {
     const char *name = decl->data.class_decl.name;
     ObjInstance *proto = new_instance(name, decl->data.class_decl.base_class, 4);
 
+    /* Inherit from parent prototype if extends is specified */
+    if (decl->data.class_decl.base_class) {
+        Value parent_val;
+        if (vm_get_global(c->vm, decl->data.class_decl.base_class, &parent_val)
+            && IS_INSTANCE(parent_val)) {
+            ObjInstance *parent = (ObjInstance*)AS_OBJ(parent_val);
+            /* Copy parent fields */
+            for (int i = 0; i < parent->field_count; i++) {
+                instance_set_field(proto, parent->field_names[i], parent->fields[i]);
+            }
+            /* Copy parent methods */
+            if (parent->method_count > 0) {
+                proto->methods = malloc(sizeof(ObjFunction*) * parent->method_count);
+                memcpy(proto->methods, parent->methods,
+                       sizeof(ObjFunction*) * parent->method_count);
+                proto->method_count = parent->method_count;
+                proto->method_capacity = parent->method_count;
+                for (int i = 0; i < parent->method_count; i++) {
+                    if (proto->methods[i]) retain_obj((Object*)proto->methods[i]);
+                }
+            }
+        }
+    }
+
     /* Fields */
     for (int i = 0; i < decl->data.class_decl.field_count; i++) {
         instance_set_field(proto, decl->data.class_decl.fields[i].name, make_null());
@@ -1499,14 +1539,17 @@ static void compile_class(Compiler *c, Decl *decl) {
 
 static void compile_enum(Compiler *c, Decl *decl) {
     const char *name = decl->data.enum_decl.name;
-    for (int i = 0; i < decl->data.enum_decl.variant_count; i++) {
+    int count = decl->data.enum_decl.variant_count;
+    ObjEnum *e = new_enum(name, count);
+    int64_t next_val = 0;
+    for (int i = 0; i < count; i++) {
         EnumVariant *v = &decl->data.enum_decl.variants[i];
-        int64_t val = v->has_value ? v->value : i;
-        char *full = malloc(strlen(name) + 1 + strlen(v->name) + 1);
-        sprintf(full, "%s.%s", name, v->name);
-        vm_set_global(c->vm, full, make_int(val), true);
-        free(full);
+        int64_t val = v->has_value ? v->value : next_val;
+        next_val = val + 1;
+        e->names[i]  = strdup(v->name);
+        e->values[i] = val;
     }
+    vm_set_global(c->vm, name, make_obj((Object*)e), false);
 }
 
 /* ============================================================ */

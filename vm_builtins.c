@@ -256,3 +256,26 @@ bool vm_invoke_dict(VM *vm, ObjDict *dict, const char *method,
     if (!strcmp(method,"length"))            { *result=make_int(dict_length(dict));           return true; }
     return false;
 }
+
+bool vm_invoke_enum(VM *vm, ObjEnum *enm, const char *method,
+                    Value *args, int nargs, Value *result) {
+    (void)vm; (void)args; (void)nargs;
+    if (!strcmp(method, "values")) {
+        ObjList *lst = new_list(enm->count);
+        for (int i = 0; i < enm->count; i++) list_add(lst, make_int(enm->values[i]));
+        *result = make_obj((Object*)lst);
+        return true;
+    }
+    if (!strcmp(method, "keys")) {
+        ObjList *lst = new_list(enm->count);
+        for (int i = 0; i < enm->count; i++)
+            list_add(lst, make_obj((Object*)new_string(enm->names[i], (int)strlen(enm->names[i]))));
+        *result = make_obj((Object*)lst);
+        return true;
+    }
+    if (!strcmp(method, "count") || !strcmp(method, "length") || !strcmp(method, "size")) {
+        *result = make_int(enm->count);
+        return true;
+    }
+    return false;
+}

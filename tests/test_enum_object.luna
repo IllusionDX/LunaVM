@@ -1,0 +1,26 @@
+# Test enums as first-class objects
+
+enum Status:
+    PENDING
+    RUNNING = 10
+    COMPLETED
+
+print(Status.PENDING)       # 0
+print(Status.RUNNING)       # 10
+print(Status.COMPLETED)     # 11
+
+# Test count
+var count = Status.count()
+print(count)                # 3
+
+# Test keys
+var keys = Status.keys()
+print(keys[0])              # PENDING
+print(keys[1])              # RUNNING
+print(keys[2])              # COMPLETED
+
+# Test values
+var values = Status.values()
+print(values[0])            # 0
+print(values[1])            # 10
+print(values[2])            # 11

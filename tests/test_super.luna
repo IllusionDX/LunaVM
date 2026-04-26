@@ -1,0 +1,52 @@
+# Test super method calls
+
+class Entity:
+    var hp
+    
+    def _init(h):
+        self.hp = h
+    
+    def describe():
+        return "Entity"
+
+class Player extends Entity:
+    var name
+    
+    def _init(h, n):
+        self.hp = h
+        self.name = n
+    
+    def describe():
+        var base_desc = super.describe()
+        return base_desc + ": " + self.name
+
+var p = new Player(100, "Hero")
+print(p.describe())     # Entity: Hero
+
+# Test _init auto-call (base constructor)
+class Counter:
+    var count
+    
+    def _init():
+        self.count = 0
+    
+    def inc():
+        self.count = self.count + 1
+        return self.count
+
+class StepCounter extends Counter:
+    var step
+    
+    def _init(s):
+        self.count = 0
+        self.step = s
+    
+    def inc():
+        self.count = self.count + self.step
+        return self.count
+
+var sc = new StepCounter(5)
+print(sc.count)         # 0 (base _init called)
+print(sc.step)          # 5
+print(sc.inc())         # 5
+print(sc.inc())         # 10

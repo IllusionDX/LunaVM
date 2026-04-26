@@ -30,9 +30,9 @@ struct VM;      /* defined in vm.h */
 
 typedef uint64_t Value;
 
-/* Quiet NaN base: sign=0, exponent=all-1s, quiet-bit=1, bit50=1
- * Top 16 bits = 0x7FFC. */
-#define QNAN_TAG     ((uint64_t)0x7ffc000000000000)
+/* Quiet NaN base: sign=0, exponent=all-1s, quiet-bit=1
+ * Top 16 bits = 0x7FF8 (bit 50 is now free for the 4-bit type tag). */
+#define QNAN_TAG     ((uint64_t)0x7ff8000000000000)
 
 /* Sub-tags in the lowest 3 payload bits.
  * Pointers from malloc are at least 8-byte aligned → low 3 bits = 000. */
@@ -92,14 +92,15 @@ static inline int64_t as_int64(Value v) {
 /* ============================================================ */
 
 typedef enum {
-    OBJ_STRING,    /* tag 7  */
-    OBJ_LIST,      /* tag 8  */
-    OBJ_DICT,      /* tag 9  */
-    OBJ_INSTANCE,  /* tag 10 */
-    OBJ_FUNCTION,  /* tag 11 / 12 (is_native flag) */
+    OBJ_STRING,
+    OBJ_LIST,
+    OBJ_DICT,
+    OBJ_INSTANCE,
+    OBJ_FUNCTION,  /* native flag lives in is_native field, not a separate type */
     OBJ_EXCEPTION,
     OBJ_UPVALUE,
-    OBJ_CLOSURE
+    OBJ_CLOSURE,
+    OBJ_ENUM
 } ObjType;
 
 /* ============================================================ */
@@ -119,25 +120,33 @@ typedef struct Object {
 /* Fast Object Type Checking & Creation                          */
 /* ============================================================ */
 
-/* 
- * FUTURE PROOFING NOTE: 
- * Currently, we use bits 48, 49, and 63 (sign bit) for the 3-bit type tag (up to 8 types).
- * If a 9th object type is added in the future, you can reclaim bit 47 to get 4 bits (16 types).
+/*
+ * TYPE TAG ENCODING EVOLUTION:
+ *
+ *   3-bit (current) — bits 48, 49, 63  →  8 types.  ALL SLOTS ARE NOW OCCUPIED.
+ *   4-bit (needed)  — bits 47-50        → 16 types.  Bit 47 must be reclaimed.
+ *   5-bit (future)  — bits 47-50 + 63   → 32 types.  Bit 63 becomes free after
+ *                     the move to contiguous 47-50 encoding.
+ *
+ * To expand to 4-bit:
+ *   - Change QNAN_TAG from 0x7FFC... to 0x7FF8... (drop bit 50 from the signature).
+ *   - Encode `t & 15` into contiguous bits 47-50 in make_obj() and TYPE_SIGNATURE().
+ *   - AS_OBJ's mask 0x00007FFFFFFFFFFF already strips bit 47, so pointers stay safe.
+ *   - Bit 63 is freed and can be added back later as a 5th type tag bit if needed.
+ *
  * User-space pointers are restricted to 47 bits (128 TB), so bit 47 is always 0.
- * To do this, shift `t` into bits 47-50, drop bit 50 from QNAN_TAG (change to 0x7FF8...),
- * and AS_OBJ's mask `0x00007FFFFFFFFFFF` will cleanly strip bit 47 off the pointer.
  */
 
 static inline Value make_obj(void *ptr) {
     Object *obj = (Object*)ptr;
     uint64_t t = (uint64_t)obj->type;
-    uint64_t type_tag = ((t & 3) << 48) | ((t >> 2) << 63);
+    uint64_t type_tag = (t & 15) << 47;
     return QNAN_TAG | type_tag | (uint64_t)(uintptr_t)obj;
 }
 #define OBJ_VAL(obj) make_obj(obj)
 
-#define OBJ_SIGNATURE_MASK 0xFFFF000000000007ULL
-#define TYPE_SIGNATURE(t) (QNAN_TAG | (((uint64_t)(t) & 3) << 48) | (((uint64_t)(t) >> 2) << 63))
+#define OBJ_SIGNATURE_MASK 0xFFFF800000000007ULL
+#define TYPE_SIGNATURE(t) (QNAN_TAG | (((uint64_t)(t) & 15) << 47))
 
 #define IS_STRING(v)   (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_STRING))
 #define IS_LIST(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_LIST))
@@ -146,6 +155,7 @@ static inline Value make_obj(void *ptr) {
 #define IS_FUNCTION(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_FUNCTION))
 #define IS_EXCEPTION(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_EXCEPTION))
 #define IS_CLOSURE(v)  (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLOSURE))
+#define IS_ENUM(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_ENUM))
 
 /* ============================================================ */
 /* Native function signature                                     */
@@ -267,6 +277,15 @@ typedef struct {
     int           upvalue_count;
 } ObjClosure;
 
+/* Enum */
+typedef struct {
+    Object   obj;
+    char    *name;
+    char   **names;      /* variant names */
+    int64_t *values;     /* variant values */
+    int      count;
+} ObjEnum;
+
 /* ============================================================ */
 /* Object constructors                                           */
 /* ============================================================ */
@@ -281,6 +300,7 @@ ObjFunction *new_native_function(const char *name, NativeFn fn);
 ObjException *new_exception(const char *message);
 ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);
+ObjEnum     *new_enum(const char *name, int count);
 
 /* ============================================================ */
 /* Value predicates / utilities                                  */

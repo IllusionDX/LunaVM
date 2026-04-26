@@ -22,6 +22,7 @@
 void vm_register_builtins(VM *vm);
 bool vm_invoke_list(VM *vm, ObjList  *list, const char *method, Value *args, int nargs, Value *result);
 bool vm_invoke_dict(VM *vm, ObjDict  *dict, const char *method, Value *args, int nargs, Value *result);
+bool vm_invoke_enum(VM *vm, ObjEnum  *enm, const char *method, Value *args, int nargs, Value *result);
 
 /* ============================================================ */
 /* Arithmetic helpers (inlined for dispatch loop)               */
@@ -259,6 +260,7 @@ static void mark_object(Object *obj) {
             }
             break;
         }
+        case OBJ_ENUM: break; /* no child Values to mark */
         case OBJ_FUNCTION: {
             ObjFunction *f = (ObjFunction *)obj;
             if (f->chunk) {
@@ -631,7 +633,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_memberget,     // 49 OP_MEMBERGET
         &&op_memberset,     // 50 OP_MEMBERSET
         &&op_invoke,        // 51 OP_INVOKE
-        &&op_unimplemented, // 52 OP_SUPER
+        &&op_super,         // 52 OP_SUPER
         &&op_throw,         // 53 OP_THROW
         &&op_try,           // 54 OP_TRY
         &&op_endtry,        // 55 OP_ENDTRY
@@ -1243,6 +1245,16 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             case OBJ_LIST:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(list_length((ObjList*)AS_OBJ(obj))) : make_null()); break;
             case OBJ_DICT:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(dict_length((ObjDict*)AS_OBJ(obj))) : make_null()); break;
             case OBJ_STRING:   SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(((ObjString*)AS_OBJ(obj))->length) : make_null()); break;
+            case OBJ_ENUM: {
+                ObjEnum *e = (ObjEnum*)AS_OBJ(obj);
+                int fi = -1;
+                for (int i = 0; i < e->count; i++) {
+                    if (strcmp(e->names[i], field->chars) == 0) { fi = i; break; }
+                }
+                if (fi >= 0) SET_REG_PRIM(RA, make_int(e->values[fi]));
+                else SET_REG_PRIM(RA, make_null());
+                break;
+            }
             default: SET_REG_PRIM(RA, make_null()); break;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1294,6 +1306,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             switch (AS_OBJ(obj)->type) {
                 case OBJ_LIST: handled = vm_invoke_list(vm, (ObjList*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
                 case OBJ_DICT: handled = vm_invoke_dict(vm, (ObjDict*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
+                case OBJ_ENUM: handled = vm_invoke_enum(vm, (ObjEnum*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
                 case OBJ_INSTANCE: {
                     ObjInstance *obj_inst = (ObjInstance*)AS_OBJ(obj);
                     ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
@@ -1304,7 +1317,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     if (ic->inst == obj_inst && ic->name == mname_obj) {
                         mi = ic->index;
                     } else {
-                        for (int i = 0; i < obj_inst->method_count; i++) {
+                        /* Search backwards so child methods shadow inherited ones */
+                        for (int i = obj_inst->method_count - 1; i >= 0; i--) {
                             ObjFunction *m = obj_inst->methods[i];
                             if (m && strcmp(m->name, mname_obj->chars) == 0) { mi = i; break; }
                         }
@@ -1482,16 +1496,83 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         return VM_OK;
 
     /* -------------------------------------------------------- */
-    /* Unimplemented / stub opcodes                             */
+    /* 52.  SUPER                                               */
     /* -------------------------------------------------------- */
-    op_unimplemented:
-        {
+    op_super: {
+        uint8_t ret_reg = RA;
+        uint8_t self_reg = RB;
+        uint8_t nargs   = RC;
+        Value method_val = REG(ret_reg + 1);
+        Value self = REG(self_reg);
+        if (!IS_STRING(method_val) || !IS_INSTANCE(self)) {
+            SET_REG_PRIM(ret_reg, make_null());
+            DECODE; goto *op_labels[OP(instr)];
+        }
+        const char *mname = ((ObjString*)AS_OBJ(method_val))->chars;
+        ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
+
+        Value result = make_null();
+        bool handled = false;
+
+        /* Look up parent prototype via base_class */
+        if (inst->base_class) {
+            Value parent_val;
+            if (vm_get_global(vm, inst->base_class, &parent_val)
+                && IS_INSTANCE(parent_val)) {
+                ObjInstance *parent = (ObjInstance*)AS_OBJ(parent_val);
+                /* Search parent's methods (forward: parent's own methods first) */
+                for (int i = 0; i < parent->method_count; i++) {
+                    ObjFunction *m = parent->methods[i];
+                    if (m && strcmp(m->name, mname) == 0) {
+                        SET_REG(self_reg + 1, self);
+                        if (m->is_native) {
+                            Value scratch[256];
+                            for (int j = 0; j < nargs; j++)
+                                scratch[j] = REG(ret_reg + 2 + j);
+                            result = m->native_fn(vm, scratch, nargs);
+                        } else {
+                            if (vm->frame_count < MAX_FRAMES) {
+                                CallFrame *caller = &FRAME;
+                                CallFrame *callee = &vm->frames[vm->frame_count];
+                                callee->chunk = m->chunk;
+                                callee->ip = 0;
+                                callee->base = caller->base + self_reg + 1;
+                                callee->ret_reg = ret_reg;
+                                int need = callee->base + m->chunk->max_registers;
+                                if (need > vm->stack_cap) {
+                                    vm->stack_cap = need < 64 ? 64 : need * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack[callee->base] = self;
+                                for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
+                                    vm->stack[callee->base + j] = make_null();
+                                vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                                vm->frame_count++;
+                                CHUNK = callee->chunk;
+                                IP = 0;
+                                DECODE;
+                                goto *op_labels[OP(instr)];
+                            }
+                        }
+                        handled = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (handled) SET_REG(ret_reg, result);
+        else {
             char buf[256];
-            snprintf(buf, sizeof(buf), "vm: unimplemented opcode %d", OP(instr));
+            snprintf(buf, sizeof(buf), "vm: unknown super method '%s'", mname);
             release_value(_exc);
             _exc = make_obj((Object*)new_exception(buf));
             goto op_throw;
         }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+
 
     /* ============================================================ */
 #undef DECODE

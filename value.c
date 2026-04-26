@@ -283,6 +283,17 @@ ObjClosure *new_closure(ObjFunction *function) {
     return cl;
 }
 
+ObjEnum *new_enum(const char *name, int count) {
+    ObjEnum *e = malloc(sizeof(ObjEnum));
+    if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)e, OBJ_ENUM, sizeof(ObjEnum));
+    e->name   = strdup(name);
+    e->count  = count;
+    e->names  = count > 0 ? calloc(count, sizeof(char*)) : NULL;
+    e->values = count > 0 ? calloc(count, sizeof(int64_t)) : NULL;
+    return e;
+}
+
 /* ============================================================ */
 /* ARC memory management                                         */
 /* ============================================================ */
@@ -352,6 +363,12 @@ void free_object_container(Object *obj) {
             free(cl->upvalues);
             free(cl); break;
         }
+        case OBJ_ENUM: {
+            ObjEnum *e = (ObjEnum *)obj;
+            free(e->name);
+            for (int i = 0; i < e->count; i++) free(e->names[i]);
+            free(e->names); free(e->values); free(e); break;
+        }
         default: free(obj); break;
     }
 }
@@ -412,6 +429,7 @@ void free_object(Object *obj) {
             release_obj((Object*)cl->function);
             break;
         }
+        case OBJ_ENUM: break; /* no child Values to release */
         default: break;
     }
 
@@ -527,6 +545,13 @@ char *value_to_string(Value v) {
                 }
                 if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
                 out[pos++] = '}'; out[pos] = '\0';
+                char *r = strdup(out); free(out); return r;
+            }
+            case OBJ_ENUM: {
+                ObjEnum *e = (ObjEnum*)obj;
+                int cap = 64; char *out = malloc(cap);
+                int n = snprintf(out, cap, "<enum %s (%d variants)>", e->name, e->count);
+                if (n >= cap) { cap = n + 1; out = realloc(out, cap); snprintf(out, cap, "<enum %s (%d variants)>", e->name, e->count); }
                 char *r = strdup(out); free(out); return r;
             }
             default: return strdup("<object>");
