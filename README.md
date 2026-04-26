@@ -126,6 +126,15 @@ player_data[key] = "Hero"
 
 **Assignment:** `=`, `+=`, `-=`, `*=`, `/=`
 
+**Multiple Assignment / Swap:**
+
+```luna
+var a = 1
+var b = 2
+a, b = b, a       # swap in one instruction
+a, b = 10, 20     # parallel assignment
+```
+
 **Bitwise:** `&`, `|`, `^`, `<<`, `>>`, `~`
 
 ### F-Strings

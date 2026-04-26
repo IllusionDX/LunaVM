@@ -290,6 +290,47 @@ static int compile_function_value(Compiler *c, const char *name,
                                    Stmt **body, int body_count);
 
 /* ============================================================ */
+/* Assignment helpers                                         */
+/* ============================================================ */
+
+static void compile_single_assignment(Compiler *c, Expr *lhs, int src_reg) {
+    if (lhs->kind == EXPR_IDENTIFIER) {
+        const char *name = lhs->data.identifier.name;
+        int idx;
+        VarKind kind = resolve_variable(c, name, &idx);
+        if (kind == VAR_LOCAL) {
+            if (idx != src_reg) emit_move(c, (uint8_t)idx, (uint8_t)src_reg);
+        } else if (kind == VAR_UPVALUE) {
+            emit_ABx(c, OP_SETUPVAL, (uint8_t)src_reg, (uint16_t)idx);
+        } else {
+            int k = chunk_add_string(c->chunk, name);
+            emit_ABx(c, OP_SETGLOBAL, (uint8_t)src_reg, (uint16_t)k);
+        }
+    } else if (lhs->kind == EXPR_FIELD_ACCESS) {
+        int obj = alloc_reg(c);
+        compile_expr_into(c, lhs->data.field_access.obj, obj);
+        int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+        if (fk > 255) {
+            int temp = alloc_reg(c);
+            emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
+            emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)src_reg, (uint8_t)temp);
+            free_reg(c);
+        } else {
+            emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)src_reg, (uint8_t)fk);
+        }
+        free_reg(c);
+    } else if (lhs->kind == EXPR_INDEX_ACCESS) {
+        int obj = alloc_reg(c);
+        int idx = alloc_reg(c);
+        compile_expr_into(c, lhs->data.index_access.obj, obj);
+        compile_expr_into(c, lhs->data.index_access.index, idx);
+        emit_ABC(c, OP_INDEXSET, (uint8_t)obj, (uint8_t)idx, (uint8_t)src_reg);
+        free_reg(c);
+        free_reg(c);
+    }
+}
+
+/* ============================================================ */
 /* Expressions                                                  */
 /* ============================================================ */
 
@@ -778,6 +819,90 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                                                expr->data.function.body_count);
         free(pnames);
         emit_ABx(c, OP_CLOSURE, (uint8_t)target, (uint16_t)fn_const);
+        break;
+    }
+
+    case EXPR_MULTI_ASSIGN: {
+        int n = expr->data.multi_assign.target_count;
+        int m = expr->data.multi_assign.value_count;
+
+        /* Optimisation: detect a, b = b, a where both are local variables */
+        if (n == 2 && m == 2) {
+            Expr *t0 = expr->data.multi_assign.targets[0];
+            Expr *t1 = expr->data.multi_assign.targets[1];
+            Expr *v0 = expr->data.multi_assign.values[0];
+            Expr *v1 = expr->data.multi_assign.values[1];
+            if (t0->kind == EXPR_IDENTIFIER && t1->kind == EXPR_IDENTIFIER &&
+                v0->kind == EXPR_IDENTIFIER && v1->kind == EXPR_IDENTIFIER) {
+                int idx_a, idx_b;
+                VarKind kind_a = resolve_variable(c, t0->data.identifier.name, &idx_a);
+                VarKind kind_b = resolve_variable(c, t1->data.identifier.name, &idx_b);
+                if (kind_a == VAR_LOCAL && kind_b == VAR_LOCAL &&
+                    strcmp(t0->data.identifier.name, v1->data.identifier.name) == 0 &&
+                    strcmp(t1->data.identifier.name, v0->data.identifier.name) == 0) {
+                    emit_ABC(c, OP_SWAP, (uint8_t)idx_a, (uint8_t)idx_b, 0);
+                    emit_loadnull(c, (uint8_t)target);
+                    break;
+                }
+            }
+        }
+
+        /* General case: evaluate all RHS values into temps first,
+         * then assign each temp to its target.
+         * Simple literals (int, float, string, bool, null, char) skip the
+         * temp and compile directly into the target register. */
+        int *temps = (int *)malloc(m * sizeof(int));
+        bool *direct = (bool *)calloc(m, sizeof(bool));
+        for (int i = 0; i < m; i++) {
+            ExprKind vk = expr->data.multi_assign.values[i]->kind;
+            bool is_literal = (vk == EXPR_INTEGER || vk == EXPR_FLOAT ||
+                               vk == EXPR_STRING || vk == EXPR_BOOL ||
+                               vk == EXPR_NULL || vk == EXPR_CHAR);
+            if (is_literal) {
+                direct[i] = true;
+                temps[i] = -1;
+            } else {
+                temps[i] = alloc_reg(c);
+                compile_expr_into(c, expr->data.multi_assign.values[i], temps[i]);
+            }
+        }
+        for (int i = 0; i < n && i < m; i++) {
+            if (direct[i]) {
+                /* Resolve target register first so compile_expr_into writes there */
+                Expr *lhs = expr->data.multi_assign.targets[i];
+                if (lhs->kind == EXPR_IDENTIFIER) {
+                    int idx;
+                    VarKind kind = resolve_variable(c, lhs->data.identifier.name, &idx);
+                    if (kind == VAR_LOCAL) {
+                        compile_expr_into(c, expr->data.multi_assign.values[i], idx);
+                    } else if (kind == VAR_UPVALUE) {
+                        int t = alloc_reg(c);
+                        compile_expr_into(c, expr->data.multi_assign.values[i], t);
+                        emit_ABx(c, OP_SETUPVAL, (uint8_t)t, (uint16_t)idx);
+                        free_reg(c);
+                    } else {
+                        int t = alloc_reg(c);
+                        compile_expr_into(c, expr->data.multi_assign.values[i], t);
+                        int k = chunk_add_string(c->chunk, lhs->data.identifier.name);
+                        emit_ABx(c, OP_SETGLOBAL, (uint8_t)t, (uint16_t)k);
+                        free_reg(c);
+                    }
+                } else if (lhs->kind == EXPR_FIELD_ACCESS || lhs->kind == EXPR_INDEX_ACCESS) {
+                    int t = alloc_reg(c);
+                    compile_expr_into(c, expr->data.multi_assign.values[i], t);
+                    compile_single_assignment(c, lhs, t);
+                    free_reg(c);
+                }
+            } else {
+                compile_single_assignment(c, expr->data.multi_assign.targets[i], temps[i]);
+            }
+        }
+        for (int i = 0; i < m; i++) {
+            if (!direct[i]) free_reg(c);
+        }
+        free(temps);
+        free(direct);
+        emit_loadnull(c, (uint8_t)target);
         break;
     }
 
@@ -1356,7 +1481,8 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl) {
         if (c.is_repl && i == program->stmt_count - 1 &&
             program->statements[i]->kind == STMT_EXPRESSION) {
             Expr *expr = program->statements[i]->data.expression.expression;
-            if (expr->kind != EXPR_ASSIGNMENT && expr->kind != EXPR_COMPOUND_ASSIGN) {
+            if (expr->kind != EXPR_ASSIGNMENT && expr->kind != EXPR_COMPOUND_ASSIGN &&
+                expr->kind != EXPR_MULTI_ASSIGN) {
                 int r = alloc_reg(&c);
                 compile_expr_into(&c, expr, r);
                 int k = chunk_add_string(c.chunk, "_");

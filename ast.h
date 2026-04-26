@@ -39,7 +39,8 @@ typedef enum {
     EXPR_NEW,
     EXPR_FUNCTION,
     EXPR_LIST_COMPREHENSION,
-    EXPR_SLICE
+    EXPR_SLICE,
+    EXPR_MULTI_ASSIGN
 } ExprKind;
 
 typedef struct DictEntry {
@@ -136,6 +137,12 @@ typedef struct Expr {
             Expr *stop;  /* optional, may be NULL */
             Expr *step;  /* optional, may be NULL */
         } slice;
+        struct {
+            Expr **targets;
+            int target_count;
+            Expr **values;
+            int value_count;
+        } multi_assign;
     } data;
 } Expr;
 

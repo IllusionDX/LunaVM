@@ -1,0 +1,23 @@
+var a = 0
+var b = 0
+a, b = 10, 20
+print(a)
+print(b)
+
+var x = 0
+var y = 0
+x, y = b, a
+print(x)
+print(y)
+
+var s1 = ""
+var s2 = ""
+s1, s2 = "hello", "world"
+print(s1)
+print(s2)
+
+var p = true
+var q = false
+p, q = false, true
+print(p)
+print(q)

@@ -127,6 +127,17 @@ void free_expr(Expr *expr) {
             free_expr(expr->data.slice.step);
         break;
 
+    case EXPR_MULTI_ASSIGN:
+        for (int i = 0; i < expr->data.multi_assign.target_count; i++) {
+            free_expr(expr->data.multi_assign.targets[i]);
+        }
+        free(expr->data.multi_assign.targets);
+        for (int i = 0; i < expr->data.multi_assign.value_count; i++) {
+            free_expr(expr->data.multi_assign.values[i]);
+        }
+        free(expr->data.multi_assign.values);
+        break;
+
     default:
         break;
     }

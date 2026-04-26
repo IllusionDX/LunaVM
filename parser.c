@@ -701,13 +701,94 @@ static Expr *parse_or(Parser *parser) {
 }
 
 static Expr *parse_assignment(Parser *parser) {
-    Expr *expr = parse_or(parser);
+    Expr *first = parse_or(parser);
+
+    /* Lookahead for multi-target assignment (a, b = c, d).
+     * We only commit to multi-target parsing if the first item is an
+     * identifier, followed by a comma, another identifier, and then =
+     * (or +=, -=, etc.).  This prevents us from greedily consuming commas
+     * that belong to dict literals, argument lists, etc. */
+    if (first->kind == EXPR_IDENTIFIER && match(parser, TOK_COMMA)) {
+        Token *saved = parser->current;
+        advance(parser); /* consume comma */
+        if (match(parser, TOK_IDENTIFIER)) {
+            advance(parser);
+            if (match(parser, TOK_ASSIGN) || match(parser, TOK_PLUS_ASSIGN) ||
+                match(parser, TOK_MINUS_ASSIGN) || match(parser, TOK_STAR_ASSIGN) ||
+                match(parser, TOK_SLASH_ASSIGN)) {
+                /* Confirmed multi-target — restore to comma and parse properly */
+                parser->current = saved;
+                advance(parser); /* consume comma */
+
+                int target_cap = 4;
+                int target_count = 1;
+                Expr **targets = (Expr **)malloc(target_cap * sizeof(Expr *));
+                targets[0] = first;
+
+                /* Parse second target (confirmed by lookahead) */
+                targets[target_count++] = parse_or(parser);
+
+                while (match(parser, TOK_COMMA)) {
+                    advance(parser);
+                    if (target_count >= target_cap) {
+                        target_cap *= 2;
+                        targets = (Expr **)realloc(targets, target_cap * sizeof(Expr *));
+                    }
+                    targets[target_count++] = parse_or(parser);
+                }
+
+                if (match(parser, TOK_ASSIGN)) {
+                    advance(parser);
+
+                    int value_cap = 4;
+                    int value_count = 0;
+                    Expr **values = (Expr **)malloc(value_cap * sizeof(Expr *));
+
+                    Expr *first_val = parse_or(parser);
+                    values[value_count++] = first_val;
+
+                    while (match(parser, TOK_COMMA)) {
+                        advance(parser);
+                        if (value_count >= value_cap) {
+                            value_cap *= 2;
+                            values = (Expr **)realloc(values, value_cap * sizeof(Expr *));
+                        }
+                        values[value_count++] = parse_or(parser);
+                    }
+
+                    Expr *multi = make_expr(EXPR_MULTI_ASSIGN);
+                    multi->data.multi_assign.targets = targets;
+                    multi->data.multi_assign.target_count = target_count;
+                    multi->data.multi_assign.values = values;
+                    multi->data.multi_assign.value_count = value_count;
+                    return multi;
+                }
+
+                if (match(parser, TOK_PLUS_ASSIGN) || match(parser, TOK_MINUS_ASSIGN) ||
+                    match(parser, TOK_STAR_ASSIGN) || match(parser, TOK_SLASH_ASSIGN)) {
+                    fprintf(stderr, "Parse error at line %d: compound assignment does not support multiple targets\n",
+                            peek(parser)->line);
+                    parser->had_error = 1;
+                    for (int i = 1; i < target_count; i++) free_expr(targets[i]);
+                    free(targets);
+                    return first;
+                }
+
+                /* Should not reach here if lookahead was correct */
+                for (int i = 1; i < target_count; i++) free_expr(targets[i]);
+                free(targets);
+                return first;
+            }
+        }
+        /* Not a multi-target assignment — restore state */
+        parser->current = saved;
+    }
 
     if (match(parser, TOK_ASSIGN)) {
         advance(parser);
         Expr *value = parse_assignment(parser);
         Expr *assign = make_expr(EXPR_ASSIGNMENT);
-        assign->data.assignment.target = expr;
+        assign->data.assignment.target = first;
         assign->data.assignment.value = value;
         return assign;
     }
@@ -716,13 +797,13 @@ static Expr *parse_assignment(Parser *parser) {
         Token *op = advance(parser);
         Expr *value = parse_assignment(parser);
         Expr *assign = make_expr(EXPR_COMPOUND_ASSIGN);
-        assign->data.compound_assign.target = expr;
+        assign->data.compound_assign.target = first;
         assign->data.compound_assign.operator = strdup(op->value);
         assign->data.compound_assign.value = value;
         return assign;
     }
 
-    return expr;
+    return first;
 }
 
 static Expr *parse_expression(Parser *parser) {
