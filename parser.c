@@ -544,11 +544,55 @@ static Expr *parse_postfix(Parser *parser) {
         }
         else if (match(parser, TOK_LBRACKET)) {
             advance(parser);
-            Expr *index_node = make_expr(EXPR_INDEX_ACCESS);
-            index_node->data.index_access.obj = expr;
-            index_node->data.index_access.index = parse_expression(parser);
-            expect(parser, TOK_RBRACKET, "Expected ']' after index");
-            expr = index_node;
+            if (match(parser, TOK_COLON)) {
+                /* Slice with omitted start: [:stop] or [:stop:step] */
+                advance(parser);
+                Expr *slice = make_expr(EXPR_SLICE);
+                slice->data.slice.obj = expr;
+                slice->data.slice.start = NULL;
+                slice->data.slice.stop = NULL;
+                slice->data.slice.step = NULL;
+                if (!match(parser, TOK_COLON) && !match(parser, TOK_RBRACKET)) {
+                    slice->data.slice.stop = parse_expression(parser);
+                }
+                if (match(parser, TOK_COLON)) {
+                    advance(parser);
+                    if (!match(parser, TOK_RBRACKET)) {
+                        slice->data.slice.step = parse_expression(parser);
+                    }
+                }
+                expect(parser, TOK_RBRACKET, "Expected ']' after slice");
+                expr = slice;
+            } else {
+                Expr *first = parse_expression(parser);
+                if (match(parser, TOK_COLON)) {
+                    /* Slice with start: [start:stop] or [start:stop:step] */
+                    advance(parser);
+                    Expr *slice = make_expr(EXPR_SLICE);
+                    slice->data.slice.obj = expr;
+                    slice->data.slice.start = first;
+                    slice->data.slice.stop = NULL;
+                    slice->data.slice.step = NULL;
+                    if (!match(parser, TOK_COLON) && !match(parser, TOK_RBRACKET)) {
+                        slice->data.slice.stop = parse_expression(parser);
+                    }
+                    if (match(parser, TOK_COLON)) {
+                        advance(parser);
+                        if (!match(parser, TOK_RBRACKET)) {
+                            slice->data.slice.step = parse_expression(parser);
+                        }
+                    }
+                    expect(parser, TOK_RBRACKET, "Expected ']' after slice");
+                    expr = slice;
+                } else {
+                    /* Regular index access */
+                    Expr *index_node = make_expr(EXPR_INDEX_ACCESS);
+                    index_node->data.index_access.obj = expr;
+                    index_node->data.index_access.index = first;
+                    expect(parser, TOK_RBRACKET, "Expected ']' after index");
+                    expr = index_node;
+                }
+            }
         }
         else {
             break;

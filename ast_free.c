@@ -117,6 +117,16 @@ void free_expr(Expr *expr) {
             free_expr(expr->data.list_comprehension.condition);
         break;
 
+    case EXPR_SLICE:
+        free_expr(expr->data.slice.obj);
+        if (expr->data.slice.start)
+            free_expr(expr->data.slice.start);
+        if (expr->data.slice.stop)
+            free_expr(expr->data.slice.stop);
+        if (expr->data.slice.step)
+            free_expr(expr->data.slice.step);
+        break;
+
     default:
         break;
     }

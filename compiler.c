@@ -493,6 +493,33 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         break;
     }
 
+    case EXPR_SLICE: {
+        compile_expr_into(c, expr->data.slice.obj, target);
+        int start_reg = alloc_reg(c);
+        int stop_reg = alloc_reg(c);
+        int step_reg = alloc_reg(c);
+        if (expr->data.slice.start) {
+            compile_expr_into(c, expr->data.slice.start, start_reg);
+        } else {
+            emit_ABC(c, OP_LOADNULL, (uint8_t)start_reg, 0, 0);
+        }
+        if (expr->data.slice.stop) {
+            compile_expr_into(c, expr->data.slice.stop, stop_reg);
+        } else {
+            emit_ABC(c, OP_LOADNULL, (uint8_t)stop_reg, 0, 0);
+        }
+        if (expr->data.slice.step) {
+            compile_expr_into(c, expr->data.slice.step, step_reg);
+        } else {
+            emit_ABC(c, OP_LOADNULL, (uint8_t)step_reg, 0, 0);
+        }
+        emit_ABC(c, OP_SLICE, (uint8_t)target, (uint8_t)target, 0);
+        free_reg(c);
+        free_reg(c);
+        free_reg(c);
+        break;
+    }
+
     case EXPR_ASSIGNMENT: {
         Expr *lhs = expr->data.assignment.target;
         Expr *rhs = expr->data.assignment.value;

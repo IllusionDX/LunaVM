@@ -38,7 +38,8 @@ typedef enum {
     EXPR_DICT_LITERAL,
     EXPR_NEW,
     EXPR_FUNCTION,
-    EXPR_LIST_COMPREHENSION
+    EXPR_LIST_COMPREHENSION,
+    EXPR_SLICE
 } ExprKind;
 
 typedef struct DictEntry {
@@ -129,6 +130,12 @@ typedef struct Expr {
             Expr *iterable;
             Expr *condition; /* optional, may be NULL */
         } list_comprehension;
+        struct {
+            Expr *obj;
+            Expr *start; /* optional, may be NULL */
+            Expr *stop;  /* optional, may be NULL */
+            Expr *step;  /* optional, may be NULL */
+        } slice;
     } data;
 } Expr;
 

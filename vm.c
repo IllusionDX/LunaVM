@@ -628,14 +628,15 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_forloop,       // 46 OP_FORLOOP
         &&op_indexget,      // 47 OP_INDEXGET
         &&op_indexset,      // 48 OP_INDEXSET
-        &&op_memberget,     // 49 OP_MEMBERGET
-        &&op_memberset,     // 50 OP_MEMBERSET
-        &&op_invoke,        // 51 OP_INVOKE
-        &&op_unimplemented, // 52 OP_SUPER
-        &&op_throw,         // 53 OP_THROW
-        &&op_try,           // 54 OP_TRY
-        &&op_endtry,        // 55 OP_ENDTRY
-        &&op_halt           // 56 OP_HALT
+        &&op_slice,         // 49 OP_SLICE
+        &&op_memberget,     // 50 OP_MEMBERGET
+        &&op_memberset,     // 51 OP_MEMBERSET
+        &&op_invoke,        // 52 OP_INVOKE
+        &&op_unimplemented, // 53 OP_SUPER
+        &&op_throw,         // 54 OP_THROW
+        &&op_try,           // 55 OP_TRY
+        &&op_endtry,        // 56 OP_ENDTRY
+        &&op_halt           // 57 OP_HALT
     };
 
     DECODE;
@@ -1081,6 +1082,110 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
+    /* 49.  SLICE                                               */
+    /* -------------------------------------------------------- */
+    op_slice: {
+        Value obj = REG(RB);
+        Value start_val = REG(RB + 1);
+        Value stop_val  = REG(RB + 2);
+        Value step_val  = REG(RB + 3);
+        if (IS_LIST(obj)) {
+            ObjList *lst = (ObjList*)AS_OBJ(obj);
+            int len = list_length(lst);
+            int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
+            if (step == 0) {
+                SET_REG(RA, make_obj((Object*)new_list(0)));
+            } else {
+                int start, stop;
+                if (IS_NIL(start_val)) {
+                    start = (step < 0) ? len - 1 : 0;
+                } else if (IS_INT(start_val)) {
+                    start = AS_INT(start_val);
+                    if (start < 0) start += len;
+                    if (start < 0) start = (step < 0) ? -1 : 0;
+                    if (start > len) start = len;
+                } else {
+                    start = (step < 0) ? len - 1 : 0;
+                }
+                if (IS_NIL(stop_val)) {
+                    stop = (step < 0) ? -1 : len;
+                } else if (IS_INT(stop_val)) {
+                    stop = AS_INT(stop_val);
+                    if (stop < 0) stop += len;
+                    if (stop < 0) stop = -1;
+                    if (stop > len) stop = len;
+                } else {
+                    stop = (step < 0) ? -1 : len;
+                }
+                ObjList *result = new_list(0);
+                if (step > 0) {
+                    for (int i = start; i < stop; i += step) {
+                        Value v = lst->items ? lst->items[i] : lst->inline_items[i];
+                        list_add(result, v);
+                        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
+                    }
+                } else {
+                    for (int i = start; i > stop; i += step) {
+                        Value v = lst->items ? lst->items[i] : lst->inline_items[i];
+                        list_add(result, v);
+                        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
+                    }
+                }
+                SET_REG(RA, make_obj((Object*)result));
+            }
+        } else if (IS_STRING(obj)) {
+            ObjString *s = (ObjString*)AS_OBJ(obj);
+            int len = s->length;
+            int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
+            if (step == 0) {
+                SET_REG(RA, make_obj((Object*)new_string("", 0)));
+            } else {
+                int start, stop;
+                if (IS_NIL(start_val)) {
+                    start = (step < 0) ? len - 1 : 0;
+                } else if (IS_INT(start_val)) {
+                    start = AS_INT(start_val);
+                    if (start < 0) start += len;
+                    if (start < 0) start = (step < 0) ? -1 : 0;
+                    if (start > len) start = len;
+                } else {
+                    start = (step < 0) ? len - 1 : 0;
+                }
+                if (IS_NIL(stop_val)) {
+                    stop = (step < 0) ? -1 : len;
+                } else if (IS_INT(stop_val)) {
+                    stop = AS_INT(stop_val);
+                    if (stop < 0) stop += len;
+                    if (stop < 0) stop = -1;
+                    if (stop > len) stop = len;
+                } else {
+                    stop = (step < 0) ? -1 : len;
+                }
+                int count = 0;
+                if (step > 0) {
+                    for (int i = start; i < stop; i += step) count++;
+                } else {
+                    for (int i = start; i > stop; i += step) count++;
+                }
+                char *buf = (char*)malloc(count + 1);
+                int j = 0;
+                if (step > 0) {
+                    for (int i = start; i < stop; i += step) buf[j++] = s->chars[i];
+                } else {
+                    for (int i = start; i > stop; i += step) buf[j++] = s->chars[i];
+                }
+                buf[j] = '\0';
+                ObjString *result = new_string(buf, count);
+                free(buf);
+                SET_REG(RA, make_obj((Object*)result));
+            }
+        } else {
+            SET_REG_PRIM(RA, make_null());
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* -------------------------------------------------------- */
     /* 39-40.  GETUPVAL / SETUPVAL                              */
     /* -------------------------------------------------------- */
     op_getupval: {
@@ -1113,7 +1218,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 49-50.  MEMBERGET / MEMBERSET                            */
+    /* 50-51.  MEMBERGET / MEMBERSET                            */
     /* -------------------------------------------------------- */
     op_memberget: {
         Value obj = REG(RB);
@@ -1175,7 +1280,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 51.  INVOKE                                              */
+    /* 52.  INVOKE                                              */
     /* -------------------------------------------------------- */
     op_invoke: {
         uint8_t ret_reg = RA;
@@ -1316,7 +1421,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 53.  THROW                                               */
+    /* 54.  THROW                                               */
     /* -------------------------------------------------------- */
     op_throw: {
         if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
@@ -1351,7 +1456,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 54.  TRY                                                 */
+    /* 55.  TRY                                                 */
     /* -------------------------------------------------------- */
     op_try: {
         TryFrame *tf = malloc(sizeof(TryFrame));
@@ -1365,7 +1470,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 55.  ENDTRY                                              */
+    /* 56.  ENDTRY                                              */
     /* -------------------------------------------------------- */
     op_endtry: {
         if (vm->try_stack) {
@@ -1377,7 +1482,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 56.  HALT                                               */
+    /* 57.  HALT                                               */
     /* -------------------------------------------------------- */
     op_halt:
         return VM_OK;

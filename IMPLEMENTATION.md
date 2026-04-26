@@ -276,13 +276,14 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.16-alpha` | Done | Memory audit follow-up: fixed `dict_transition_to_heap` inline entry leak (SOO→heap transition now releases old inline references). Fixed `vm_free` use-after-free (stack freed before `close_upvalues` — reordered to close upvalues first, then free stack). Verified 8 of 12 audit findings as false positives. |
 | `0.1.17-alpha` | Done | Fixed one-liner function parsing (`def add(a, b): return a + b`). Added regression test. |
 | `0.1.18-alpha` | Done | List concatenation with `+` (`[1, 2] + [3, 4]`). List repetition with `*` (`[1, 2] * 3`). String repetition with `*` (`"abc" * 3`). All support commutative int operands and return empty results for zero/negative multipliers. |
-| `0.2.0-alpha` | **Current** | NaN-boxed object type tags: encode `OBJ_STRING`, `OBJ_LIST`, `OBJ_DICT`, `OBJ_INSTANCE`, `OBJ_FUNCTION`, `OBJ_EXCEPTION`, `OBJ_CLOSURE` into unused NaN payload bits. `IS_STRING`/`IS_LIST`/etc. are now single bitwise checks without pointer dereference. Replaced verbose type-check patterns across `vm.c`, `value.c`, and `vm_builtins.c`. Fixed `OP_CALL` error-reporting path to safely handle non-object callee values. Corrected opcode dispatch section comment numbering to match true `OpCode` enum values. |
+| `0.2.0-alpha` | Done | NaN-boxed object type tags: encode `OBJ_STRING`, `OBJ_LIST`, `OBJ_DICT`, `OBJ_INSTANCE`, `OBJ_FUNCTION`, `OBJ_EXCEPTION`, `OBJ_CLOSURE` into unused NaN payload bits. `IS_STRING`/`IS_LIST`/etc. are now single bitwise checks without pointer dereference. Replaced verbose type-check patterns across `vm.c`, `value.c`, and `vm_builtins.c`. Fixed `OP_CALL` error-reporting path to safely handle non-object callee values. Corrected opcode dispatch section comment numbering to match true `OpCode` enum values. |
+| `0.2.1-alpha` | **Current** | Array slicing: `list[1:5]`, `list[::-1]`, `string[1:4:2]`. Supports omitted start/stop/step, negative indices, and negative step for reversal. New `EXPR_SLICE` AST node, `OP_SLICE` opcode, and VM implementation for both lists and strings. |
 
 ## Roadmap
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.0` | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. Type-hint keywords (`list`, `dict`, `int`, `string`, etc.) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. Multi-line string comments (`"""..."""`). Array slicing (`list[1:5]`, `list[::-1]`). |
+| `0.2.0` | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. Type-hint keywords (`list`, `dict`, `int`, `string`, etc.) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. Multi-line string comments (`"""..."""`). |
 | `0.3.0` | Modules and imports actually work. |
 | `0.4.0` | Standard library (strings, math, io, os). |
 | `0.5.0` | Debugger / profiler. |

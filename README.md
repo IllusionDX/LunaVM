@@ -77,6 +77,21 @@ var names = ["LunaScript", "Sol", "Terra"]
 var mixed = [1, "hello", true]
 ```
 
+**Slicing** — Python-style start:stop:step:
+
+```luna
+var a = [1, 2, 3, 4, 5]
+print(a[1:3])     # [2, 3]
+print(a[:3])      # [1, 2, 3]
+print(a[2:])      # [3, 4, 5]
+print(a[::-1])    # [5, 4, 3, 2, 1]
+print(a[::2])     # [1, 3, 5]
+
+var s = "hello"
+print(s[1:4])     # ell
+print(s[::-1])    # olleh
+```
+
 **Dicts** - Key-value maps (like Python/JavaScript objects):
 
 ```luna
