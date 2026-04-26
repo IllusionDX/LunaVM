@@ -807,25 +807,86 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
     }
 
     case STMT_VAR_DECL: {
-        const char *name = stmt->data.var_decl.name;
-        if (c->func_depth > 0) {
-            int r = alloc_reg(c);
-            add_local(c, name, r);
+        if (stmt->data.var_decl.pattern) {
+            Expr *pattern = stmt->data.var_decl.pattern;
+            int src = alloc_reg(c);
             if (stmt->data.var_decl.initializer) {
-                compile_expr_into(c, stmt->data.var_decl.initializer, r);
+                compile_expr_into(c, stmt->data.var_decl.initializer, src);
             } else {
-                emit_loadnull(c, (uint8_t)r);
+                emit_loadnull(c, (uint8_t)src);
             }
-        } else {
-            int r = alloc_reg(c);
-            if (stmt->data.var_decl.initializer) {
-                compile_expr_into(c, stmt->data.var_decl.initializer, r);
-            } else {
-                emit_loadnull(c, (uint8_t)r);
+            if (pattern->kind == EXPR_LIST_LITERAL) {
+                for (int i = 0; i < pattern->data.list_literal.element_count; i++) {
+                    Expr *e = pattern->data.list_literal.elements[i];
+                    if (e->kind != EXPR_IDENTIFIER) continue;
+                    const char *var_name = e->data.identifier.name;
+                    if (strcmp(var_name, "_") == 0) continue;
+                    if (c->func_depth > 0) {
+                        int dst = alloc_reg(c);
+                        add_local(c, var_name, dst);
+                        int idx_reg = alloc_reg(c);
+                        emit_loadi(c, (uint8_t)idx_reg, i);
+                        emit_ABC(c, OP_INDEXGET, (uint8_t)dst, (uint8_t)src, (uint8_t)idx_reg);
+                        free_reg(c);
+                    } else {
+                        int dst = alloc_reg(c);
+                        int idx_reg = alloc_reg(c);
+                        emit_loadi(c, (uint8_t)idx_reg, i);
+                        emit_ABC(c, OP_INDEXGET, (uint8_t)dst, (uint8_t)src, (uint8_t)idx_reg);
+                        int k = chunk_add_string(c->chunk, var_name);
+                        emit_ABx(c, OP_SETGLOBAL, (uint8_t)dst, (uint16_t)k);
+                        free_reg(c);
+                        free_reg(c);
+                    }
+                }
+            } else if (pattern->kind == EXPR_DICT_LITERAL) {
+                for (int i = 0; i < pattern->data.dict_literal.entry_count; i++) {
+                    Expr *key_expr = pattern->data.dict_literal.entries[i].key;
+                    Expr *val_expr = pattern->data.dict_literal.entries[i].value;
+                    if (val_expr->kind != EXPR_IDENTIFIER) continue;
+                    const char *var_name = val_expr->data.identifier.name;
+                    if (strcmp(var_name, "_") == 0) continue;
+                    if (c->func_depth > 0) {
+                        int dst = alloc_reg(c);
+                        add_local(c, var_name, dst);
+                        int key_reg = alloc_reg(c);
+                        compile_expr_into(c, key_expr, key_reg);
+                        emit_ABC(c, OP_INDEXGET, (uint8_t)dst, (uint8_t)src, (uint8_t)key_reg);
+                        free_reg(c);
+                    } else {
+                        int dst = alloc_reg(c);
+                        int key_reg = alloc_reg(c);
+                        compile_expr_into(c, key_expr, key_reg);
+                        emit_ABC(c, OP_INDEXGET, (uint8_t)dst, (uint8_t)src, (uint8_t)key_reg);
+                        int k = chunk_add_string(c->chunk, var_name);
+                        emit_ABx(c, OP_SETGLOBAL, (uint8_t)dst, (uint16_t)k);
+                        free_reg(c);
+                        free_reg(c);
+                    }
+                }
             }
-            int k = chunk_add_string(c->chunk, name);
-            emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
             free_reg(c);
+        } else {
+            const char *name = stmt->data.var_decl.name;
+            if (c->func_depth > 0) {
+                int r = alloc_reg(c);
+                add_local(c, name, r);
+                if (stmt->data.var_decl.initializer) {
+                    compile_expr_into(c, stmt->data.var_decl.initializer, r);
+                } else {
+                    emit_loadnull(c, (uint8_t)r);
+                }
+            } else {
+                int r = alloc_reg(c);
+                if (stmt->data.var_decl.initializer) {
+                    compile_expr_into(c, stmt->data.var_decl.initializer, r);
+                } else {
+                    emit_loadnull(c, (uint8_t)r);
+                }
+                int k = chunk_add_string(c->chunk, name);
+                emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
+                free_reg(c);
+            }
         }
         break;
     }

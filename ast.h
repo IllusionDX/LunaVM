@@ -177,7 +177,8 @@ typedef struct Stmt {
         } expression;
         struct {
             bool is_const;
-            char *name;
+            char *name;          /* NULL when pattern is used */
+            Expr *pattern;       /* destructuring pattern (list/dict of identifiers), NULL for simple var */
             Expr *initializer;
         } var_decl;
         struct {

@@ -277,7 +277,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.17-alpha` | Done | Fixed one-liner function parsing (`def add(a, b): return a + b`). Added regression test. |
 | `0.1.18-alpha` | Done | List concatenation with `+` (`[1, 2] + [3, 4]`). List repetition with `*` (`[1, 2] * 3`). String repetition with `*` (`"abc" * 3`). All support commutative int operands and return empty results for zero/negative multipliers. |
 | `0.2.0-alpha` | Done | NaN-boxed object type tags: encode `OBJ_STRING`, `OBJ_LIST`, `OBJ_DICT`, `OBJ_INSTANCE`, `OBJ_FUNCTION`, `OBJ_EXCEPTION`, `OBJ_CLOSURE` into unused NaN payload bits. `IS_STRING`/`IS_LIST`/etc. are now single bitwise checks without pointer dereference. Replaced verbose type-check patterns across `vm.c`, `value.c`, and `vm_builtins.c`. Fixed `OP_CALL` error-reporting path to safely handle non-object callee values. Corrected opcode dispatch section comment numbering to match true `OpCode` enum values. |
-| `0.2.1-alpha` | **Current** | Array slicing: `list[1:5]`, `list[::-1]`, `string[1:4:2]`. Supports omitted start/stop/step, negative indices, and negative step for reversal. New `EXPR_SLICE` AST node, `OP_SLICE` opcode, and VM implementation for both lists and strings. |
+| `0.2.1-alpha` | Done | Array slicing: `list[1:5]`, `list[::-1]`, `string[1:4:2]`. Supports omitted start/stop/step, negative indices, and negative step for reversal. New `EXPR_SLICE` AST node, `OP_SLICE` opcode, and VM implementation for both lists and strings. |
+| `0.2.2-alpha` | **Current** | Destructuring assignment (Phase 1): `var [a, b] = [1, 2]` and `var {"name": n, "hp": h} = entity`. Supports `_` placeholder for skipped positions. Compiled to existing `OP_INDEXGET` sequences. New `pattern` field in `VarDecl` AST node. |
 
 ## Roadmap
 
@@ -323,6 +324,37 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | Medium | **Hidden Classes / Shapes** | Give instances a fixed field layout (array indexing) instead of open hash maps. Makes property access O(1) instead of O(n). | High — requires shape objects, transition trees, compiler changes for shape-aware ops. |
 | Low | **String Interning** | *Done in 0.1.5-alpha* | — |
 | Low | **Computed GOTOs** | *Done in 0.1.4-alpha* | — |
+
+## Future Ideas & Evolution
+
+Features below are not committed roadmap items unless explicitly noted. They are collected here for design reference.
+
+### Planned Evolution
+
+**Destructuring Assignment (Unpacking)**
+
+Phase 1 (targeted): `var [a, b] = [1, 2]` and `var {"name": n, "hp": h} = entity` — list and dict patterns inside `var`/`const` declarations, compiled to existing `OP_INDEXGET` sequences.
+
+Phase 2 (future): `[a, b] = [3, 4]` and `{"name": n} = entity` — assignment-level destructuring without `var`. Optional syntactic sugar `a, b = [3, 4]` may follow as shorthand for `[a, b] = [3, 4]`.
+
+Phase 3 (future): Dedicated opcodes for performance — `OP_UNPACK_LIST n` (decompose top-of-stack into n consecutive registers) and `OP_UNPACK_DICT n` (look up n inline string keys against a dict). These would make Luna's destructuring faster than languages that rely on generic iteration.
+
+### Ideas Under Consideration
+
+**From JavaScript**
+- Optional chaining (`?.`) for null-safe member access.
+- Nullish coalescing (`??`) — fallback only on `null`, preserving `false` and `0`.
+- Spread / rest operators (`...`) for list literals and function parameter lists.
+- Object shorthand and computed keys in dict literals: `{x, "key": value, [dyn]: 42}`.
+- Generators (`yield`) extending the existing iterator protocol.
+
+**Unique / Differentiating**
+- Pipe operator (`|>`) for expression-oriented data flow.
+- Pattern matching (`match` expression) with list/dict/range patterns.
+- Named arguments with defaults: `connect(timeout=60, host="localhost")`.
+- First-class regex literals: `/[a-z]+/g`.
+- Traits / mixins for composable behavior without multiple inheritance.
+- Method cascading (`..`) for chaining mutating calls.
 
 ## Security
 

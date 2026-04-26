@@ -146,6 +146,9 @@ void free_stmt(Stmt *stmt) {
 
     case STMT_VAR_DECL:
         free(stmt->data.var_decl.name);
+        if (stmt->data.var_decl.pattern) {
+            free_expr(stmt->data.var_decl.pattern);
+        }
         if (stmt->data.var_decl.initializer) {
             free_expr(stmt->data.var_decl.initializer);
         }

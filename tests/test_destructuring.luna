@@ -1,0 +1,14 @@
+var [a, b] = [1, 2]
+print(a)
+print(b)
+
+var [first, _, third] = [10, 20, 30]
+print(first)
+print(third)
+
+var {"name": n, "hp": h} = {"name": "Hero", "hp": 100}
+print(n)
+print(h)
+
+var [x, y] = [5, 10]
+print(x + y)

@@ -803,10 +803,68 @@ static void skip_type_hint(Parser *parser) {
     }
 }
 
+static bool is_valid_pattern(Expr *expr) {
+    if (!expr) return false;
+    if (expr->kind == EXPR_LIST_LITERAL) {
+        for (int i = 0; i < expr->data.list_literal.element_count; i++) {
+            Expr *e = expr->data.list_literal.elements[i];
+            if (e->kind != EXPR_IDENTIFIER) return false;
+        }
+        return true;
+    }
+    if (expr->kind == EXPR_DICT_LITERAL) {
+        for (int i = 0; i < expr->data.dict_literal.entry_count; i++) {
+            Expr *v = expr->data.dict_literal.entries[i].value;
+            if (v->kind != EXPR_IDENTIFIER) return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
     char *name = NULL;
+    Expr *pattern = NULL;
 
     if (use_var) {
+        if (match(parser, TOK_LBRACKET)) {
+            pattern = parse_list_literal(parser);
+            if (!is_valid_pattern(pattern)) {
+                fprintf(stderr, "Parse error at line %d: Invalid destructuring pattern (expected identifiers only)\n", peek(parser)->line);
+                parser->had_error = 1;
+            }
+            if (match(parser, TOK_COLON)) {
+                advance(parser);
+                skip_type_hint(parser);
+            }
+            expect(parser, TOK_ASSIGN, "Expected '=' after var declaration");
+            Expr *initializer = parse_expression(parser);
+            Stmt *stmt = make_stmt(STMT_VAR_DECL);
+            stmt->data.var_decl.is_const = false;
+            stmt->data.var_decl.name = NULL;
+            stmt->data.var_decl.pattern = pattern;
+            stmt->data.var_decl.initializer = initializer;
+            return stmt;
+        } else if (match(parser, TOK_LBRACE)) {
+            pattern = parse_dict_literal(parser);
+            if (!is_valid_pattern(pattern)) {
+                fprintf(stderr, "Parse error at line %d: Invalid destructuring pattern (expected string keys mapped to identifiers)\n", peek(parser)->line);
+                parser->had_error = 1;
+            }
+            if (match(parser, TOK_COLON)) {
+                advance(parser);
+                skip_type_hint(parser);
+            }
+            expect(parser, TOK_ASSIGN, "Expected '=' after var declaration");
+            Expr *initializer = parse_expression(parser);
+            Stmt *stmt = make_stmt(STMT_VAR_DECL);
+            stmt->data.var_decl.is_const = false;
+            stmt->data.var_decl.name = NULL;
+            stmt->data.var_decl.pattern = pattern;
+            stmt->data.var_decl.initializer = initializer;
+            return stmt;
+        }
+
         Token *name_tok = expect(parser, TOK_IDENTIFIER, "Expected variable name after 'var'");
         name = strdup(name_tok ? name_tok->value : "");
         if (match(parser, TOK_COLON)) {
@@ -818,11 +876,36 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
         Stmt *stmt = make_stmt(STMT_VAR_DECL);
         stmt->data.var_decl.is_const = false;
         stmt->data.var_decl.name = name;
+        stmt->data.var_decl.pattern = NULL;
         stmt->data.var_decl.initializer = initializer;
         return stmt;
     }
 
     if (is_const) {
+        if (match(parser, TOK_LBRACKET) || match(parser, TOK_LBRACE)) {
+            if (match(parser, TOK_LBRACKET)) {
+                pattern = parse_list_literal(parser);
+            } else {
+                pattern = parse_dict_literal(parser);
+            }
+            if (!is_valid_pattern(pattern)) {
+                fprintf(stderr, "Parse error at line %d: Invalid destructuring pattern\n", peek(parser)->line);
+                parser->had_error = 1;
+            }
+            if (match(parser, TOK_COLON)) {
+                advance(parser);
+                skip_type_hint(parser);
+            }
+            expect(parser, TOK_ASSIGN, "Expected '=' after const declaration");
+            Expr *initializer = parse_expression(parser);
+            Stmt *stmt = make_stmt(STMT_VAR_DECL);
+            stmt->data.var_decl.is_const = true;
+            stmt->data.var_decl.name = NULL;
+            stmt->data.var_decl.pattern = pattern;
+            stmt->data.var_decl.initializer = initializer;
+            return stmt;
+        }
+
         if (is_type_hint_start(parser)) {
             skip_type_hint(parser);
         }
@@ -851,6 +934,7 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
     Stmt *stmt = make_stmt(STMT_VAR_DECL);
     stmt->data.var_decl.is_const = is_const;
     stmt->data.var_decl.name = name;
+    stmt->data.var_decl.pattern = NULL;
     stmt->data.var_decl.initializer = initializer;
     return stmt;
 }
