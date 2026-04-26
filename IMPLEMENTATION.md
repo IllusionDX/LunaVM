@@ -285,14 +285,15 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.0` | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. Type-hint keywords (`list`, `dict`, `int`, `string`, etc.) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. Multi-line string comments (`"""..."""`). |
-| `0.3.0` | Modules and imports actually work. |
-| `0.4.0` | Standard library (strings, math, io, os). |
-| `0.5.0` | Debugger / profiler. |
-| `0.6.0` | Coroutines / async (`await`, `async def`). |
-| `0.7.0` | Generation 2 optimized VM lands. Type specialization from hints (e.g. monomorphic inline caches for `int`-hinted variables). |
-| `0.8.0` | Generation 3 simple JIT. |
-| `0.9.0-beta` | Spec freeze, release candidate phase. |
+| `0.2.x` | Classes solidified (`extends`, `super`). Lambdas (`=>`). Multiline strings (`"""..."""`). |
+| `0.3.x` | Modules, imports, and standard library (strings, math, io, os). |
+| `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
+| `0.5.x` | Exception handling (`try` / `catch` / `finally`, custom exceptions, stack traces). |
+| `0.6.x` | Debugger / profiler. |
+| `0.7.x` | Coroutines / async (`await`, `async def`). |
+| `0.8.x` | Generation 2 optimized VM lands. Type specialization from hints. |
+| `0.9.x` | Generation 3 simple JIT. |
+| `1.0.0-beta` | Spec freeze, release candidate phase. |
 | `1.0.0` | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
 
 > **Note:** A package manager (`luna install`) is not guaranteed and may ship after 1.0 depending on community demand and maintenance bandwidth.
