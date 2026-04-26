@@ -51,7 +51,7 @@ typedef uint64_t Value;
 #define IS_INT(v)    (((v) & (QNAN_TAG | 7)) == (QNAN_TAG | TAG_INT))
 #define IS_NUMBER(v) (IS_DOUBLE(v) || IS_INT(v))
 
-#define AS_OBJ(v)    ((Object*)(uintptr_t)((v) & 0x0000ffffffffffff))
+#define AS_OBJ(v)    ((Object*)(uintptr_t)((v) & 0x00007fffffffffffULL))
 #define AS_BOOL(v)   IS_TRUE(v)
 #define AS_INT(v)    ((int32_t)((v) >> 3))
 
@@ -73,7 +73,7 @@ static inline int64_t as_int64(Value v) {
     return IS_INT(v) ? (int64_t)AS_INT(v) : (int64_t)AS_DOUBLE(v);
 }
 
-#define OBJ_VAL(obj) (QNAN_TAG | (uint64_t)(uintptr_t)(obj))
+/* OBJ_VAL moved below Object struct definition */
 #define INT_VAL(i)   (QNAN_TAG | TAG_INT | ((uint64_t)(uint32_t)(i) << 3))
 #define NIL_VAL      (QNAN_TAG | TAG_NIL)
 #define TRUE_VAL     (QNAN_TAG | TAG_TRUE)
@@ -85,7 +85,7 @@ static inline int64_t as_int64(Value v) {
 #define make_null()   NIL_VAL
 #define make_bool(b)  BOOL_VAL(b)
 #define make_int(i)   INT_VAL((int32_t)(i))
-#define make_obj(obj) OBJ_VAL(obj)
+/* make_obj moved below Object struct definition */
 
 /* ============================================================ */
 /* Object type tags                                              */
@@ -114,6 +114,38 @@ typedef struct Object {
     struct Object *next;    /* intrusive GC linked list */
     struct Object *prev;    /* doubly linked for O(1) removal */
 } Object;
+
+/* ============================================================ */
+/* Fast Object Type Checking & Creation                          */
+/* ============================================================ */
+
+/* 
+ * FUTURE PROOFING NOTE: 
+ * Currently, we use bits 48, 49, and 63 (sign bit) for the 3-bit type tag (up to 8 types).
+ * If a 9th object type is added in the future, you can reclaim bit 47 to get 4 bits (16 types).
+ * User-space pointers are restricted to 47 bits (128 TB), so bit 47 is always 0.
+ * To do this, shift `t` into bits 47-50, drop bit 50 from QNAN_TAG (change to 0x7FF8...),
+ * and AS_OBJ's mask `0x00007FFFFFFFFFFF` will cleanly strip bit 47 off the pointer.
+ */
+
+static inline Value make_obj(void *ptr) {
+    Object *obj = (Object*)ptr;
+    uint64_t t = (uint64_t)obj->type;
+    uint64_t type_tag = ((t & 3) << 48) | ((t >> 2) << 63);
+    return QNAN_TAG | type_tag | (uint64_t)(uintptr_t)obj;
+}
+#define OBJ_VAL(obj) make_obj(obj)
+
+#define OBJ_SIGNATURE_MASK 0xFFFF000000000007ULL
+#define TYPE_SIGNATURE(t) (QNAN_TAG | (((uint64_t)(t) & 3) << 48) | (((uint64_t)(t) >> 2) << 63))
+
+#define IS_STRING(v)   (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_STRING))
+#define IS_LIST(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_LIST))
+#define IS_DICT(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_DICT))
+#define IS_INSTANCE(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_INSTANCE))
+#define IS_FUNCTION(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_FUNCTION))
+#define IS_EXCEPTION(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_EXCEPTION))
+#define IS_CLOSURE(v)  (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLOSURE))
 
 /* ============================================================ */
 /* Native function signature                                     */

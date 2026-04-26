@@ -26,9 +26,9 @@ void vm_set_global(VM *vm, const char *name, Value value, bool is_const) {
     for (GlobalEntry *e = vm->globals[bucket]; e; e = e->next) {
         if (strcmp(e->name, name) == 0) {
             if (e->is_const) { fprintf(stderr, "vm: cannot reassign const '%s'\n", name); return; }
-            if (IS_OBJ(e->value) && AS_OBJ(e->value)) release_obj(AS_OBJ(e->value));
+            if (IS_OBJ(e->value)) release_obj(AS_OBJ(e->value));
             e->value = value;
-            if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
+            if (IS_OBJ(value)) retain_obj(AS_OBJ(value));
             /* invalidate possible cache entry */
             int ic_idx = h & (IC_CACHE_SIZE - 1);
             if (vm->global_ic[ic_idx].entry == e) vm->global_ic[ic_idx].key = NULL;
@@ -41,7 +41,7 @@ void vm_set_global(VM *vm, const char *name, Value value, bool is_const) {
     ne->is_const = is_const;
     ne->next     = vm->globals[bucket];
     vm->globals[bucket] = ne;
-    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
+    if (IS_OBJ(value)) retain_obj(AS_OBJ(value));
 }
 
 bool vm_get_global(VM *vm, const char *name, Value *out) {
@@ -138,7 +138,7 @@ static Value bn_int(VM *vm, Value *args, int n) {
     if (IS_INT(args[0])) return args[0];
     if (IS_DOUBLE(args[0])) return make_int((int64_t)AS_DOUBLE(args[0]));
     if (IS_BOOL(args[0])) return make_int(AS_BOOL(args[0]) ? 1 : 0);
-    if (IS_OBJ(args[0]) && AS_OBJ(args[0]) && AS_OBJ(args[0])->type == OBJ_STRING)
+    if (IS_STRING(args[0]))
         return make_int(atoll(((ObjString*)AS_OBJ(args[0]))->chars));
     return make_int(0);
 }
@@ -149,14 +149,14 @@ static Value bn_float(VM *vm, Value *args, int n) {
     if (IS_DOUBLE(args[0])) return args[0];
     if (IS_INT(args[0])) return make_double((double)AS_INT(args[0]));
     if (IS_BOOL(args[0])) return make_double(AS_BOOL(args[0]) ? 1.0 : 0.0);
-    if (IS_OBJ(args[0]) && AS_OBJ(args[0]) && AS_OBJ(args[0])->type == OBJ_STRING)
+    if (IS_STRING(args[0]))
         return make_double(atof(((ObjString*)AS_OBJ(args[0]))->chars));
     return make_double(0.0);
 }
 
 static Value bn_len(VM *vm, Value *args, int n) {
     (void)vm;
-    if (!n || !IS_OBJ(args[0]) || !AS_OBJ(args[0])) return make_int(0);
+    if (!n || !IS_OBJ(args[0])) return make_int(0);
     switch (AS_OBJ(args[0])->type) {
         case OBJ_STRING:  return make_int(((ObjString*)AS_OBJ(args[0]))->length);
         case OBJ_LIST:    return make_int(((ObjList*)  AS_OBJ(args[0]))->count);
@@ -173,7 +173,7 @@ static Value bn_type(VM *vm, Value *args, int n) {
         else if (IS_BOOL(args[0])) t = "bool";
         else if (IS_INT(args[0])) t = "int";
         else if (IS_DOUBLE(args[0])) t = "double";
-        else if (IS_OBJ(args[0]) && AS_OBJ(args[0])) {
+        else if (IS_OBJ(args[0])) {
             switch (AS_OBJ(args[0])->type) {
                 case OBJ_STRING:   t = "string";   break;
                 case OBJ_LIST:     t = "list";     break;

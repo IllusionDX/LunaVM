@@ -47,7 +47,7 @@ All values are stored in a single `uint64_t`. Real IEEE-754 doubles use their ra
 | false | `QNAN \| TAG_FALSE` | Boolean false |
 | nil | `QNAN \| TAG_NIL` | Null value |
 
-Object type discrimination (String, List, Dict, Function, etc.) requires a pointer dereference to the `Object.type` field — future work (0.2.0) may encode the object type directly into unused NaN payload bits to avoid the dereference.
+Object type discrimination (String, List, Dict, Function, etc.) is encoded into unused NaN payload bits (bits 48, 49, 63) so `IS_STRING`, `IS_LIST`, etc. are single bitwise checks without pointer dereference.
 
 > Granular numeric types (int8...int64, uint8...uint64, float32) are not implemented and may be added in a future release.
 
@@ -275,13 +275,14 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.15-alpha` | Done | GC hardening: re-entrant GC guard (`if (gc_collecting) return;`), inline cache invalidation on every collection to prevent dangling pointers, and proper `vm_free` shutdown path that releases stack values and frees all remaining objects via `free_object_container()`. |
 | `0.1.16-alpha` | Done | Memory audit follow-up: fixed `dict_transition_to_heap` inline entry leak (SOO→heap transition now releases old inline references). Fixed `vm_free` use-after-free (stack freed before `close_upvalues` — reordered to close upvalues first, then free stack). Verified 8 of 12 audit findings as false positives. |
 | `0.1.17-alpha` | Done | Fixed one-liner function parsing (`def add(a, b): return a + b`). Added regression test. |
-| `0.1.18-alpha` | **Current** | List concatenation with `+` (`[1, 2] + [3, 4]`). List repetition with `*` (`[1, 2] * 3`). String repetition with `*` (`"abc" * 3`). All support commutative int operands and return empty results for zero/negative multipliers. |
+| `0.1.18-alpha` | Done | List concatenation with `+` (`[1, 2] + [3, 4]`). List repetition with `*` (`[1, 2] * 3`). String repetition with `*` (`"abc" * 3`). All support commutative int operands and return empty results for zero/negative multipliers. |
+| `0.2.0-alpha` | **Current** | NaN-boxed object type tags: encode `OBJ_STRING`, `OBJ_LIST`, `OBJ_DICT`, `OBJ_INSTANCE`, `OBJ_FUNCTION`, `OBJ_EXCEPTION`, `OBJ_CLOSURE` into unused NaN payload bits. `IS_STRING`/`IS_LIST`/etc. are now single bitwise checks without pointer dereference. Replaced verbose type-check patterns across `vm.c`, `value.c`, and `vm_builtins.c`. Fixed `OP_CALL` error-reporting path to safely handle non-object callee values. Corrected opcode dispatch section comment numbering to match true `OpCode` enum values. |
 
 ## Roadmap
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.0` | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. Type-hint keywords (`list`, `dict`, `int`, `string`, etc.) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. NaN-boxed object type tags (encode `OBJ_STRING`, `OBJ_LIST`, etc. into unused payload bits so `IS_STRING`/`IS_LIST` become single bitwise checks without pointer dereference). Multi-line string comments (`"""..."""`). Array slicing (`list[1:5]`, `list[::-1]`). |
+| `0.2.0` | Classes / enums solidified. Proper lambda syntax (`=>`, single-expression bodies). Better error messages. Type-hint keywords (`list`, `dict`, `int`, `string`, etc.) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. Multi-line string comments (`"""..."""`). Array slicing (`list[1:5]`, `list[::-1]`). |
 | `0.3.0` | Modules and imports actually work. |
 | `0.4.0` | Standard library (strings, math, io, os). |
 | `0.5.0` | Debugger / profiler. |
@@ -305,13 +306,12 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 ### Future
 - Generational GC
 - Object finalizers
-- Weak references
 
 ## Error Handling
 
 - Stack traces on exceptions
 - Debug info in bytecode (optional)
--panic/recover for native code
+- Panic/Recover for native code
 
 ## Optimization Roadmap
 
@@ -327,4 +327,3 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
 - Sandboxed VM for user scripts
 - No raw memory access
-- Limited file/network access

@@ -44,12 +44,12 @@ static inline bool is_int_type(Value v) { return IS_INT(v); }
 
 static inline Value do_arith(Value L, Value R, OpCode op) {
     /* String concat for ADD */
-    if (op == OP_ADD && IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type == OBJ_STRING) {
+    if (op == OP_ADD && IS_STRING(L)) {
         ObjString *ls = (ObjString*)AS_OBJ(L);
         const char *rs;
         int rs_len;
         char *rs_tmp = NULL;
-        if (IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type == OBJ_STRING) {
+        if (IS_STRING(R)) {
             ObjString *rs_str = (ObjString*)AS_OBJ(R);
             rs = rs_str->chars;
             rs_len = rs_str->length;
@@ -68,8 +68,7 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         return make_obj((Object*)s);
     }
     /* List concat for ADD */
-    if (op == OP_ADD && IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type == OBJ_LIST &&
-        IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type == OBJ_LIST) {
+    if (op == OP_ADD && IS_LIST(L) && IS_LIST(R)) {
         ObjList *ls = (ObjList*)AS_OBJ(L);
         ObjList *rs = (ObjList*)AS_OBJ(R);
         ObjList *result = new_list(ls->count + rs->count);
@@ -86,16 +85,16 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         ObjList *lst = NULL;
         ObjString *str = NULL;
         int64_t times = 0;
-        if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type == OBJ_LIST && IS_INT(R)) {
+        if (IS_LIST(L) && IS_INT(R)) {
             lst = (ObjList*)AS_OBJ(L);
             times = AS_INT(R);
-        } else if (IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type == OBJ_LIST && IS_INT(L)) {
+        } else if (IS_LIST(R) && IS_INT(L)) {
             lst = (ObjList*)AS_OBJ(R);
             times = AS_INT(L);
-        } else if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type == OBJ_STRING && IS_INT(R)) {
+        } else if (IS_STRING(L) && IS_INT(R)) {
             str = (ObjString*)AS_OBJ(L);
             times = AS_INT(R);
-        } else if (IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type == OBJ_STRING && IS_INT(L)) {
+        } else if (IS_STRING(R) && IS_INT(L)) {
             str = (ObjString*)AS_OBJ(R);
             times = AS_INT(L);
         }
@@ -181,8 +180,7 @@ static inline Value do_cmp(Value L, Value R, OpCode op) {
         switch (op) { case OP_LT: return make_bool(a < b); case OP_LE: return make_bool(a <= b); case OP_GT: return make_bool(a > b); case OP_GE: return make_bool(a >= b); default: break; }
     }
     /* Fast path: interned string equality is pointer comparison */
-    if (IS_OBJ(L) && IS_OBJ(R) && AS_OBJ(L) && AS_OBJ(R) &&
-        AS_OBJ(L)->type == OBJ_STRING && AS_OBJ(R)->type == OBJ_STRING) {
+    if (IS_STRING(L) && IS_STRING(R)) {
         bool same = AS_OBJ(L) == AS_OBJ(R);
         switch (op) {
             case OP_EQ: return make_bool(same);
@@ -644,7 +642,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 0.  MOVE                                                 */
+    /* 5.  MOVE                                                 */
     /* -------------------------------------------------------- */
     op_move:
         SET_REG(RA, REG(RB));
@@ -661,7 +659,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 1-4.  LOADK / LOADBOOL / LOADNULL / LOADI               */
+    /* 0-4.  LOADK / LOADNULL / LOADTRUE / LOADFALSE / LOADI               */
     /* -------------------------------------------------------- */
     op_loadk:
         SET_REG(RA, CONST(BX));
@@ -674,7 +672,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 35-36.  LOADTRUE / LOADFALSE                             */
+    /* 2-3.  LOADTRUE / LOADFALSE                             */
     /* -------------------------------------------------------- */
     op_loadtrue:
         SET_REG_PRIM(RA, make_bool(true));
@@ -684,7 +682,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 5-9.  Arithmetic                                         */
+    /* 8-12.  Arithmetic                                         */
     /* -------------------------------------------------------- */
     op_add: {
         Value _L = RKB;
@@ -744,7 +742,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 11-16.  Comparisons                                      */
+    /* 22-27.  Comparisons                                      */
     /* -------------------------------------------------------- */
     op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)< AS_INT(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
     op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)<=AS_INT(_R)):do_cmp(_L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
@@ -754,7 +752,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_ne: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_NE)); DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 17-22.  Bitwise                                          */
+    /* 14-19.  Bitwise                                          */
     /* -------------------------------------------------------- */
     op_band: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) & to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
     op_bor:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) | to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
@@ -764,7 +762,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_bnot: SET_REG_PRIM(RA, make_int(~to_i64(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 23-24.  NOT / NEG                                        */
+    /* 13 & 28.  NEG / NOT                                        */
     /* -------------------------------------------------------- */
     op_not: SET_REG_PRIM(RA, make_bool(!is_truthy(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
 
@@ -777,7 +775,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 25-27.  Jumps                                            */
+    /* 29-31.  Jumps                                            */
     /* -------------------------------------------------------- */
     op_jmp:
         IP += sBx;
@@ -790,23 +788,15 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 28.  CALL                                                */
+    /* 32.  CALL                                                */
     /* -------------------------------------------------------- */
     op_call: {
         uint8_t ret_reg = RA;
         uint8_t fn_reg  = B;
         uint8_t nargs   = C;
         Value fn_val = REG(fn_reg);
-        if (!IS_OBJ(fn_val) || !AS_OBJ(fn_val)) {
-            char *s = value_to_string(fn_val);
-            char buf[256];
-            snprintf(buf, sizeof(buf), "vm: attempt to call non-function (got %s)", s);
-            free(s);
-            release_value(_exc);
-            _exc = make_obj((Object*)new_exception(buf));
-            goto op_throw;
-        }
-        if (AS_OBJ(fn_val)->type == OBJ_FUNCTION) {
+        /* removed duplicate non-object check */
+        if (IS_FUNCTION(fn_val)) {
             ObjFunction *fn = (ObjFunction *)AS_OBJ(fn_val);
             if (fn->is_native) {
                 Value scratch[256];
@@ -841,7 +831,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 DECODE;
                 goto *op_labels[OP(instr)];
             }
-        } else if (AS_OBJ(fn_val)->type == OBJ_CLOSURE) {
+        } else if (IS_CLOSURE(fn_val)) {
             ObjClosure *cl = (ObjClosure *)AS_OBJ(fn_val);
             ObjFunction *fn = cl->function;
             if (fn->is_native) {
@@ -880,7 +870,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         } else {
             char *s = value_to_string(fn_val);
             char buf[256];
-            snprintf(buf, sizeof(buf), "vm: attempt to call non-function (type=%d, value=%s)", AS_OBJ(fn_val)->type, s);
+            if (IS_OBJ(fn_val)) {
+                snprintf(buf, sizeof(buf), "vm: attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type, s);
+            } else {
+                snprintf(buf, sizeof(buf), "vm: attempt to call non-function (got %s)", s);
+            }
             free(s);
             release_value(_exc);
             _exc = make_obj((Object*)new_exception(buf));
@@ -890,7 +884,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 29.  RET                                                 */
+    /* 33.  RET                                                 */
     /* -------------------------------------------------------- */
     op_ret: {
         uint8_t ret_reg = RA;
@@ -923,14 +917,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 30.  CLS  (close upvalues)                               */
+    /* 35.  LEAVE (close upvalues)                               */
     /* -------------------------------------------------------- */
     op_leave:
         close_upvalues(vm, vm->frame_count);
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 31-32.  NEWLIST / NEWDICT                                */
+    /* 42-43.  NEWDICT / NEWLIST                                */
     /* -------------------------------------------------------- */
     op_newlist: SET_REG(RA, make_obj((Object*)new_list((int)Bx))); DECODE; goto *op_labels[OP(instr)];
     op_newdict: SET_REG(RA, make_obj((Object*)new_dict())); DECODE; goto *op_labels[OP(instr)];
@@ -938,7 +932,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_listappend: {
         Value lst = REG(RA);
         Value val = REG(RB);
-        if (IS_OBJ(lst) && AS_OBJ(lst) && AS_OBJ(lst)->type == OBJ_LIST) {
+        if (IS_LIST(lst)) {
             list_add((ObjList*)AS_OBJ(lst), val);
         } else {
             release_value(_exc);
@@ -950,7 +944,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
 
     op_getiter: {
         Value iter = REG(RB);
-        if (IS_OBJ(iter) && AS_OBJ(iter) && AS_OBJ(iter)->type == OBJ_DICT) {
+        if (IS_DICT(iter)) {
             ObjDict *dict = (ObjDict*)AS_OBJ(iter);
             ObjList *keys = new_list(dict->entry_count);
             if (dict->indices == NULL) {
@@ -1018,7 +1012,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 37.  NEWINSTANCE                                         */
+    /* 41.  NEW                                             */
     /* -------------------------------------------------------- */
     op_new: {
         ObjString *cls_str = KSTROBJ(BX);
@@ -1026,7 +1020,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         const char *cls_name = cls_str->chars;
         Value proto_val;
         ObjInstance *proto = NULL;
-        if (vm_get_global(vm, cls_name, &proto_val) && IS_OBJ(proto_val) && AS_OBJ(proto_val) && AS_OBJ(proto_val)->type == OBJ_INSTANCE) {
+        if (vm_get_global(vm, cls_name, &proto_val) && IS_INSTANCE(proto_val)) {
             proto = (ObjInstance*)AS_OBJ(proto_val);
         }
         ObjInstance *new_inst = new_instance(cls_name, proto ? proto->base_class : NULL, 4);
@@ -1049,7 +1043,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 33-34.  INDEXGET / INDEXSET                              */
+    /* 47-48.  INDEXGET / INDEXSET                              */
     /* -------------------------------------------------------- */
     op_indexget: {
         Value obj = REG(RB);
@@ -1080,14 +1074,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value key = REG(RB);
         Value val = REG(RC);
         if (IS_OBJ(obj) && AS_OBJ(obj)) {
-            if (AS_OBJ(obj)->type == OBJ_LIST && IS_INT(key)) list_set((ObjList*)AS_OBJ(obj), AS_INT(key), val);
-            else if (AS_OBJ(obj)->type == OBJ_DICT) dict_set((ObjDict*)AS_OBJ(obj), key, val);
+            if (IS_LIST(obj) && IS_INT(key)) list_set((ObjList*)AS_OBJ(obj), AS_INT(key), val);
+            else if (IS_DICT(obj)) dict_set((ObjDict*)AS_OBJ(obj), key, val);
         }
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* -------------------------------------------------------- */
-    /* 38-39.  GETUPVAL / SETUPVAL                              */
+    /* 39-40.  GETUPVAL / SETUPVAL                              */
     /* -------------------------------------------------------- */
     op_getupval: {
         uint8_t upv_idx = B;
@@ -1119,7 +1113,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 35-36.  MEMBERGET / MEMBERSET                            */
+    /* 49-50.  MEMBERGET / MEMBERSET                            */
     /* -------------------------------------------------------- */
     op_memberget: {
         Value obj = REG(RB);
@@ -1157,7 +1151,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_memberset: {
         Value obj = REG(RA);
         ObjString *field = KSTROBJ(RC);
-        if (IS_OBJ(obj) && AS_OBJ(obj) && AS_OBJ(obj)->type == OBJ_INSTANCE) {
+        if (IS_INSTANCE(obj)) {
             ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
             uint32_t h = ((uint32_t)(uintptr_t)inst ^ field->hash);
             int idx = h & (IC_CACHE_SIZE - 1);
@@ -1181,7 +1175,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 37.  INVOKE                                              */
+    /* 51.  INVOKE                                              */
     /* -------------------------------------------------------- */
     op_invoke: {
         uint8_t ret_reg = RA;
@@ -1189,7 +1183,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         uint8_t nargs   = C;
         Value method_val = REG(obj_reg + 1);
         Value obj = REG(obj_reg);
-        if (!IS_OBJ(method_val) || !AS_OBJ(method_val) || AS_OBJ(method_val)->type != OBJ_STRING) { SET_REG_PRIM(ret_reg, make_null()); DECODE; goto *op_labels[OP(instr)]; }
+        if (!IS_STRING(method_val)) { SET_REG_PRIM(ret_reg, make_null()); DECODE; goto *op_labels[OP(instr)]; }
         const char *mname = ((ObjString*)AS_OBJ(method_val))->chars;
 
         Value scratch[256];
@@ -1266,13 +1260,13 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 40.  CLOSURE                                             */
+    /* 36.  CLOSURE                                             */
     /* -------------------------------------------------------- */
     op_closure: {
         uint8_t k = B;
         uint8_t dst = RA;
         Value fn_val = CONST(k);
-        if (!IS_OBJ(fn_val) || AS_OBJ(fn_val)->type != OBJ_FUNCTION) {
+        if (!IS_FUNCTION(fn_val)) {
             release_value(_exc);
             _exc = make_obj((Object*)new_exception("vm: CLOSURE needs function constant"));
             goto op_throw;
@@ -1297,14 +1291,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 32.  ENTER                                               */
+    /* 34.  ENTER                                               */
     /* -------------------------------------------------------- */
     op_enter:
         /* Stack is pre-allocated by vm_run_chunk based on max_registers */
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 35.  GETGLOBAL                                           */
+    /* 37.  GETGLOBAL                                           */
     /* -------------------------------------------------------- */
     op_getglobal: {
         Value v;
@@ -1314,7 +1308,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 36.  SETGLOBAL                                           */
+    /* 38.  SETGLOBAL                                           */
     /* -------------------------------------------------------- */
     op_setglobal: {
         vm_set_global(vm, KSTR(BX), REG(RA), false);
@@ -1322,7 +1316,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 48.  THROW                                               */
+    /* 53.  THROW                                               */
     /* -------------------------------------------------------- */
     op_throw: {
         if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
@@ -1357,7 +1351,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 49.  TRY                                                 */
+    /* 54.  TRY                                                 */
     /* -------------------------------------------------------- */
     op_try: {
         TryFrame *tf = malloc(sizeof(TryFrame));
@@ -1371,7 +1365,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 50.  ENDTRY                                              */
+    /* 55.  ENDTRY                                              */
     /* -------------------------------------------------------- */
     op_endtry: {
         if (vm->try_stack) {
@@ -1383,7 +1377,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 51.  HALT                                               */
+    /* 56.  HALT                                               */
     /* -------------------------------------------------------- */
     op_halt:
         return VM_OK;
@@ -1483,7 +1477,7 @@ int vm_throw(VM *vm, Value exception) {
         free(tf);
         return 1;
     }
-    if (IS_OBJ(exception) && AS_OBJ(exception) && AS_OBJ(exception)->type == OBJ_EXCEPTION) {
+    if (IS_EXCEPTION(exception)) {
         ObjException *ex = (ObjException*)AS_OBJ(exception);
         fprintf(stderr, "Uncaught exception: %s\n", ex->message);
     } else {

@@ -470,8 +470,7 @@ char *value_to_string(Value v) {
                 for (int i = 0; i < l->count; i++) {
                     Value item = l->items ? l->items[i] : l->inline_items[i];
                     char *e = value_to_string(item);
-                    bool is_str = IS_OBJ(item) && AS_OBJ(item) &&
-                                  AS_OBJ(item)->type == OBJ_STRING;
+                    bool is_str = IS_STRING(item);
                     int need = pos + (int)strlen(e) + (is_str ? 2 : 0) + 4;
                     if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
                     if (i > 0) { out[pos++] = ','; out[pos++] = ' '; }
@@ -492,8 +491,8 @@ char *value_to_string(Value v) {
                     for (int i = 0; i < d->entry_count; i++) {
                         ObjDictEntry *e = &d->inline_entries[i];
                         char *k = value_to_string(e->key), *val = value_to_string(e->value);
-                        bool ks = IS_OBJ(e->key) && AS_OBJ(e->key) && AS_OBJ(e->key)->type == OBJ_STRING;
-                        bool vs = IS_OBJ(e->value) && AS_OBJ(e->value) && AS_OBJ(e->value)->type == OBJ_STRING;
+                        bool ks = IS_STRING(e->key);
+                        bool vs = IS_STRING(e->value);
                         int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
                         if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
                         if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
@@ -511,8 +510,8 @@ char *value_to_string(Value v) {
                         if (d->entries[i].key == EMPTY_VAL) continue;
                         ObjDictEntry *e = &d->entries[i];
                         char *k = value_to_string(e->key), *val = value_to_string(e->value);
-                        bool ks = IS_OBJ(e->key) && AS_OBJ(e->key) && AS_OBJ(e->key)->type == OBJ_STRING;
-                        bool vs = IS_OBJ(e->value) && AS_OBJ(e->value) && AS_OBJ(e->value)->type == OBJ_STRING;
+                        bool ks = IS_STRING(e->key);
+                        bool vs = IS_STRING(e->value);
                         int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
                         if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
                         if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
