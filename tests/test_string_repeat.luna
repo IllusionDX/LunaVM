@@ -1,0 +1,4 @@
+print("abc" * 3)
+print(3 * "abc")
+print("abc" * 0)
+print("abc" * -1)

@@ -274,7 +274,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.1.14-alpha` | Done | GC sweep refactor: replaced the 1,000,000-refcount "pinning hack" with a clean `gc_collecting` flag and a `free_object_container()` helper. `release_obj()` skips calling `free_object()` while `gc_collecting == true`, preventing re-entrant ARC during sweep. Eliminates the double-decrement bug on live children of garbage objects. |
 | `0.1.15-alpha` | Done | GC hardening: re-entrant GC guard (`if (gc_collecting) return;`), inline cache invalidation on every collection to prevent dangling pointers, and proper `vm_free` shutdown path that releases stack values and frees all remaining objects via `free_object_container()`. |
 | `0.1.16-alpha` | Done | Memory audit follow-up: fixed `dict_transition_to_heap` inline entry leak (SOO→heap transition now releases old inline references). Fixed `vm_free` use-after-free (stack freed before `close_upvalues` — reordered to close upvalues first, then free stack). Verified 8 of 12 audit findings as false positives. |
-| `0.1.17-alpha` | **Current** | Fixed one-liner function parsing (`def add(a, b): return a + b`). Added regression test. |
+| `0.1.17-alpha` | Done | Fixed one-liner function parsing (`def add(a, b): return a + b`). Added regression test. |
+| `0.1.18-alpha` | **Current** | List concatenation with `+` (`[1, 2] + [3, 4]`). List repetition with `*` (`[1, 2] * 3`). String repetition with `*` (`"abc" * 3`). All support commutative int operands and return empty results for zero/negative multipliers. |
 
 ## Roadmap
 

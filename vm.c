@@ -67,6 +67,63 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         free(buf);
         return make_obj((Object*)s);
     }
+    /* List concat for ADD */
+    if (op == OP_ADD && IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type == OBJ_LIST &&
+        IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type == OBJ_LIST) {
+        ObjList *ls = (ObjList*)AS_OBJ(L);
+        ObjList *rs = (ObjList*)AS_OBJ(R);
+        ObjList *result = new_list(ls->count + rs->count);
+        for (int i = 0; i < ls->count; i++) {
+            list_add(result, ls->items ? ls->items[i] : ls->inline_items[i]);
+        }
+        for (int i = 0; i < rs->count; i++) {
+            list_add(result, rs->items ? rs->items[i] : rs->inline_items[i]);
+        }
+        return make_obj((Object*)result);
+    }
+    /* List/string repetition for MUL */
+    if (op == OP_MUL) {
+        ObjList *lst = NULL;
+        ObjString *str = NULL;
+        int64_t times = 0;
+        if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type == OBJ_LIST && IS_INT(R)) {
+            lst = (ObjList*)AS_OBJ(L);
+            times = AS_INT(R);
+        } else if (IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type == OBJ_LIST && IS_INT(L)) {
+            lst = (ObjList*)AS_OBJ(R);
+            times = AS_INT(L);
+        } else if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type == OBJ_STRING && IS_INT(R)) {
+            str = (ObjString*)AS_OBJ(L);
+            times = AS_INT(R);
+        } else if (IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type == OBJ_STRING && IS_INT(L)) {
+            str = (ObjString*)AS_OBJ(R);
+            times = AS_INT(L);
+        }
+        if (lst && times >= 0) {
+            ObjList *result = new_list(lst->count * (int)times);
+            for (int t = 0; t < times; t++) {
+                for (int i = 0; i < lst->count; i++) {
+                    list_add(result, lst->items ? lst->items[i] : lst->inline_items[i]);
+                }
+            }
+            return make_obj((Object*)result);
+        }
+        if (lst && times < 0) return make_obj((Object*)new_list(0));
+        if (str && times >= 0) {
+            int len = str->length * (int)times;
+            char *buf = malloc(len + 1);
+            if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+            buf[0] = '\0';
+            for (int t = 0; t < times; t++) {
+                memcpy(buf + t * str->length, str->chars, str->length);
+            }
+            buf[len] = '\0';
+            ObjString *result = new_string(buf, len);
+            free(buf);
+            return make_obj((Object*)result);
+        }
+        if (str && times < 0) return make_obj((Object*)new_string("", 0));
+    }
     if (!is_num(L) || !is_num(R)) return make_null();
     /* Integer path */
     if (IS_INT(L) && IS_INT(R)) {
