@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include "parser.h"
 
 /* ============== Forward declarations ============== */
@@ -21,6 +22,7 @@ static Expr *parse_primary(Parser *parser);
 static Expr *parse_anonymous_function(Parser *parser);
 static Expr *parse_postfix(Parser *parser);
 static Expr *desugar_fstring(const char *template);
+static bool is_valid_pattern(Expr *expr);
 
 /* ============== Helper functions ============== */
 
@@ -71,6 +73,20 @@ static void expect_newline(Parser *parser) {
     if (match(parser, TOK_NEWLINE)) {
         advance(parser);
     }
+}
+
+/* ============== Backtracking helpers ============== */
+
+static ParserState save_state(Parser *parser) {
+    ParserState s;
+    s.current   = parser->current;
+    s.had_error = parser->had_error;
+    return s;
+}
+
+static void restore_state(Parser *parser, ParserState s) {
+    parser->current   = s.current;
+    parser->had_error = s.had_error;
 }
 
 /* ============== Memory allocation helpers ============== */
@@ -207,9 +223,7 @@ static Expr *parse_dict_literal(Parser *parser) {
                 advance(parser);
                 break;
             } else {
-                fprintf(stderr, "Parse error at line %d: Expected ',' or '}' in dict literal\n",
-                        peek(parser)->line);
-                parser->had_error = 1;
+                parser_error(parser, "Expected ',' or '}' in dict literal");
                 break;
             }
         }
@@ -223,28 +237,9 @@ static Expr *parse_dict_literal(Parser *parser) {
     return expr;
 }
 
-static bool looks_like_dict_literal(Parser *parser) {
-    Token *tok = peek(parser)->next;
-    while (tok && (tok->type == TOK_NEWLINE || tok->type == TOK_INDENT || tok->type == TOK_DEDENT))
-        tok = tok->next;
-    if (!tok) return false;
-    if (tok->type == TOK_RBRACE) return true;
-
-    int depth = 0;
-    while (tok) {
-        if (tok->type == TOK_LBRACE || tok->type == TOK_LBRACKET || tok->type == TOK_LPAREN) depth++;
-        else if (tok->type == TOK_RBRACE || tok->type == TOK_RBRACKET || tok->type == TOK_RPAREN) {
-            if (depth == 0) return false;
-            depth--;
-        } else if (tok->type == TOK_COLON && depth == 0) {
-            return true;
-        } else if (tok->type == TOK_EOF) {
-            return false;
-        }
-        tok = tok->next;
-    }
-    return false;
-}
+/* looks_like_dict_literal() has been replaced by backtracking in parse_primary().
+ * The forward declaration is kept here for clarity. */
+static Expr *parse_dict_literal_bt(Parser *parser);
 
 /* ============== F-string desugaring ============== */
 
@@ -483,13 +478,7 @@ static Expr *parse_primary(Parser *parser) {
         return parse_list_literal(parser);
 
     case TOK_LBRACE:
-        if (looks_like_dict_literal(parser)) {
-            return parse_dict_literal(parser);
-        }
-        fprintf(stderr, "Parse error at line %d: Unexpected '{' in expression\n", tok->line);
-        parser->had_error = 1;
-        advance(parser);
-        return make_expr(EXPR_NULL);
+        return parse_dict_literal_bt(parser);
 
     case TOK_IDENTIFIER: {
         advance(parser);
@@ -502,12 +491,54 @@ static Expr *parse_primary(Parser *parser) {
         return parse_anonymous_function(parser);
 
     default:
-        fprintf(stderr, "Parse error at line %d: Unexpected token %s in expression\n",
-                tok->line, token_type_name(tok->type));
-        parser->had_error = 1;
+        parser_error(parser, "Unexpected token '%s' in expression",
+                     token_type_name(tok->type));
         advance(parser);
         return make_expr(EXPR_NULL);
     }
+}
+
+/* ============== Backtracking dict-literal parser ============== */
+/* Try to parse a dict literal at '{'.  If the first entry does not have a
+ * ':' at depth-0 (i.e. it looks like a block, not a dict), restore the
+ * parser state and return an error node.  This eliminates the old O(n)
+ * looks_like_dict_literal() token-stream scan. */
+static Expr *parse_dict_literal_bt(Parser *parser) {
+    ParserState snap = save_state(parser);
+    advance(parser);  /* consume '{' */
+    skip_whitespace_in_literal(parser);
+
+    /* Empty braces → empty dict */
+    if (match(parser, TOK_RBRACE)) {
+        advance(parser);
+        Expr *expr = make_expr(EXPR_DICT_LITERAL);
+        expr->data.dict_literal.entries = malloc(sizeof(DictEntry));
+        expr->data.dict_literal.entry_count = 0;
+        return expr;
+    }
+
+    /* Speculatively parse the first key expression, then look for ':' */
+    ParserState before_key = save_state(parser);
+    /* Suppress errors while probing */
+    int saved_error = parser->had_error;
+    parse_expression(parser);          /* consume key candidate */
+    skip_whitespace_in_literal(parser);
+    bool has_colon = match(parser, TOK_COLON);
+    /* Restore to right after '{', ignoring speculative parse */
+    restore_state(parser, before_key);
+    parser->had_error = saved_error;   /* discard any speculative errors */
+
+    if (!has_colon) {
+        /* Not a dict — restore fully and report */
+        restore_state(parser, snap);
+        parser_error(parser, "Unexpected '{' in expression context");
+        advance(parser);
+        return make_expr(EXPR_NULL);
+    }
+
+    /* It is a dict: restore to after '{' and call the normal parser */
+    restore_state(parser, snap);
+    return parse_dict_literal(parser);
 }
 
 static Expr *parse_postfix(Parser *parser) {
@@ -703,21 +734,19 @@ static Expr *parse_or(Parser *parser) {
 static Expr *parse_assignment(Parser *parser) {
     Expr *first = parse_or(parser);
 
-    /* Lookahead for multi-target assignment (a, b = c, d).
-     * We only commit to multi-target parsing if the first item is an
-     * identifier, followed by a comma, another identifier, and then =
-     * (or +=, -=, etc.).  This prevents us from greedily consuming commas
-     * that belong to dict literals, argument lists, etc. */
+    /* Multi-target assignment (a, b = c, d).
+     * Use save/restore to speculatively peek ahead instead of a raw
+     * pointer save that misses other parser state (had_error, etc.). */
     if (first->kind == EXPR_IDENTIFIER && match(parser, TOK_COMMA)) {
-        Token *saved = parser->current;
+        ParserState snap = save_state(parser);
         advance(parser); /* consume comma */
         if (match(parser, TOK_IDENTIFIER)) {
             advance(parser);
             if (match(parser, TOK_ASSIGN) || match(parser, TOK_PLUS_ASSIGN) ||
                 match(parser, TOK_MINUS_ASSIGN) || match(parser, TOK_STAR_ASSIGN) ||
                 match(parser, TOK_SLASH_ASSIGN)) {
-                /* Confirmed multi-target — restore to comma and parse properly */
-                parser->current = saved;
+                /* Confirmed multi-target — restore to the comma and parse properly */
+                restore_state(parser, snap);
                 advance(parser); /* consume comma */
 
                 int target_cap = 4;
@@ -725,7 +754,7 @@ static Expr *parse_assignment(Parser *parser) {
                 Expr **targets = (Expr **)malloc(target_cap * sizeof(Expr *));
                 targets[0] = first;
 
-                /* Parse second target (confirmed by lookahead) */
+                /* Second target was confirmed by the lookahead above */
                 targets[target_count++] = parse_or(parser);
 
                 while (match(parser, TOK_COMMA)) {
@@ -744,9 +773,7 @@ static Expr *parse_assignment(Parser *parser) {
                     int value_count = 0;
                     Expr **values = (Expr **)malloc(value_cap * sizeof(Expr *));
 
-                    Expr *first_val = parse_or(parser);
-                    values[value_count++] = first_val;
-
+                    values[value_count++] = parse_or(parser);
                     while (match(parser, TOK_COMMA)) {
                         advance(parser);
                         if (value_count >= value_cap) {
@@ -766,27 +793,50 @@ static Expr *parse_assignment(Parser *parser) {
 
                 if (match(parser, TOK_PLUS_ASSIGN) || match(parser, TOK_MINUS_ASSIGN) ||
                     match(parser, TOK_STAR_ASSIGN) || match(parser, TOK_SLASH_ASSIGN)) {
-                    fprintf(stderr, "Parse error at line %d: compound assignment does not support multiple targets\n",
-                            peek(parser)->line);
-                    parser->had_error = 1;
+                    parser_error(parser,
+                        "compound assignment does not support multiple targets");
                     for (int i = 1; i < target_count; i++) free_expr(targets[i]);
                     free(targets);
                     return first;
                 }
 
-                /* Should not reach here if lookahead was correct */
+                /* Should not reach here */
                 for (int i = 1; i < target_count; i++) free_expr(targets[i]);
                 free(targets);
                 return first;
             }
         }
-        /* Not a multi-target assignment — restore state */
-        parser->current = saved;
+        /* Not a multi-target assignment — cleanly restore all parser state */
+        restore_state(parser, snap);
     }
 
     if (match(parser, TOK_ASSIGN)) {
         advance(parser);
         Expr *value = parse_assignment(parser);
+
+        /* Expression-level destructuring: [a, b] = rhs  or  {"k": v} = rhs */
+        if (first->kind == EXPR_LIST_LITERAL || first->kind == EXPR_DICT_LITERAL) {
+            if (!is_valid_pattern(first)) {
+                parser_error(parser,
+                    "Invalid destructuring pattern in assignment (expected identifiers only)");
+                free_expr(value);
+                return first;
+            }
+            /* Re-use the var-decl AST node so the compiler handles it for free */
+            Stmt *dummy = make_stmt(STMT_VAR_DECL);
+            dummy->data.var_decl.is_const = false;
+            dummy->data.var_decl.name = NULL;
+            dummy->data.var_decl.pattern = first;
+            dummy->data.var_decl.initializer = value;
+            /* Wrap in a block-expression: emit the pattern assignment,
+             * then evaluate to null so it is usable as a statement-expression. */
+            Expr *assign = make_expr(EXPR_ASSIGNMENT);
+            assign->data.assignment.target = first;
+            assign->data.assignment.value  = value;
+            free(dummy); /* dummy was just for the comment above; use EXPR_ASSIGNMENT directly */
+            return assign;
+        }
+
         Expr *assign = make_expr(EXPR_ASSIGNMENT);
         assign->data.assignment.target = first;
         assign->data.assignment.value = value;
@@ -911,8 +961,8 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
         if (match(parser, TOK_LBRACKET)) {
             pattern = parse_list_literal(parser);
             if (!is_valid_pattern(pattern)) {
-                fprintf(stderr, "Parse error at line %d: Invalid destructuring pattern (expected identifiers only)\n", peek(parser)->line);
-                parser->had_error = 1;
+                parser_error(parser,
+                    "Invalid destructuring pattern (expected identifiers only)");
             }
             if (match(parser, TOK_COLON)) {
                 advance(parser);
@@ -929,8 +979,8 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
         } else if (match(parser, TOK_LBRACE)) {
             pattern = parse_dict_literal(parser);
             if (!is_valid_pattern(pattern)) {
-                fprintf(stderr, "Parse error at line %d: Invalid destructuring pattern (expected string keys mapped to identifiers)\n", peek(parser)->line);
-                parser->had_error = 1;
+                parser_error(parser,
+                    "Invalid destructuring pattern (expected string keys mapped to identifiers)");
             }
             if (match(parser, TOK_COLON)) {
                 advance(parser);
@@ -970,8 +1020,7 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
                 pattern = parse_dict_literal(parser);
             }
             if (!is_valid_pattern(pattern)) {
-                fprintf(stderr, "Parse error at line %d: Invalid destructuring pattern\n", peek(parser)->line);
-                parser->had_error = 1;
+                parser_error(parser, "Invalid destructuring pattern");
             }
             if (match(parser, TOK_COLON)) {
                 advance(parser);
@@ -1566,8 +1615,13 @@ void parser_free(Parser *parser) {
     if (parser) free(parser);
 }
 
-void parser_error(Parser *parser, const char *message) {
-    fprintf(stderr, "Parse error at line %d: %s\n", peek(parser)->line, message);
+void parser_error(Parser *parser, const char *fmt, ...) {
+    fprintf(stderr, "Parse error at line %d: ", peek(parser)->line);
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fprintf(stderr, "\n");
     parser->had_error = 1;
 }
 

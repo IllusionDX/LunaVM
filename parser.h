@@ -5,6 +5,7 @@
 #ifndef LUNA_PARSER_H
 #define LUNA_PARSER_H
 
+#include <stdarg.h>
 #include "lexer.h"
 #include "ast.h"
 
@@ -14,6 +15,12 @@ typedef struct Parser {
     Token *current;
     int had_error;
 } Parser;
+
+/* Snapshot used by save_state / restore_state for backtracking */
+typedef struct {
+    Token *current;
+    int    had_error;
+} ParserState;
 
 /* ============== Parser functions ============== */
 
@@ -28,6 +35,7 @@ Program *parser_parse(Parser *parser);
 
 /* ============== Error handling ============== */
 
-void parser_error(Parser *parser, const char *message);
+/* Variadic error reporter — always includes the current line number */
+void parser_error(Parser *parser, const char *fmt, ...);
 
 #endif /* LUNA_PARSER_H */

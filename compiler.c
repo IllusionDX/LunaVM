@@ -537,23 +537,20 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     case EXPR_SLICE: {
         compile_expr_into(c, expr->data.slice.obj, target);
         int start_reg = alloc_reg(c);
-        int stop_reg = alloc_reg(c);
-        int step_reg = alloc_reg(c);
-        if (expr->data.slice.start) {
+        int stop_reg  = alloc_reg(c);
+        int step_reg  = alloc_reg(c);
+        if (expr->data.slice.start)
             compile_expr_into(c, expr->data.slice.start, start_reg);
-        } else {
+        else
             emit_ABC(c, OP_LOADNULL, (uint8_t)start_reg, 0, 0);
-        }
-        if (expr->data.slice.stop) {
+        if (expr->data.slice.stop)
             compile_expr_into(c, expr->data.slice.stop, stop_reg);
-        } else {
+        else
             emit_ABC(c, OP_LOADNULL, (uint8_t)stop_reg, 0, 0);
-        }
-        if (expr->data.slice.step) {
+        if (expr->data.slice.step)
             compile_expr_into(c, expr->data.slice.step, step_reg);
-        } else {
+        else
             emit_ABC(c, OP_LOADNULL, (uint8_t)step_reg, 0, 0);
-        }
         emit_ABC(c, OP_SLICE, (uint8_t)target, (uint8_t)target, 0);
         free_reg(c);
         free_reg(c);
@@ -592,6 +589,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             } else {
                 emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)target, (uint8_t)fk);
             }
+            free_reg(c); /* obj */
         } else if (lhs->kind == EXPR_INDEX_ACCESS) {
             int obj = alloc_reg(c);
             int idx = alloc_reg(c);
@@ -599,6 +597,66 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             compile_expr_into(c, lhs->data.index_access.index, idx);
             compile_expr_into(c, rhs, target);
             emit_ABC(c, OP_INDEXSET, (uint8_t)obj, (uint8_t)idx, (uint8_t)target);
+            free_reg(c); /* idx */
+            free_reg(c); /* obj */
+        } else if (lhs->kind == EXPR_LIST_LITERAL) {
+            /* Expression-level list destructuring: [a, b] = rhs
+             * Variables must already exist — resolve, not add_local. */
+            int src = alloc_reg(c);
+            compile_expr_into(c, rhs, src);
+            for (int i = 0; i < lhs->data.list_literal.element_count; i++) {
+                Expr *e = lhs->data.list_literal.elements[i];
+                if (e->kind != EXPR_IDENTIFIER) continue;
+                const char *vname = e->data.identifier.name;
+                if (strcmp(vname, "_") == 0) continue;
+                int idx_reg = alloc_reg(c);
+                int val_reg = alloc_reg(c);
+                emit_loadi(c, (uint8_t)idx_reg, i);
+                emit_ABC(c, OP_INDEXGET, (uint8_t)val_reg, (uint8_t)src, (uint8_t)idx_reg);
+                int var_idx;
+                VarKind vkind = resolve_variable(c, vname, &var_idx);
+                if (vkind == VAR_LOCAL) {
+                    emit_move(c, (uint8_t)var_idx, (uint8_t)val_reg);
+                } else if (vkind == VAR_UPVALUE) {
+                    emit_ABx(c, OP_SETUPVAL, (uint8_t)val_reg, (uint16_t)var_idx);
+                } else {
+                    int k = chunk_add_string(c->chunk, vname);
+                    emit_ABx(c, OP_SETGLOBAL, (uint8_t)val_reg, (uint16_t)k);
+                }
+                free_reg(c); /* val_reg */
+                free_reg(c); /* idx_reg */
+            }
+            free_reg(c); /* src */
+            emit_loadnull(c, (uint8_t)target);
+        } else if (lhs->kind == EXPR_DICT_LITERAL) {
+            /* Expression-level dict destructuring: {"key": var} = rhs */
+            int src = alloc_reg(c);
+            compile_expr_into(c, rhs, src);
+            for (int i = 0; i < lhs->data.dict_literal.entry_count; i++) {
+                Expr *key_expr = lhs->data.dict_literal.entries[i].key;
+                Expr *val_expr = lhs->data.dict_literal.entries[i].value;
+                if (val_expr->kind != EXPR_IDENTIFIER) continue;
+                const char *vname = val_expr->data.identifier.name;
+                if (strcmp(vname, "_") == 0) continue;
+                int key_reg = alloc_reg(c);
+                int val_reg = alloc_reg(c);
+                compile_expr_into(c, key_expr, key_reg);
+                emit_ABC(c, OP_INDEXGET, (uint8_t)val_reg, (uint8_t)src, (uint8_t)key_reg);
+                int var_idx;
+                VarKind vkind = resolve_variable(c, vname, &var_idx);
+                if (vkind == VAR_LOCAL) {
+                    emit_move(c, (uint8_t)var_idx, (uint8_t)val_reg);
+                } else if (vkind == VAR_UPVALUE) {
+                    emit_ABx(c, OP_SETUPVAL, (uint8_t)val_reg, (uint16_t)var_idx);
+                } else {
+                    int k = chunk_add_string(c->chunk, vname);
+                    emit_ABx(c, OP_SETGLOBAL, (uint8_t)val_reg, (uint16_t)k);
+                }
+                free_reg(c); /* val_reg */
+                free_reg(c); /* key_reg */
+            }
+            free_reg(c); /* src */
+            emit_loadnull(c, (uint8_t)target);
         } else {
             compile_expr_into(c, rhs, target);
         }
