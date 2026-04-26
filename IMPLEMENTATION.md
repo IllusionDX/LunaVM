@@ -88,13 +88,12 @@ Register-based: operations read from `A`, `B`, `C`; write result to `A`.
 | `LOADTRUE` | ABC | `A = true` |
 | `LOADFALSE` | ABC | `A = false` |
 | `LOADI` | AsBx | `A = (int)sBx` |
-| `MOVE` | ABC | `A = B` |
+| `MOVE` | ABC | `A = B` — copies value with refcount retain/release |
 
 #### Register Operations
 
 | Opcode | Format | Description |
 |--------|--------|-------------|
-| `COPY` | ABC | `A = copy(B)` — bump refcount |
 | `SWAP` | ABC | `swap(A, B)` |
 
 #### Arithmetic
@@ -172,6 +171,7 @@ Register-based: operations read from `A`, `B`, `C`; write result to `A`.
 | `FORLOOP` | AsBx | next elem in `A+2`. If iter has next, `PC += sBx` |
 | `INDEXGET` | ABC | `A = B[C]` |
 | `INDEXSET` | ABC | `A[B] = C` |
+| `SLICE` | ABC | `A = slice(B, B+1..B+C)` — C=0..3, null=omit |
 | `MEMBERGET` | ABC | `A = B.field` (field = constants[C]) |
 | `MEMBERSET` | ABC | `A.field = B` (field = constants[C]) |
 | `INVOKE` | ABC | `A = B.method(nargs=C)` (method-name in const slot) |
