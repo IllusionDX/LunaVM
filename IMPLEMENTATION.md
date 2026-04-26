@@ -337,7 +337,20 @@ Phase 1 (targeted): `var [a, b] = [1, 2]` and `var {"name": n, "hp": h} = entity
 
 Phase 2 (future): `[a, b] = [3, 4]` and `{"name": n} = entity` — assignment-level destructuring without `var`. Optional syntactic sugar `a, b = [3, 4]` may follow as shorthand for `[a, b] = [3, 4]`.
 
-Phase 3 (future): Dedicated opcodes for performance — `OP_UNPACK_LIST n` (decompose top-of-stack into n consecutive registers) and `OP_UNPACK_DICT n` (look up n inline string keys against a dict). These would make Luna's destructuring faster than languages that rely on generic iteration.
+Phase 3 (future): Dedicated opcodes for performance:
+- `OP_UNPACK_LIST n` — decompose top-of-stack into n consecutive registers.
+- `OP_GETK A, B, Bx` — `A = B.field(constants[Bx])` in a single instruction (ABx variant of MEMBERGET, bypasses the 255-constant limit of ABC).
+- `OP_SETK A, Bx, C` — `A.field(constants[Bx]) = C` (symmetric write).
+
+**Compilation strategy for destructuring:**
+| Case | Generated opcodes |
+|------|------------------|
+| Fixed list `var [a, b] = list` | `OP_UNPACK_LIST` (1 instruction, n targets) |
+| Fixed dict `var {"hp": h, "mp": m} = dict` | `OP_GETK` per field (1 instruction per binding) |
+| List with rest `var [a, ...b] = list` | `OP_INDEXGET` for `a` + `OP_SLICE` for `b` |
+| Dict with rest `var {"hp": h, ...rest} = dict` | `OP_GETK` for `h` + iteration loop for rest |
+
+These would make Luna's destructuring faster than languages that rely on generic iteration.
 
 ### Ideas Under Consideration
 
@@ -355,6 +368,7 @@ Phase 3 (future): Dedicated opcodes for performance — `OP_UNPACK_LIST n` (deco
 - First-class regex literals: `/[a-z]+/g`.
 - Traits / mixins for composable behavior without multiple inheritance.
 - Method cascading (`..`) for chaining mutating calls.
+- Multi-value returns via `OP_RET A, n` — use the `B` field to indicate how many consecutive registers to return. Would pair with destructuring to avoid list wrappers: `def coords(): return 10, 20` → `var [x, y] = coords()`. Requires calling-convention changes in `OP_CALL`.
 
 ## Security
 

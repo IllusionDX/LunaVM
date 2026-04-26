@@ -585,58 +585,57 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_loadfalse,     // 3  OP_LOADFALSE
         &&op_loadi,         // 4  OP_LOADI
         &&op_move,          // 5  OP_MOVE
-        &&op_copy,          // 6  OP_COPY
-        &&op_swap,          // 7  OP_SWAP
-        &&op_add,           // 8  OP_ADD
-        &&op_sub,           // 9  OP_SUB
-        &&op_mul,           // 10 OP_MUL
-        &&op_div,           // 11 OP_DIV
-        &&op_mod,           // 12 OP_MOD
-        &&op_neg,           // 13 OP_NEG
-        &&op_band,          // 14 OP_BAND
-        &&op_bor,           // 15 OP_BOR
-        &&op_bxor,          // 16 OP_BXOR
-        &&op_bnot,          // 17 OP_BNOT
-        &&op_shl,           // 18 OP_SHL
-        &&op_shr,           // 19 OP_SHR
-        &&op_addi,          // 20 OP_ADDI
-        &&op_subi,          // 21 OP_SUBI
-        &&op_eq,            // 22 OP_EQ
-        &&op_ne,            // 23 OP_NE
-        &&op_lt,            // 24 OP_LT
-        &&op_le,            // 25 OP_LE
-        &&op_gt,            // 26 OP_GT
-        &&op_ge,            // 27 OP_GE
-        &&op_not,           // 28 OP_NOT
-        &&op_jmp,           // 29 OP_JMP
-        &&op_jz,            // 30 OP_JZ
-        &&op_jnz,           // 31 OP_JNZ
-        &&op_call,          // 32 OP_CALL
-        &&op_ret,           // 33 OP_RET
-        &&op_enter,         // 34 OP_ENTER
-        &&op_leave,         // 35 OP_LEAVE
-        &&op_closure,       // 36 OP_CLOSURE
-        &&op_getglobal,     // 37 OP_GETGLOBAL
-        &&op_setglobal,     // 38 OP_SETGLOBAL
-        &&op_getupval,      // 39 OP_GETUPVAL
-        &&op_setupval,      // 40 OP_SETUPVAL
-        &&op_new,           // 41 OP_NEW
-        &&op_newdict,       // 42 OP_NEWDICT
-        &&op_newlist,       // 43 OP_NEWLIST
-        &&op_listappend,    // 44 OP_LISTAPPEND
-        &&op_getiter,       // 45 OP_GETITER
-        &&op_forloop,       // 46 OP_FORLOOP
-        &&op_indexget,      // 47 OP_INDEXGET
-        &&op_indexset,      // 48 OP_INDEXSET
-        &&op_slice,         // 49 OP_SLICE
-        &&op_memberget,     // 50 OP_MEMBERGET
-        &&op_memberset,     // 51 OP_MEMBERSET
-        &&op_invoke,        // 52 OP_INVOKE
-        &&op_unimplemented, // 53 OP_SUPER
-        &&op_throw,         // 54 OP_THROW
-        &&op_try,           // 55 OP_TRY
-        &&op_endtry,        // 56 OP_ENDTRY
-        &&op_halt           // 57 OP_HALT
+        &&op_swap,          // 6  OP_SWAP
+        &&op_add,           // 7  OP_ADD
+        &&op_sub,           // 8  OP_SUB
+        &&op_mul,           // 9  OP_MUL
+        &&op_div,           // 10 OP_DIV
+        &&op_mod,           // 11 OP_MOD
+        &&op_neg,           // 12 OP_NEG
+        &&op_band,          // 13 OP_BAND
+        &&op_bor,           // 14 OP_BOR
+        &&op_bxor,          // 15 OP_BXOR
+        &&op_bnot,          // 16 OP_BNOT
+        &&op_shl,           // 17 OP_SHL
+        &&op_shr,           // 18 OP_SHR
+        &&op_addi,          // 19 OP_ADDI
+        &&op_subi,          // 20 OP_SUBI
+        &&op_eq,            // 21 OP_EQ
+        &&op_ne,            // 22 OP_NE
+        &&op_lt,            // 23 OP_LT
+        &&op_le,            // 24 OP_LE
+        &&op_gt,            // 25 OP_GT
+        &&op_ge,            // 26 OP_GE
+        &&op_not,           // 27 OP_NOT
+        &&op_jmp,           // 28 OP_JMP
+        &&op_jz,            // 29 OP_JZ
+        &&op_jnz,           // 30 OP_JNZ
+        &&op_call,          // 31 OP_CALL
+        &&op_ret,           // 32 OP_RET
+        &&op_enter,         // 33 OP_ENTER
+        &&op_leave,         // 34 OP_LEAVE
+        &&op_closure,       // 35 OP_CLOSURE
+        &&op_getglobal,     // 36 OP_GETGLOBAL
+        &&op_setglobal,     // 37 OP_SETGLOBAL
+        &&op_getupval,      // 38 OP_GETUPVAL
+        &&op_setupval,      // 39 OP_SETUPVAL
+        &&op_new,           // 40 OP_NEW
+        &&op_newdict,       // 41 OP_NEWDICT
+        &&op_newlist,       // 42 OP_NEWLIST
+        &&op_listappend,    // 43 OP_LISTAPPEND
+        &&op_getiter,       // 44 OP_GETITER
+        &&op_forloop,       // 45 OP_FORLOOP
+        &&op_indexget,      // 46 OP_INDEXGET
+        &&op_indexset,      // 47 OP_INDEXSET
+        &&op_slice,         // 48 OP_SLICE
+        &&op_memberget,     // 49 OP_MEMBERGET
+        &&op_memberset,     // 50 OP_MEMBERSET
+        &&op_invoke,        // 51 OP_INVOKE
+        &&op_unimplemented, // 52 OP_SUPER
+        &&op_throw,         // 53 OP_THROW
+        &&op_try,           // 54 OP_TRY
+        &&op_endtry,        // 55 OP_ENDTRY
+        &&op_halt           // 56 OP_HALT
     };
 
     DECODE;
@@ -648,11 +647,6 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_move:
         SET_REG(RA, REG(RB));
         DECODE; goto *op_labels[OP(instr)];
-
-    op_copy: {
-        SET_REG(RA, REG(RB));
-        DECODE; goto *op_labels[OP(instr)];
-    }
 
     op_swap: {
         Value t = REG(RA); REG(RA) = REG(RB); REG(RB) = t;
@@ -683,7 +677,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 8-12.  Arithmetic                                         */
+    /* 7-11.  Arithmetic                                         */
     /* -------------------------------------------------------- */
     op_add: {
         Value _L = RKB;
@@ -743,7 +737,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 22-27.  Comparisons                                      */
+    /* 21-26.  Comparisons                                      */
     /* -------------------------------------------------------- */
     op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)< AS_INT(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
     op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)<=AS_INT(_R)):do_cmp(_L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
@@ -753,7 +747,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_ne: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_NE)); DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 14-19.  Bitwise                                          */
+    /* 13-18.  Bitwise                                          */
     /* -------------------------------------------------------- */
     op_band: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) & to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
     op_bor:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) | to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
@@ -776,7 +770,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 29-31.  Jumps                                            */
+    /* 28-30.  Jumps                                            */
     /* -------------------------------------------------------- */
     op_jmp:
         IP += sBx;
@@ -789,7 +783,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 32.  CALL                                                */
+    /* 31.  CALL                                                */
     /* -------------------------------------------------------- */
     op_call: {
         uint8_t ret_reg = RA;
@@ -885,7 +879,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 33.  RET                                                 */
+    /* 32.  RET                                                 */
     /* -------------------------------------------------------- */
     op_ret: {
         uint8_t ret_reg = RA;
@@ -918,14 +912,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 35.  LEAVE (close upvalues)                               */
+    /* 34.  LEAVE (close upvalues)                               */
     /* -------------------------------------------------------- */
     op_leave:
         close_upvalues(vm, vm->frame_count);
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 42-43.  NEWDICT / NEWLIST                                */
+    /* 41-42.  NEWDICT / NEWLIST                                */
     /* -------------------------------------------------------- */
     op_newlist: SET_REG(RA, make_obj((Object*)new_list((int)Bx))); DECODE; goto *op_labels[OP(instr)];
     op_newdict: SET_REG(RA, make_obj((Object*)new_dict())); DECODE; goto *op_labels[OP(instr)];
@@ -1013,7 +1007,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 41.  NEW                                             */
+    /* 40.  NEW                                             */
     /* -------------------------------------------------------- */
     op_new: {
         ObjString *cls_str = KSTROBJ(BX);
@@ -1044,7 +1038,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 47-48.  INDEXGET / INDEXSET                              */
+    /* 46-47.  INDEXGET / INDEXSET                              */
     /* -------------------------------------------------------- */
     op_indexget: {
         Value obj = REG(RB);
@@ -1082,7 +1076,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 49.  SLICE                                               */
+    /* 48.  SLICE                                               */
     /* -------------------------------------------------------- */
     op_slice: {
         Value obj = REG(RB);
@@ -1186,7 +1180,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 39-40.  GETUPVAL / SETUPVAL                              */
+    /* 38-39.  GETUPVAL / SETUPVAL                              */
     /* -------------------------------------------------------- */
     op_getupval: {
         uint8_t upv_idx = B;
@@ -1218,7 +1212,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 50-51.  MEMBERGET / MEMBERSET                            */
+    /* 49-50.  MEMBERGET / MEMBERSET                            */
     /* -------------------------------------------------------- */
     op_memberget: {
         Value obj = REG(RB);
@@ -1280,7 +1274,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 52.  INVOKE                                              */
+    /* 51.  INVOKE                                              */
     /* -------------------------------------------------------- */
     op_invoke: {
         uint8_t ret_reg = RA;
@@ -1365,7 +1359,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 36.  CLOSURE                                             */
+    /* 35.  CLOSURE                                             */
     /* -------------------------------------------------------- */
     op_closure: {
         uint8_t k = B;
@@ -1396,14 +1390,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 34.  ENTER                                               */
+    /* 33.  ENTER                                               */
     /* -------------------------------------------------------- */
     op_enter:
         /* Stack is pre-allocated by vm_run_chunk based on max_registers */
         DECODE; goto *op_labels[OP(instr)];
 
     /* -------------------------------------------------------- */
-    /* 37.  GETGLOBAL                                           */
+    /* 36.  GETGLOBAL                                           */
     /* -------------------------------------------------------- */
     op_getglobal: {
         Value v;
@@ -1413,7 +1407,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 38.  SETGLOBAL                                           */
+    /* 37.  SETGLOBAL                                           */
     /* -------------------------------------------------------- */
     op_setglobal: {
         vm_set_global(vm, KSTR(BX), REG(RA), false);
@@ -1421,7 +1415,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 54.  THROW                                               */
+    /* 53.  THROW                                               */
     /* -------------------------------------------------------- */
     op_throw: {
         if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
@@ -1456,7 +1450,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 55.  TRY                                                 */
+    /* 54.  TRY                                                 */
     /* -------------------------------------------------------- */
     op_try: {
         TryFrame *tf = malloc(sizeof(TryFrame));
@@ -1470,7 +1464,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 56.  ENDTRY                                              */
+    /* 55.  ENDTRY                                              */
     /* -------------------------------------------------------- */
     op_endtry: {
         if (vm->try_stack) {
@@ -1482,7 +1476,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* -------------------------------------------------------- */
-    /* 57.  HALT                                               */
+    /* 56.  HALT                                               */
     /* -------------------------------------------------------- */
     op_halt:
         return VM_OK;

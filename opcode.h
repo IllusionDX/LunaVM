@@ -62,7 +62,6 @@ typedef enum {
     OP_MOVE,        /* ABC  : A = B                                        */
 
     /* ---- Register Ops ---- */
-    OP_COPY,        /* ABC  : A = copy(B)  (bump refcount)                */
     OP_SWAP,        /* ABC  : swap(A, B)                                   */
 
     /* ---- Arithmetic (ABC: A = B op C) ---- */
