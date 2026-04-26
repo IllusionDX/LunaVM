@@ -405,10 +405,38 @@ These would make Luna's destructuring faster than languages that rely on generic
 - Multi-value returns via `OP_RET A, n` — use the `B` field to indicate how many consecutive registers to return. Would pair with destructuring to avoid list wrappers: `def coords(): return 10, 20` → `var [x, y] = coords()`. Requires calling-convention changes in `OP_CALL`.
 
 **VM Architecture (Planned)**
-- **NaN-boxing redesign (sentinel approach or bit-63 negative space):** The current `QNAN_TAG` (`0x7FF8...`) collides with canonical hardware NaN (`0.0/0.0`). Future redesign options:
-  1. *Payload sentinel:* Change base tag to a quiet-NaN pattern the hardware is unlikely to emit (e.g. `0x7FF8...0001`). Requires updating `IS_DOUBLE` and `IS_OBJ` to distinguish hardware NaN (treat as double) from tagged objects. Does not consume sub-tags, but requires care to ensure `IS_OBJ` rejects the canonical hardware NaN (`0x7FF8...0000`).
-  2. *Bit-63 negative space (V8/SpiderMonkey style):* Move Luna's tagged space to `0xFFF8...` (bit 63 = 1). This makes `IS_DOUBLE(v)` a single `CMP v < 0xFFF8...` — the fastest possible type check. But requires normalizing all hardware NaNs in `make_double()` and is a sweeping change across `value.h`.
-- **Integer granularity without NaN-tag bloat:** The 4-bit type tag (16 slots) is too small for `int8..int64`, `uint8..uint64`, `float32`, `BigInt`, etc. The solution is a single `OBJ_INTEGER` type tag with an internal `IntegerKind` subfield (`I8`, `I16`, `I32`, `I64`, `U8`, `U16`, `U32`, `U64`, `BIG`). Small integers stay as `int32` inmediatos; granular ints are boxed `ObjInteger` objects. The JIT does not use NaN tags — it tracks types in SSA IR (`IR_I32`, `IR_F64`, `IR_I64`) and emits native instructions directly. Boxing/unboxing only happens at JIT/VM boundaries. This mirrors how LuaJIT and V8 handle numeric specialization.
+
+*Type System & NaN-Boxing*
+
+Luna uses a unified 64-bit `Value` type (NaN-boxing) where all non-double values live inside quiet-NaN payloads. The current layout:
+
+| Bits | Purpose |
+|------|---------|
+| 0-2 | Sub-tags: `NIL`(1), `TRUE`(2), `FALSE`(3), `INT`(4), `EMPTY`(5) |
+| 3-46 | Pointer payload (44 bits = 16 TB addressable) |
+| 47-50 | **4-bit object type tag** (16 slots: string, list, dict, instance, function, exception, closure, enum, 8 free) |
+| 51 | Quiet-NaN bit (must stay 1) |
+| 52-62 | Exponent (all 1s for NaN) |
+| 63 | Sign bit (free after 4-bit move; can serve as 5th type tag bit for 32 types) |
+
+*Current types:*
+- `int32` — immediate via sub-tag `INT` (bits 0-2). Fastest: no allocation, single bitwise check.
+- `double` — raw IEEE-754. Hardware NaN (`0.0/0.0`) collides with `QNAN_TAG` (`0x7FF8...`). Known issue; future fix via payload sentinel or bit-63 negative space (V8 style).
+- `null`, `bool` — immediate via sub-tags.
+- Object types — 4-bit tag in bits 47-50.
+
+*Why not expand NaN tags for granular types?*
+The 4-bit type tag gives 16 slots. Already used: 8 object types. Even if we reclaimed bit 63 for 32 slots, we would need tags for `int8/16/32/64`, `uint8/16/32/64`, `float32`, `float64`, `BigInt` — 11+ tags, leaving almost no room for future object types. The sub-tag space (bits 0-2) only has 2 free slots (110, 111), which is also insufficient.
+
+*Solution: `OBJ_INTEGER` / `OBJ_NUMBER` with internal kind fields.*
+Instead of burning NaN tags for every numeric granularity, Luna will expose a single `OBJ_INTEGER` type tag (boxed object) with an internal `IntegerKind` subfield (`I8`, `I16`, `I32`, `I64`, `U8`, `U16`, `U32`, `U64`, `BIG`). Similarly, `OBJ_NUMBER` will carry a `NumberKind` (`F32`, `F64`). The VM's fast path stays on `int32` immediate and `double` IEEE-754. Granular types only materialize when the user explicitly requests them (`var hp: int16`, `var pos: float32`) or when the stdlib needs them (pixel buffers, ML matrices). The JIT tracks granular types in its SSA IR (`IR_I32`, `IR_F64`, `IR_I64`, `IR_F32`) and emits native instructions directly — no NaN-tag involvement at the JIT level. Boxing/unboxing only happens at JIT/VM boundaries.
+
+*Comparison with Lua/LuaJIT:*
+Lua and LuaJIT expose only one numeric type to the user: `number` (double). Internally, LuaJIT may track whether a value fits in `int64` for optimization, but the programmer never sees `int32` vs `int64` vs `float32`. Luna differs: we expose granular numeric types to the programmer (like Rust or C) while keeping the VM fast-path simple (like LuaJIT).
+
+*Future NaN-boxing redesign options:*
+1. *Payload sentinel:* Change base tag to a quiet-NaN pattern the hardware is unlikely to emit (e.g. `0x7FF8...0001`). Requires updating `IS_DOUBLE` and `IS_OBJ` to distinguish hardware NaN (treat as double) from tagged objects.
+2. *Bit-63 negative space (V8/SpiderMonkey style):* Move Luna's tagged space to `0xFFF8...` (bit 63 = 1). This makes `IS_DOUBLE(v)` a single `CMP v < 0xFFF8...` — the fastest possible type check. But requires normalizing all hardware NaNs in `make_double()` and is a sweeping change across `value.h`.
 
 ## Security
 
