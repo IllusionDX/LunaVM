@@ -439,9 +439,78 @@ Instead of burning NaN tags for every numeric granularity, Luna will expose a si
 *Comparison with Lua/LuaJIT:*
 Lua and LuaJIT expose only one numeric type to the user: `number` (double). Internally, LuaJIT may track whether a value fits in `int64` for optimization, but the programmer never sees `int32` vs `int64` vs `float32`. Luna differs: we expose granular numeric types to the programmer (like Rust or C) while keeping the VM fast-path simple (like LuaJIT).
 
-*Future NaN-boxing redesign options (not viable without massive changes):*
-1. *Payload sentinel:* Change base tag to a quiet-NaN pattern the hardware is unlikely to emit (e.g. `0x7FF8...0001`). Requires updating `IS_DOUBLE` and `IS_OBJ` to distinguish hardware NaN (treat as double) from tagged objects. This fixes the NaN collision but does NOT expand tag space.
-2. *Bit-63 negative space (V8/SpiderMonkey style):* Move Luna's tagged space to `0xFFF8...` (bit 63 = 1). This makes `IS_DOUBLE(v)` a single `CMP v < 0xFFF8...` — the fastest possible type check. **Requires normalizing all hardware NaNs in `make_double()`** (every `0.0/0.0`, `sqrt(-1)`, `log(-1)` must be rewritten to a canonical NaN with bit 63 = 0). This is a sweeping change across `value.h`, the VM dispatch loop, and all floating-point builtins. Only worth doing if we genuinely run out of the ~6 free object tags.
+### NaN-Boxing Architecture (Current & Future)
+
+**Current layout (post-0.2.10 fix):**
+
+| Bits | Purpose |
+|------|---------|
+| 0-2 | Sub-tags: `NIL`(1), `TRUE`(2), `FALSE`(3), `INT`(4), `EMPTY`(5) |
+| 3-46 | Pointer payload (44 bits = 16 TB addressable) |
+| 47-50 | **4-bit object type tag** (16 slots: ~10 used, ~6 free) |
+| 51 | Quiet-NaN bit (=1 for all tagged values) |
+| 52-62 | Exponent (all 1s for NaN) |
+| 63 | Sign bit (=0 for all tagged values and normalized NaNs) |
+
+**The Safe NaN Contract:**
+- `QNAN_TAG = 0x7FF8000000000000` (base pattern, payload=0)
+- `TYPE_SIGNATURE(0) = 0x7FF8000000000000` (OBJ_STRING — payload=0 is RESERVED for objects)
+- `make_double()` normalizes ALL NaNs to `0x7FF8000000000001` (payload≥1)
+- **Hardware NaNs can NEVER collide with object signatures** because payload=0 is reserved and enforced by the gatekeeper
+
+**History of the collision bug (fixed in 0.2.10):**
+- Old `QNAN_TAG = 0x7FFC` had bit 50 = 1, which overlapped with type tag bits 47-50
+- Types 0-7 and 8-15 produced identical signatures (e.g., type 0 == type 8 both = `0x7FFC000000000000`)
+- Fix: Changed `QNAN_TAG` to `0x7FF8` (bit 50 = 0), giving 16 unique signatures
+
+**32-type expansion path (documented, not yet implemented):**
+
+When we exhaust the ~6 remaining object type slots, we can expand to 32 types by using bit 63 as the 5th type tag bit:
+
+| Bit 63 | Bits 47-50 | Types |
+|--------|-----------|-------|
+| 0 | 0-15 | Types 0-15 (current) |
+| 1 | 0-15 | Types 16-31 (future) |
+
+Requirements for 32-type expansion:
+1. `make_double()` must normalize ALL NaNs (positive AND negative) to bit 63 = 0, payload = 1
+2. `-Inf` (`0xFFF0000000000000`) must be either normalized to `+Inf` or handled as a special case in `IS_DOUBLE`
+3. `make_obj()` must set bit 63 when `type_id >= 16`
+4. `IS_DOUBLE` must check: exponent ≠ all-1s OR (exponent = all-1s AND payload ≥ 1 AND bit 63 = 0)
+
+**FFI Boundary Sanitization Rule:**
+
+ALL external C functions returning `double` MUST pass through `make_double()` before entering VM registers. This is non-negotiable for NaN-boxing integrity.
+
+Example binding pattern:
+```c
+static Value bn_sqrt(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (!n || !IS_NUMBER(args[0])) return make_double(0.0/0.0);
+    double result = sqrt(as_double(args[0]));
+    // MANDATORY: sanitize through make_double()
+    return make_double(result);
+}
+```
+
+Violating this rule allows hardware NaNs to enter the VM with arbitrary payloads, causing type confusion and potential crashes.
+
+**Verification tool (Python):**
+```python
+QNAN_TAG = 0x7ff8000000000000
+mask = 0xFFFF800000000007
+
+# Verify 16 unique signatures
+sigs = set()
+for t in range(16):
+    sig = (QNAN_TAG | ((t & 15) << 47)) & mask
+    sigs.add(sig)
+assert len(sigs) == 16, f"Collision detected! Only {len(sigs)} unique signatures"
+
+# Verify NaN safety
+nan_val = 0x7ff8000000000001  # normalized NaN
+assert nan_val not in sigs, "NaN collides with object signature!"
+```
 
 ## Language Design Decisions
 

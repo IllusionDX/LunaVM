@@ -149,8 +149,13 @@ static Value bn_float(VM *vm, Value *args, int n) {
     if (IS_DOUBLE(args[0])) return args[0];
     if (IS_INT(args[0])) return make_double((double)AS_INT(args[0]));
     if (IS_BOOL(args[0])) return make_double(AS_BOOL(args[0]) ? 1.0 : 0.0);
-    if (IS_STRING(args[0]))
-        return make_double(atof(((ObjString*)AS_OBJ(args[0]))->chars));
+    if (IS_STRING(args[0])) {
+        const char *s = ((ObjString*)AS_OBJ(args[0]))->chars;
+        if (strcmp(s, "nan") == 0 || strcmp(s, "NaN") == 0) return make_double(0.0/0.0);
+        if (strcmp(s, "inf") == 0 || strcmp(s, "infinity") == 0 || strcmp(s, "Infinity") == 0) return make_pos_inf();
+        if (strcmp(s, "-inf") == 0 || strcmp(s, "-infinity") == 0 || strcmp(s, "-Infinity") == 0) return make_neg_inf();
+        return make_double(atof(s));
+    }
     return make_double(0.0);
 }
 
@@ -172,6 +177,9 @@ static Value bn_type(VM *vm, Value *args, int n) {
         if (IS_NIL(args[0])) t = "null";
         else if (IS_BOOL(args[0])) t = "bool";
         else if (IS_INT(args[0])) t = "int";
+        else if (IS_POS_INF(args[0])) t = "inf";
+        else if (IS_NEG_INF(args[0])) t = "-inf";
+        else if (IS_NAN(args[0])) t = "nan";
         else if (IS_DOUBLE(args[0])) t = "float";
         else if (IS_OBJ(args[0])) {
             switch (AS_OBJ(args[0])->type) {
@@ -225,6 +233,18 @@ static Value bn_gc(VM *vm, Value *args, int n) {
     return make_null();
 }
 
+static Value bn_isnan(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (!n) return make_bool(false);
+    return make_bool(IS_NAN(args[0]));
+}
+
+static Value bn_isinf(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (!n) return make_bool(false);
+    return make_bool(IS_INF(args[0]));
+}
+
 void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);
     vm_define_native(vm, "input", bn_input);
@@ -237,6 +257,8 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "clock", bn_clock);
     vm_define_native(vm, "gc_info", bn_gc_info);
     vm_define_native(vm, "gc", bn_gc);
+    vm_define_native(vm, "isnan", bn_isnan);
+    vm_define_native(vm, "isinf", bn_isinf);
 }
 
 /* ============================================================ */

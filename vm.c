@@ -152,11 +152,15 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         case OP_SUB: return make_double(l - r);
         case OP_MUL: return make_double(l * r);
         case OP_DIV: {
-            if (r == 0.0) return make_null();
+            if (r == 0.0) {
+                if (l == 0.0) return make_double(0.0/0.0);
+                else if (l > 0.0) return make_pos_inf();
+                else return make_neg_inf();
+            }
             return make_double(l / r);
         }
         case OP_MOD: {
-            if (r == 0.0) return make_null();
+            if (r == 0.0) return make_double(0.0/0.0);
             return make_double(fmod(l, r));
         }
         default: return make_null();
@@ -759,8 +763,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             SET_REG_PRIM(RA, make_int(AS_INT(_L) / ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
-            if (r == 0.0) { release_value(_exc); _exc = make_exception_instance(vm, "vm: div/0"); goto op_throw; }
-            SET_REG_PRIM(RA, make_double(to_f64(_L) / r));
+            if (r == 0.0) {
+                double l = to_f64(_L);
+                if (l == 0.0) SET_REG_PRIM(RA, make_double(0.0/0.0));
+                else if (l > 0.0) SET_REG_PRIM(RA, make_pos_inf());
+                else SET_REG_PRIM(RA, make_neg_inf());
+            } else {
+                SET_REG_PRIM(RA, make_double(to_f64(_L) / r));
+            }
         } else {
             SET_REG_PRIM(RA, make_null());
         }
@@ -776,8 +786,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             SET_REG_PRIM(RA, make_int(AS_INT(_L) % ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
-            if (r == 0.0) { release_value(_exc); _exc = make_exception_instance(vm, "vm: mod/0"); goto op_throw; }
-            SET_REG_PRIM(RA, make_double(fmod(to_f64(_L), r)));
+            if (r == 0.0) {
+                SET_REG_PRIM(RA, make_double(0.0/0.0));
+            } else {
+                SET_REG_PRIM(RA, make_double(fmod(to_f64(_L), r)));
+            }
         } else {
             SET_REG_PRIM(RA, make_null());
         }

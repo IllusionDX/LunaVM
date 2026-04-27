@@ -31,8 +31,10 @@ struct VM;      /* defined in vm.h */
 typedef uint64_t Value;
 
 /* Quiet NaN base: sign=0, exponent=all-1s, quiet-bit=1
- * Top 16 bits = 0x7FFC (bit 50 is now free for the 4-bit type tag). */
-#define QNAN_TAG     ((uint64_t)0x7ffc000000000000)
+ * Top 16 bits = 0x7FF8. Bit 50 is 0 to avoid overlap with type tags in bits 47-50.
+ * Type 0 signature: 0x7FF8000000000000 (payload=0 reserved for OBJ_STRING).
+ * NaN values are normalized to payload>=1 via make_double() to avoid collision. */
+#define QNAN_TAG     ((uint64_t)0x7ff8000000000000)
 
 /* Sub-tags in the lowest 3 payload bits.
  * Pointers from malloc are at least 8-byte aligned → low 3 bits = 000. */
@@ -42,7 +44,7 @@ typedef uint64_t Value;
 #define TAG_INT      4  /* 0x100 */
 #define TAG_EMPTY    5  /* 0x101 (internal tombstone) */
 
-#define IS_DOUBLE(v) (((v) & 0x7ffc000000000000ULL) != 0x7ffc000000000000ULL)
+#define IS_DOUBLE(v) (((v) & 0x7ff8000000000000ULL) != 0x7ff8000000000000ULL)
 #define IS_OBJ(v)    (((v) & (QNAN_TAG | 7)) == QNAN_TAG)
 #define IS_NIL(v)    ((v) == (QNAN_TAG | TAG_NIL))
 #define IS_TRUE(v)   ((v) == (QNAN_TAG | TAG_TRUE))
@@ -50,6 +52,14 @@ typedef uint64_t Value;
 #define IS_BOOL(v)   (IS_TRUE(v) || IS_FALSE(v))
 #define IS_INT(v)    (((v) & (QNAN_TAG | 7)) == (QNAN_TAG | TAG_INT))
 #define IS_NUMBER(v) (IS_DOUBLE(v) || IS_INT(v))
+
+#define IS_INF(v)    (((v) & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && ((v) & 0x000fffffffffffffULL) == 0)
+#define IS_POS_INF(v) ((v) == 0x7ff0000000000000ULL)
+#define IS_NEG_INF(v) ((v) == 0xfff0000000000000ULL)
+#define IS_NAN(v)    (((v) & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && ((v) & 0x000fffffffffffffULL) != 0)
+
+#define make_pos_inf() ((Value)0x7ff0000000000000ULL)
+#define make_neg_inf() ((Value)0xfff0000000000000ULL)
 
 #define AS_OBJ(v)    ((Object*)(uintptr_t)((v) & 0x00007fffffffffffULL))
 #define AS_BOOL(v)   IS_TRUE(v)
