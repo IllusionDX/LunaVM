@@ -319,7 +319,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.x` | Lambdas (`=>`). Multiline strings (`"""..."""`). |
+| `0.2.x` | Type-hint keywords (`list`, `dict`, `int`, `string`, `float`, `bool`, `char`) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. Better error messages with line/column context and suggestions. |
 | `0.3.x` | Modules, imports, and standard library (strings, math, io, os). |
 | `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
 | `0.5.x` | Exception handling (`try` / `catch` / `finally`, custom exceptions, stack traces). |
