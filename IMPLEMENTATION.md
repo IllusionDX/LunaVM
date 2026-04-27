@@ -473,6 +473,24 @@ def add_item(item, items = null):
 
 **Type hints with defaults:** The parser accepts `def connect(host: string = "localhost", port: int = 8080):`. The type hint is parsed first, then the `=` and default value.
 
+### `type()` vs `is` — Type Inspection Philosophy
+
+Luna separates **granular type inspection** (`type()`) from **categorical type checking** (`is`):
+
+| Mechanism | Granularity | Example |
+|-----------|-------------|---------|
+| `type(x)` | **Granular** — returns the exact runtime type | `type(42)` → `"int"` (future: `"int32"`), `type(bigint_val)` → `"bigint"` |
+| `is` | **Categorical** — checks broad categories | `x is number` → true for int, float, int64, float32, etc. |
+
+**`type(x)`** always returns the most specific type name available. When boxed granular types (`int64`, `uint8`, `float32`, `bigint`) land, `type()` will return their exact names (e.g., `"int64"`). This gives programmers precise visibility into what they're holding.
+
+**`is`** starts simple and expands later:
+- Phase 1 (now-ish): `x is number` — true for any numeric type (int immediate, double, and future boxed integers/floats). This is the 90% case.
+- Phase 2 (future): `x is int`, `x is float` — categorical checks for integer family vs floating-point family.
+- Phase 3 (future, maybe): `x is int32`, `x is uint8` — exact granular matches. Only needed if the JIT can't optimize the check away.
+
+The guiding principle: `type()` is for debugging and serialization (you want to know exactly what you have). `is` is for control flow (you want to know if something fits a broad category). This mirrors how you'd use `typeof` vs `instanceof` in TypeScript, but simpler.
+
 ## Security
 
 - Sandboxed VM for user scripts
