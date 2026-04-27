@@ -316,7 +316,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.6-alpha` | Done | Multiline comments: `"""..."""` for block comments spanning multiple lines. Lexer consumes everything between triple-quotes without generating tokens. |
 | `0.2.7-alpha` | Done | `in` operator for membership testing: `item in list`, `key in dict`, `substring in string`. Type-hint keywords (`list`, `dict`, `int`, `float`, `string`, `bool`, `char`, `double`) are now context-sensitive — valid as identifiers everywhere except after `:` in declarations. Parser checks token text instead of hardcoded token types for type hints. |
 | `0.2.8-alpha` | Done | Bound methods (`ObjBoundMethod`): `obj.method` returns a callable bound to `obj`. `OP_CALL` handles bound method invocation (self as reg 0). `_init` auto-call fix for zero-argument constructors. |
-| `0.2.9-alpha` | **Current** | Default arguments (`def f(a, b=10):`) and keyword arguments (`f(a=5, b=3)`). Pre-interned param name keys for O(1) kwargs lookup. Eliminated string-interning overhead on every function call. |
+| `0.2.9-alpha` | Done | Default arguments (`def f(a, b=10):`) and keyword arguments (`f(a=5, b=3)`). Pre-interned param name keys for O(1) kwargs lookup. Eliminated string-interning overhead on every function call. |
+| `0.2.10-alpha` | **Current** | Keyword arguments for method calls: `obj.method(a=5, b=10)`. Compiler emits `OP_MEMBERGET` + `OP_KCALL` instead of `OP_INVOKE` when kwargs are present. |
 
 ## Roadmap
 

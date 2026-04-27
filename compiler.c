@@ -507,6 +507,53 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
                 emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
                 emit_ABC(c, OP_SUPER, (uint8_t)target, 0, (uint8_t)nargs);
+            } else if (has_keywords) {
+                /* Keyword method call: resolve to bound method, then OP_KCALL */
+                compile_expr_into(c, obj, target);
+                int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
+                if (mk <= 255) {
+                    emit_ABC(c, OP_MEMBERGET, (uint8_t)target, (uint8_t)target, (uint8_t)mk);
+                    /* Now same as regular keyword call — target holds bound method */
+                    int pos_count = 0;
+                    for (int i = 0; i < nargs; i++) {
+                        if (expr->data.call.arg_names[i] == NULL) pos_count = i + 1;
+                    }
+                    int saved_base = c->temp_base;
+                    c->temp_base = target + 1 + nargs + 1;
+                    int compiled_pos = 0;
+                    for (int i = 0; i < nargs; i++) {
+                        if (expr->data.call.arg_names[i] == NULL) {
+                            compile_expr_into(c, expr->data.call.arguments[i], target + 1 + compiled_pos);
+                            compiled_pos++;
+                        }
+                    }
+                    int kwargs_reg = target + pos_count + 1;
+                    emit_ABC(c, OP_NEWDICT, (uint8_t)kwargs_reg, 0, 0);
+                    int key_reg = alloc_reg(c);
+                    int val_reg = alloc_reg(c);
+                    for (int i = 0; i < nargs; i++) {
+                        if (expr->data.call.arg_names[i] != NULL) {
+                            emit_loadstring(c, (uint8_t)key_reg, expr->data.call.arg_names[i]);
+                            compile_expr_into(c, expr->data.call.arguments[i], val_reg);
+                            emit_ABC(c, OP_INDEXSET, (uint8_t)kwargs_reg, (uint8_t)key_reg, (uint8_t)val_reg);
+                        }
+                    }
+                    free_reg(c);
+                    free_reg(c);
+                    c->temp_base = saved_base;
+                    emit_ABC(c, OP_KCALL, (uint8_t)target, (uint8_t)target, (uint8_t)pos_count);
+                } else {
+                    /* Method name constant index > 255 — rare edge case.
+                     * Fall back to OP_INVOKE (ignores kwargs, positional only). */
+                    int saved_base = c->temp_base;
+                    c->temp_base = target + 2 + nargs;
+                    for (int i = 0; i < nargs; i++) {
+                        compile_expr_into(c, expr->data.call.arguments[i], target + 2 + i);
+                    }
+                    c->temp_base = saved_base;
+                    emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
+                    emit_ABC(c, OP_INVOKE, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
+                }
             } else {
                 compile_expr_into(c, obj, target);
                 int saved_base = c->temp_base;

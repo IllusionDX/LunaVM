@@ -1,0 +1,29 @@
+class Player:
+    var name
+    var hp
+
+    def _init(name, hp = 100):
+        self.name = name
+        self.hp = hp
+
+    def heal(amount = 10):
+        self.hp += amount
+
+    def damage(amount = 5, source = "unknown"):
+        self.hp -= amount
+        print(self.name + " took " + str(amount) + " damage from " + source)
+
+var p = new Player("Hero")
+print(p.hp)
+p.heal()
+print(p.hp)
+p.heal(amount=25)
+print(p.hp)
+p.damage()
+print(p.hp)
+p.damage(amount=20)
+print(p.hp)
+p.damage(source="fire")
+print(p.hp)
+p.damage(amount=30, source="ice")
+print(p.hp)
