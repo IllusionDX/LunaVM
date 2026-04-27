@@ -23,6 +23,8 @@ static Expr *parse_anonymous_function(Parser *parser);
 static Expr *parse_postfix(Parser *parser);
 static Expr *desugar_fstring(const char *template);
 static bool is_valid_pattern(Expr *expr);
+static Token *peek_ahead(Parser *parser, int n);
+static FunctionParam *parse_parameters(Parser *parser, int *count);
 
 /* ============== Helper functions ============== */
 
@@ -36,6 +38,14 @@ static Token *advance(Parser *parser) {
         parser->current = parser->current->next;
     }
     return prev;
+}
+
+static Token *peek_ahead(Parser *parser, int n) {
+    Token *current = parser->current;
+    for (int i = 0; i < n && current != NULL && current->type != TOK_EOF; i++) {
+        current = current->next;
+    }
+    return current;
 }
 
 static bool match(Parser *parser, TokenType type) {
@@ -469,6 +479,59 @@ static Expr *parse_primary(Parser *parser) {
 
     case TOK_LPAREN: {
         advance(parser);
+
+        /* Lookahead for lambda: (params) => expr */
+        int offset = 0;
+        Token *t = peek_ahead(parser, offset);
+        int is_lambda = 0;
+
+        /* Empty params: () => expr */
+        if (t && t->type == TOK_RPAREN) {
+            Token *after = peek_ahead(parser, offset + 1);
+            if (after && after->type == TOK_LAMBDA) is_lambda = 1;
+        } else if (t && t->type == TOK_IDENTIFIER) {
+            /* Try: id (, id)* ) => */
+            is_lambda = 1;
+            offset++;
+            t = peek_ahead(parser, offset);
+            while (t && t->type != TOK_RPAREN && t->type != TOK_EOF) {
+                if (t->type == TOK_COMMA) {
+                    offset++;
+                    t = peek_ahead(parser, offset);
+                    if (!t || t->type != TOK_IDENTIFIER) { is_lambda = 0; break; }
+                    offset++;
+                    t = peek_ahead(parser, offset);
+                } else {
+                    is_lambda = 0;
+                    break;
+                }
+            }
+            if (is_lambda && t && t->type == TOK_RPAREN) {
+                Token *after = peek_ahead(parser, offset + 1);
+                if (!after || after->type != TOK_LAMBDA) is_lambda = 0;
+            } else {
+                is_lambda = 0;
+            }
+        }
+
+        if (is_lambda) {
+            int param_count = 0;
+            FunctionParam *params = parse_parameters(parser, &param_count);
+            expect(parser, TOK_RPAREN, "Expected ')' after lambda parameters");
+            advance(parser); /* consume => */
+            Expr *body_expr = parse_expression(parser);
+            Stmt *ret = make_stmt(STMT_RETURN);
+            ret->data.return_stmt.value = body_expr;
+            Expr *expr = make_expr(EXPR_FUNCTION);
+            expr->data.function.name = NULL;
+            expr->data.function.params = params;
+            expr->data.function.param_count = param_count;
+            expr->data.function.body = malloc(sizeof(Stmt *));
+            expr->data.function.body[0] = ret;
+            expr->data.function.body_count = 1;
+            return expr;
+        }
+
         Expr *expr = parse_expression(parser);
         expect(parser, TOK_RPAREN, "Expected ')' after expression");
         return expr;
@@ -731,83 +794,87 @@ static Expr *parse_or(Parser *parser) {
     return left;
 }
 
+static bool is_multi_assignment(Parser *parser) {
+    if (!match(parser, TOK_COMMA)) return false;
+    int offset = 1;
+    while (true) {
+        Token *t1 = peek_ahead(parser, offset);
+        if (!t1 || t1->type != TOK_IDENTIFIER) return false;
+        offset++;
+
+        Token *t2 = peek_ahead(parser, offset);
+        if (!t2) return false;
+        if (t2->type == TOK_ASSIGN || t2->type == TOK_PLUS_ASSIGN ||
+            t2->type == TOK_MINUS_ASSIGN || t2->type == TOK_STAR_ASSIGN ||
+            t2->type == TOK_SLASH_ASSIGN) {
+            return true;
+        }
+        if (t2->type != TOK_COMMA) return false;
+        offset++;
+    }
+}
+
 static Expr *parse_assignment(Parser *parser) {
     Expr *first = parse_or(parser);
 
-    /* Multi-target assignment (a, b = c, d).
-     * Use save/restore to speculatively peek ahead instead of a raw
-     * pointer save that misses other parser state (had_error, etc.). */
-    if (first->kind == EXPR_IDENTIFIER && match(parser, TOK_COMMA)) {
-        ParserState snap = save_state(parser);
+    /* Multi-target assignment (a, b = c, d). */
+    if (first->kind == EXPR_IDENTIFIER && is_multi_assignment(parser)) {
         advance(parser); /* consume comma */
-        if (match(parser, TOK_IDENTIFIER)) {
+
+        int target_cap = 4;
+        int target_count = 1;
+        Expr **targets = (Expr **)malloc(target_cap * sizeof(Expr *));
+        targets[0] = first;
+
+        targets[target_count++] = parse_or(parser);
+
+        while (match(parser, TOK_COMMA)) {
             advance(parser);
-            if (match(parser, TOK_ASSIGN) || match(parser, TOK_PLUS_ASSIGN) ||
-                match(parser, TOK_MINUS_ASSIGN) || match(parser, TOK_STAR_ASSIGN) ||
-                match(parser, TOK_SLASH_ASSIGN)) {
-                /* Confirmed multi-target — restore to the comma and parse properly */
-                restore_state(parser, snap);
-                advance(parser); /* consume comma */
-
-                int target_cap = 4;
-                int target_count = 1;
-                Expr **targets = (Expr **)malloc(target_cap * sizeof(Expr *));
-                targets[0] = first;
-
-                /* Second target was confirmed by the lookahead above */
-                targets[target_count++] = parse_or(parser);
-
-                while (match(parser, TOK_COMMA)) {
-                    advance(parser);
-                    if (target_count >= target_cap) {
-                        target_cap *= 2;
-                        targets = (Expr **)realloc(targets, target_cap * sizeof(Expr *));
-                    }
-                    targets[target_count++] = parse_or(parser);
-                }
-
-                if (match(parser, TOK_ASSIGN)) {
-                    advance(parser);
-
-                    int value_cap = 4;
-                    int value_count = 0;
-                    Expr **values = (Expr **)malloc(value_cap * sizeof(Expr *));
-
-                    values[value_count++] = parse_or(parser);
-                    while (match(parser, TOK_COMMA)) {
-                        advance(parser);
-                        if (value_count >= value_cap) {
-                            value_cap *= 2;
-                            values = (Expr **)realloc(values, value_cap * sizeof(Expr *));
-                        }
-                        values[value_count++] = parse_or(parser);
-                    }
-
-                    Expr *multi = make_expr(EXPR_MULTI_ASSIGN);
-                    multi->data.multi_assign.targets = targets;
-                    multi->data.multi_assign.target_count = target_count;
-                    multi->data.multi_assign.values = values;
-                    multi->data.multi_assign.value_count = value_count;
-                    return multi;
-                }
-
-                if (match(parser, TOK_PLUS_ASSIGN) || match(parser, TOK_MINUS_ASSIGN) ||
-                    match(parser, TOK_STAR_ASSIGN) || match(parser, TOK_SLASH_ASSIGN)) {
-                    parser_error(parser,
-                        "compound assignment does not support multiple targets");
-                    for (int i = 1; i < target_count; i++) free_expr(targets[i]);
-                    free(targets);
-                    return first;
-                }
-
-                /* Should not reach here */
-                for (int i = 1; i < target_count; i++) free_expr(targets[i]);
-                free(targets);
-                return first;
+            if (target_count >= target_cap) {
+                target_cap *= 2;
+                targets = (Expr **)realloc(targets, target_cap * sizeof(Expr *));
             }
+            targets[target_count++] = parse_or(parser);
         }
-        /* Not a multi-target assignment — cleanly restore all parser state */
-        restore_state(parser, snap);
+
+        if (match(parser, TOK_ASSIGN)) {
+            advance(parser);
+
+            int value_cap = 4;
+            int value_count = 0;
+            Expr **values = (Expr **)malloc(value_cap * sizeof(Expr *));
+
+            values[value_count++] = parse_or(parser);
+            while (match(parser, TOK_COMMA)) {
+                advance(parser);
+                if (value_count >= value_cap) {
+                    value_cap *= 2;
+                    values = (Expr **)realloc(values, value_cap * sizeof(Expr *));
+                }
+                values[value_count++] = parse_or(parser);
+            }
+
+            Expr *multi = make_expr(EXPR_MULTI_ASSIGN);
+            multi->data.multi_assign.targets = targets;
+            multi->data.multi_assign.target_count = target_count;
+            multi->data.multi_assign.values = values;
+            multi->data.multi_assign.value_count = value_count;
+            return multi;
+        }
+
+        if (match(parser, TOK_PLUS_ASSIGN) || match(parser, TOK_MINUS_ASSIGN) ||
+            match(parser, TOK_STAR_ASSIGN) || match(parser, TOK_SLASH_ASSIGN)) {
+            parser_error(parser,
+                "compound assignment does not support multiple targets");
+            for (int i = 1; i < target_count; i++) free_expr(targets[i]);
+            free(targets);
+            return first;
+        }
+
+        /* Should not reach here */
+        for (int i = 1; i < target_count; i++) free_expr(targets[i]);
+        free(targets);
+        return first;
     }
 
     if (match(parser, TOK_ASSIGN)) {
@@ -866,30 +933,44 @@ static bool is_type_hint_start(Parser *parser) {
     Token *tok = peek(parser);
     if (!is_type_hint_token(tok->type)) return false;
 
-    Token *next = tok->next;
+    int offset = 1;
+    Token *next = peek_ahead(parser, offset);
     if (tok->type == TOK_LIST_TYPE || tok->type == TOK_DICT) {
         if (next && next->type == TOK_LT) {
             int depth = 1;
-            next = next->next;
+            offset++;
+            next = peek_ahead(parser, offset);
             while (next && depth > 0) {
                 if (next->type == TOK_LT) depth++;
                 else if (next->type == TOK_GT) depth--;
-                next = next->next;
+                offset++;
+                next = peek_ahead(parser, offset);
             }
         }
     }
     if (next && next->type == TOK_LBRACKET) {
-        next = next->next;
-        if (next && next->type == TOK_INTEGER_LITERAL) next = next->next;
-        if (next && next->type == TOK_RBRACKET) next = next->next;
+        offset++;
+        next = peek_ahead(parser, offset);
+        if (next && next->type == TOK_INTEGER_LITERAL) {
+            offset++;
+            next = peek_ahead(parser, offset);
+        }
+        if (next && next->type == TOK_RBRACKET) {
+            offset++;
+            next = peek_ahead(parser, offset);
+        }
     }
 
     if (next && next->type == TOK_COLON) {
-        Token *after_colon = next->next;
-        while (after_colon && (after_colon->type == TOK_NEWLINE || after_colon->type == TOK_INDENT || after_colon->type == TOK_DEDENT))
-            after_colon = after_colon->next;
+        offset++;
+        Token *after_colon = peek_ahead(parser, offset);
+        while (after_colon && (after_colon->type == TOK_NEWLINE || after_colon->type == TOK_INDENT || after_colon->type == TOK_DEDENT)) {
+            offset++;
+            after_colon = peek_ahead(parser, offset);
+        }
         if (after_colon && after_colon->type == TOK_IDENTIFIER) {
-            Token *after_name = after_colon->next;
+            offset++;
+            Token *after_name = peek_ahead(parser, offset);
             if (after_name && (after_name->type == TOK_ASSIGN || after_name->type == TOK_NEWLINE ||
                                after_name->type == TOK_COLON || after_name->type == TOK_EOF)) {
                 return true;
@@ -898,7 +979,8 @@ static bool is_type_hint_start(Parser *parser) {
     }
 
     if (next && next->type == TOK_IDENTIFIER) {
-        Token *after_name = next->next;
+        offset++;
+        Token *after_name = peek_ahead(parser, offset);
         if (after_name && (after_name->type == TOK_ASSIGN || after_name->type == TOK_NEWLINE ||
                            after_name->type == TOK_COLON || after_name->type == TOK_EOF ||
                            after_name->type == TOK_COMMA || after_name->type == TOK_RPAREN)) {
