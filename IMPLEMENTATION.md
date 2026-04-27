@@ -419,10 +419,10 @@ Luna uses a unified 64-bit `Value` type (NaN-boxing) where all non-double values
 |------|---------|
 | 0-2 | Sub-tags: `NIL`(1), `TRUE`(2), `FALSE`(3), `INT`(4), `EMPTY`(5) |
 | 3-46 | Pointer payload (44 bits = 16 TB addressable) |
-| 47-50 | **4-bit object type tag** (16 slots: string, list, dict, instance, function, exception, closure, enum, 8 free) |
+| 47-50 | **4-bit object type tag** (16 slots: ~10 used, ~6 free) |
 | 51 | Quiet-NaN bit (must stay 1) |
 | 52-62 | Exponent (all 1s for NaN) |
-| 63 | Sign bit (free after 4-bit move; can serve as 5th type tag bit for 32 types) |
+| 63 | Sign bit (NOT free — IEEE 754 NaNs can have bit 63 = 0 or 1; using it for tagging requires normalizing all hardware NaNs)
 
 *Current types:*
 - `int32` — immediate via sub-tag `INT` (bits 0-2). Fastest: no allocation, single bitwise check.
@@ -431,7 +431,7 @@ Luna uses a unified 64-bit `Value` type (NaN-boxing) where all non-double values
 - Object types — 4-bit tag in bits 47-50.
 
 *Why not expand NaN tags for granular types?*
-The 4-bit type tag gives 16 slots. Already used: 8 object types. Even if we reclaimed bit 63 for 32 slots, we would need tags for `int8/16/32/64`, `uint8/16/32/64`, `float32`, `float64`, `BigInt` — 11+ tags, leaving almost no room for future object types. The sub-tag space (bits 0-2) only has 2 free slots (110, 111), which is also insufficient.
+The 4-bit type tag gives 16 slots. Already used: ~10 object types, ~6 free. Expanding to 32 slots would require using bit 63, which is NOT free — IEEE 754 NaNs can have bit 63 = 0 or 1, so using it for tagging requires normalizing every hardware NaN (a sweeping change). We are not doing this until we genuinely exhaust the ~6 remaining object tags. The sub-tag space (bits 0-2) has 2 free slots (6, 7), sufficient for future immediate types like `CHAR` or `INT64`.
 
 *Solution: `OBJ_INTEGER` / `OBJ_NUMBER` with internal kind fields.*
 Instead of burning NaN tags for every numeric granularity, Luna will expose a single `OBJ_INTEGER` type tag (boxed object) with an internal `IntegerKind` subfield (`I8`, `I16`, `I32`, `I64`, `U8`, `U16`, `U32`, `U64`, `BIG`). Similarly, `OBJ_NUMBER` will carry a `NumberKind` (`F32`, `F64`). The VM's fast path stays on `int32` immediate and `double` IEEE-754. Granular types only materialize when the user explicitly requests them (`var hp: int16`, `var pos: float32`) or when the stdlib needs them (pixel buffers, ML matrices). The JIT tracks granular types in its SSA IR (`IR_I32`, `IR_F64`, `IR_I64`, `IR_F32`) and emits native instructions directly — no NaN-tag involvement at the JIT level. Boxing/unboxing only happens at JIT/VM boundaries.
@@ -439,9 +439,9 @@ Instead of burning NaN tags for every numeric granularity, Luna will expose a si
 *Comparison with Lua/LuaJIT:*
 Lua and LuaJIT expose only one numeric type to the user: `number` (double). Internally, LuaJIT may track whether a value fits in `int64` for optimization, but the programmer never sees `int32` vs `int64` vs `float32`. Luna differs: we expose granular numeric types to the programmer (like Rust or C) while keeping the VM fast-path simple (like LuaJIT).
 
-*Future NaN-boxing redesign options:*
-1. *Payload sentinel:* Change base tag to a quiet-NaN pattern the hardware is unlikely to emit (e.g. `0x7FF8...0001`). Requires updating `IS_DOUBLE` and `IS_OBJ` to distinguish hardware NaN (treat as double) from tagged objects.
-2. *Bit-63 negative space (V8/SpiderMonkey style):* Move Luna's tagged space to `0xFFF8...` (bit 63 = 1). This makes `IS_DOUBLE(v)` a single `CMP v < 0xFFF8...` — the fastest possible type check. But requires normalizing all hardware NaNs in `make_double()` and is a sweeping change across `value.h`.
+*Future NaN-boxing redesign options (not viable without massive changes):*
+1. *Payload sentinel:* Change base tag to a quiet-NaN pattern the hardware is unlikely to emit (e.g. `0x7FF8...0001`). Requires updating `IS_DOUBLE` and `IS_OBJ` to distinguish hardware NaN (treat as double) from tagged objects. This fixes the NaN collision but does NOT expand tag space.
+2. *Bit-63 negative space (V8/SpiderMonkey style):* Move Luna's tagged space to `0xFFF8...` (bit 63 = 1). This makes `IS_DOUBLE(v)` a single `CMP v < 0xFFF8...` — the fastest possible type check. **Requires normalizing all hardware NaNs in `make_double()`** (every `0.0/0.0`, `sqrt(-1)`, `log(-1)` must be rewritten to a canonical NaN with bit 63 = 0). This is a sweeping change across `value.h`, the VM dispatch loop, and all floating-point builtins. Only worth doing if we genuinely run out of the ~6 free object tags.
 
 ## Language Design Decisions
 
