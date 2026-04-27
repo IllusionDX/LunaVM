@@ -273,6 +273,9 @@ static Token *scan_operator(Lexer *lexer) {
             if (next == '=') { advance(lexer); return make_token(lexer, TOK_GE, start, 2); }
             if (next == '>') { advance(lexer); return make_token(lexer, TOK_RSHIFT, start, 2); }
             return make_token(lexer, TOK_GT, start, 1);
+        case '?':
+            if (next == '?') { advance(lexer); return make_token(lexer, TOK_COALESCE, start, 2); }
+            return make_token(lexer, TOK_ERROR, start, 1);
         case '&':
             return make_token(lexer, TOK_AMPERSAND, start, 1);
         case '|':
@@ -584,6 +587,7 @@ const char *token_type_name(TokenType type) {
         case TOK_SLASH_ASSIGN: return "SLASH_ASSIGN";
         case TOK_ARROW: return "ARROW";
         case TOK_LAMBDA: return "LAMBDA";
+        case TOK_COALESCE: return "COALESCE";
         case TOK_AMPERSAND: return "AMPERSAND";
         case TOK_PIPE: return "PIPE";
         case TOK_CARET: return "CARET";

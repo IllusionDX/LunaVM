@@ -143,6 +143,7 @@ typedef enum {
     OP_DEFAULT,     /* AsBx : if arg[RA] provided OR in kw_args then PC += sBx else fall through */
     OP_KWARGS,      /* ABC  : populate params from kwargs dict (A,B,C unused) */
     OP_KCALL,       /* ABC  : A = kcall B(pos_args=C, kwargs at B+C+1) */
+    OP_COALESCE,    /* AsBx : if A != null then PC += sBx (skip RHS)     */
 
     OP_HALT,        /* ABC  : stop VM (A,B,C unused)                     */
 

@@ -1,0 +1,30 @@
+# Test list operations: append, concat, repeat, comprehension
+
+var a = []
+a.append(1)
+a.append(2)
+print(a[0])
+print(a[1])
+
+# Concatenation
+print([1, 2] + [3, 4])
+
+# Repetition
+print([1, 2] * 3)
+print(3 * [1, 2])
+print([1, 2] * 0)
+print([1, 2] * -1)
+
+# List comprehension
+var nums = [1, 2, 3, 4, 5]
+var squares = [x * x for x in nums]
+print(squares)
+
+var evens = [x for x in nums if x % 2 == 0]
+print(evens)
+
+var doubled = [x * 2 for x in range(4)]
+print(doubled)
+
+var filtered = [x * x for x in range(10) if x % 2 == 1]
+print(filtered)

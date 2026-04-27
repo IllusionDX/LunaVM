@@ -318,14 +318,15 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.8-alpha` | Done | Bound methods (`ObjBoundMethod`): `obj.method` returns a callable bound to `obj`. `OP_CALL` handles bound method invocation (self as reg 0). `_init` auto-call fix for zero-argument constructors. |
 | `0.2.9-alpha` | Done | Default arguments (`def f(a, b=10):`) and keyword arguments (`f(a=5, b=3)`). Pre-interned param name keys for O(1) kwargs lookup. Eliminated string-interning overhead on every function call. |
 | `0.2.10-alpha` | Done | Keyword arguments for method calls: `obj.method(a=5, b=10)`. Compiler emits `OP_MEMBERGET` + `OP_KCALL` instead of `OP_INVOKE` when kwargs are present. |
-| `0.2.11-alpha` | **Current** | QNAN_TAG collision fix: changed from `0x7FFC` to `0x7FF8` (bit 50 = 0) so 16 type signatures are unique. Inf/NaN value support: `IS_INF`, `IS_POS_INF`, `IS_NEG_INF`, `IS_NAN` macros, `make_pos_inf()`, `make_neg_inf()`, Inf division results in `OP_DIV`/`OP_MOD`. `make_double()` normalizes all NaNs to payload=10. 32-type expansion path documented in NaN-boxing architecture section. |
+| `0.2.11-alpha` | Done | QNAN_TAG collision fix: changed from `0x7FFC` to `0x7FF8` (bit 50 = 0) so 16 type signatures are unique. Inf/NaN value support: `IS_INF`, `IS_POS_INF`, `IS_NEG_INF`, `IS_NAN` macros, `make_pos_inf()`, `make_neg_inf()`, Inf division results in `OP_DIV`/`OP_MOD`. `make_double()` normalizes all NaNs to payload=10. 32-type expansion path documented in NaN-boxing architecture section. |
+| `0.2.12-alpha` | **Current** | Nullish coalescing (`??`): `var name = nickname ?? "Unknown"` — evaluates to RHS only when LHS is `null`, preserving `false`, `0`, and `""`. Short-circuit evaluation. |
 
 ## Roadmap
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.x` | Default arguments with immutability guard: `def connect(host = "localhost", port = 8080)`. Better error messages with line/column context and suggestions. |
-| `0.3.x` | Modules, imports, and standard library (strings, math, io, os). Optional chaining (`?.`) for null-safe member access. |
+| `0.2.x` | Better error messages with line/column context and suggestions. |
+| `0.3.x` | Modules, imports, and standard library (strings, math, io, os). Optional chaining (`?.`) for null-safe member access. Ternary expression (`a if cond else b`). |
 | `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
 | `0.5.x` | Exception handling (`try` / `catch` / `finally`, custom exceptions, stack traces). |
 | `0.6.x` | Debugger / profiler. |
@@ -358,13 +359,22 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
 ## Optimization Roadmap
 
+> Legend: **S** = Speed (runtime performance), **M** = Memory (footprint / allocations), **B** = Both
+
 | Priority | Optimization | Impact | Complexity |
 |----------|--------------|--------|------------|
-| High | **NaN Boxing** | *Done in 0.1.8-alpha* — unified all Value types into a single `uint64_t`. Faster copying, less memory, better cache usage. |
-| High | **Small Object Optimization** | *Done in 0.1.13-alpha* — inline small lists/dicts (<= 4 elements) directly into the object struct to avoid separate heap allocations. Dict SOO→heap transition fixed in 0.1.16-alpha. |
-| Medium | **Hidden Classes / Shapes** | Give instances a fixed field layout (array indexing) instead of open hash maps. Makes property access O(1) instead of O(n). | High — requires shape objects, transition trees, compiler changes for shape-aware ops. |
-| Low | **String Interning** | *Done in 0.1.5-alpha* | — |
-| Low | **Computed GOTOs** | *Done in 0.1.4-alpha* | — |
+| High | **NaN Boxing** | **B** *Done in 0.1.8-alpha* — unified all Value types into a single `uint64_t`. Faster copying, less memory, better cache usage. |
+| High | **Small Object Optimization** | **M** *Done in 0.1.13-alpha* — inline small lists/dicts (<= 4 elements) directly into the object struct to avoid separate heap allocations. Dict SOO→heap transition fixed in 0.1.16-alpha. |
+| Medium | **Hidden Classes / Shapes** | **S** Give instances a fixed field layout (array indexing) instead of open hash maps. Makes property access O(1) instead of O(n). | High — requires shape objects, transition trees, compiler changes for shape-aware ops. |
+| Low | **String Interning** | **M** *Done in 0.1.5-alpha* | — |
+| Low | **Computed GOTOs** | **S** *Done in 0.1.4-alpha* | — |
+| High | **Constant Folding + Peephole** | **B** *Pending* — Compile-time evaluation of `1 + 2`, dead code elimination (`if false:`), `OP_MOVE`+`OP_ADD` fusion. Reduces bytecode size and runtime work. | Low — compiler-only, zero runtime risk |
+| High | **Fast-path Builtin Opcodes** | **S** *Pending* — Dedicated `OP_PRINT`, `OP_LEN`, `OP_STR`, `OP_TYPE` instead of `OP_CALL` + global lookup. Hot builtins (`print`, `len`, `str`) go from ~50 to ~5 cycles. | Low — new opcodes with `OP_CALL` fallback if builtin was shadowed |
+| Medium | **Liveness-based Register Allocation** | **B** *Pending* — Free registers after last use instead of at block end. Smaller `max_registers` → smaller stack frames → better cache locality. Reduces memory pressure. | Medium — touches `alloc_reg`/`free_reg` in compiler only |
+| Medium | **Superinstructions** | **S** *Pending* — Fuse `OP_MOVE`+`OP_ADD` → `OP_MOVE_ADD`, `OP_GETITER`+`OP_JMP` → `OP_GETITER_JUMP`. -15% to -30% fewer dispatched instructions in loops. | Low — purely additive, generated by compiler or post-compile pass |
+| Medium | **Polymorphic Inline Cache (PIC)** | **S** *Pending* — Cache 2-3 shape entries instead of 1. Makes polymorphic calls (`entity.update()` where entity is `Player|Enemy|NPC`) nearly as fast as monomorphic. | Medium — extends existing IC structures |
+| Low | **Compact String Representation** | **M** *Pending* — Inline strings < 8 bytes directly in `Value` (no heap allocation). **Consumes 1 of 2 free sub-tags (6 or 7), leaving only 1 as general reserve.** The other free sub-tag would ideally be `CHAR` (Unicode code point, 32-bit payload). | Medium — consumes a sub-tag slot |
+| Medium | **Bytecode Peephole (Aggressive)** | **S** *Pending* — *Prereq: Constant Folding + Peephole.* Replace instruction sequences with dedicated opcodes: `OP_LT`+`OP_JZ` → `OP_JGE`, `OP_ADD r0,r0,1` → `OP_INCR r0`. Fewer branch mispredicts and tighter loops. | Medium — requires new opcodes and pattern matching in compiler |
 
 ## Future Ideas & Evolution
 
@@ -426,19 +436,22 @@ Luna uses a unified 64-bit `Value` type (NaN-boxing) where all non-double values
 | 63 | Sign bit (NOT free — IEEE 754 NaNs can have bit 63 = 0 or 1; using it for tagging requires normalizing all hardware NaNs)
 
 *Current types:*
-- `int32` — immediate via sub-tag `INT` (bits 0-2). Fastest: no allocation, single bitwise check.
-- `double` — raw IEEE-754. Hardware NaNs are normalized by `make_double()` to payload=10, preventing collision with `QNAN_TAG`.
+- `int` — immediate via sub-tag `INT` (bits 0-2). Fastest: no allocation, single bitwise check. 32-bit signed.
+- `float` — raw IEEE-754 **double** (64-bit). The keyword `float` is user-facing; internally it is `double` for precision. Hardware NaNs are normalized by `make_double()` to payload=10, preventing collision with `QNAN_TAG`.
 - `null`, `bool` — immediate via sub-tags.
 - Object types — 4-bit tag in bits 47-50.
 
-*Why not expand NaN tags for granular types?*
-The 4-bit type tag gives 16 slots. Already used: ~10 object types, ~6 free. Expanding to 32 slots would require using bit 63, which is NOT free — IEEE 754 NaNs can have bit 63 = 0 or 1, so using it for tagging requires normalizing every hardware NaN (a sweeping change). We are not doing this until we genuinely exhaust the ~6 remaining object tags. The sub-tag space (bits 0-2) has 2 free slots (6, 7), sufficient for future immediate types like `CHAR` or `INT64`.
+*Future: Granular numeric types (post-1.0, FFI only)*
+The 4-bit type tag gives 16 slots. Already used: ~10 object types, ~6 free. Expanding to 32 slots would require using bit 63, which is NOT free — IEEE 754 NaNs can have bit 63 = 0 or 1, so using it for tagging requires normalizing every hardware NaN (a sweeping change). We are not doing this until we genuinely exhaust the ~6 remaining object tags.
 
-*Solution: `OBJ_INTEGER` / `OBJ_NUMBER` with internal kind fields.*
-Instead of burning NaN tags for every numeric granularity, Luna will expose a single `OBJ_INTEGER` type tag (boxed object) with an internal `IntegerKind` subfield (`I8`, `I16`, `I32`, `I64`, `U8`, `U16`, `U32`, `U64`, `BIG`). Similarly, `OBJ_NUMBER` will carry a `NumberKind` (`F32`, `F64`). The VM's fast path stays on `int32` immediate and `double` IEEE-754. Granular types only materialize when the user explicitly requests them (`var hp: int16`, `var pos: float32`) or when the stdlib needs them (pixel buffers, ML matrices). The JIT tracks granular types in its SSA IR (`IR_I32`, `IR_F64`, `IR_I64`, `IR_F32`) and emits native instructions directly — no NaN-tag involvement at the JIT level. Boxing/unboxing only happens at JIT/VM boundaries.
+If granular types are ever needed (e.g. FFI with C libraries expecting `uint16_t*` or `float32` buffers), they will be implemented as boxed heap objects:
+- `OBJ_INTEGER` with an internal `IntegerKind` (`I8`, `I16`, `I32`, `I64`, `U8`, `U16`, `U32`, `U64`, `BIG`)
+- `OBJ_NUMBER` with an internal `NumberKind` (`F32`, `F64`)
+
+These are **not** first-class types for normal scripting. The VM fast-path stays on `int32` immediate and `double` IEEE-754. Granular types would only appear at FFI boundaries or in specialized stdlib modules (pixel buffers, audio). The JIT tracks them in SSA IR; boxing/unboxing only happens at JIT/VM boundaries.
 
 *Comparison with Lua/LuaJIT:*
-Lua and LuaJIT expose only one numeric type to the user: `number` (double). Internally, LuaJIT may track whether a value fits in `int64` for optimization, but the programmer never sees `int32` vs `int64` vs `float32`. Luna differs: we expose granular numeric types to the programmer (like Rust or C) while keeping the VM fast-path simple (like LuaJIT).
+Lua and LuaJIT expose only one numeric type to the user: `number` (double). Luna follows the same philosophy: `int` and `float` (internally double) are the only numeric types the programmer sees. Granular types, if they ever arrive, will be opaque FFI concerns — not everyday scripting types.
 
 ### NaN-Boxing Architecture (Current & Future)
 

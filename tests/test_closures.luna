@@ -1,0 +1,64 @@
+# Test closures: nested functions, multiple captures, state mutation
+
+# Basic nested function
+def outer():
+    var x = 5
+    def inner():
+        return x
+    return inner()
+
+print(outer())
+
+# Multiple captured variables
+def make_adder(base):
+    var offset = 10
+    def adder(x):
+        return base + x + offset
+    return adder
+
+var add5 = make_adder(5)
+print(add5(3))
+
+# Nested closures
+def outer2():
+    var x = 1
+    def middle():
+        var y = 2
+        def inner():
+            return x + y
+        return inner
+    return middle
+
+var f = outer2()
+var g = f()
+print(g())
+
+# Closure modifying captured variable (accumulator)
+def make_accumulator():
+    var total = 0
+    def add(n):
+        total = total + n
+        return total
+    return add
+
+var acc = make_accumulator()
+print(acc(5))
+print(acc(10))
+print(acc(3))
+
+# Counter that outlives parent frame
+def make_counter():
+    var count = 0
+    def counter():
+        count = count + 1
+        return count
+    return counter
+
+var c = make_counter()
+print(c())
+print(c())
+print(c())
+
+var d = make_counter()
+print(d())
+print(d())

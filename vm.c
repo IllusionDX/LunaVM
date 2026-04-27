@@ -692,7 +692,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_default,       // 57 OP_DEFAULT
         &&op_kwargs,        // 58 OP_KWARGS
         &&op_kcall,         // 59 OP_KCALL
-        &&op_halt           // 60 OP_HALT
+        &&op_coalesce,      // 60 OP_COALESCE
+        &&op_halt           // 61 OP_HALT
     };
 
     DECODE;
@@ -1886,7 +1887,18 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 60. OP_HALT */
+    /* 60. OP_COALESCE */
+    op_coalesce: {
+        if (!IS_NIL(REG(RA))) {
+            IP += sBx;
+            DECODE;
+            goto *op_labels[OP(instr)];
+        }
+        DECODE;
+        goto *op_labels[OP(instr)];
+    }
+
+    /* 61. OP_HALT */
     op_halt:
         return VM_OK;
 

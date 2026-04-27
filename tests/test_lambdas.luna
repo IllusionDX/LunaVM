@@ -1,4 +1,4 @@
-# Test arrow functions / lambdas
+# Test lambdas / arrow functions
 
 var add = (a, b) => a + b
 print(add(3, 4))
@@ -17,3 +17,7 @@ print(add5(10))
 # Simple lambda usage
 var apply = (f, v) => f(v)
 print(apply((x) => x * 2, 7))
+
+# Minimal lambda (regression)
+var min = (a, b) => a + b
+print(min(1, 2))

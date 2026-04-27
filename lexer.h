@@ -68,6 +68,7 @@ typedef enum {
     TOK_GE,
     TOK_ASSIGN,
     TOK_LAMBDA,
+    TOK_COALESCE,
     TOK_PLUS_ASSIGN,
     TOK_MINUS_ASSIGN,
     TOK_STAR_ASSIGN,

@@ -1,0 +1,38 @@
+# Test nullish coalescing ??
+var a = null
+var b = a ?? "default"
+print(b)
+
+var c = 0
+var d = c ?? "default"
+print(d)
+
+var e = false
+var f = e ?? "default"
+print(f)
+
+var g = ""
+var h = g ?? "default"
+print(h)
+
+var i = 42
+var j = i ?? "default"
+print(j)
+
+# Chained ??
+var k = null ?? null ?? "fallback"
+print(k)
+
+# Short-circuit: RHS should not be evaluated if LHS is not null
+var side = 0
+def trigger():
+    side += 1
+    return "triggered"
+
+var m = 1 ?? trigger()
+print(side)
+print(m)
+
+var n = null ?? trigger()
+print(side)
+print(n)

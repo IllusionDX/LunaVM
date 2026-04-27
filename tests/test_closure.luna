@@ -1,9 +1,0 @@
-# Test nested function parsing
-
-def outer():
-    var x = 5
-    def inner():
-        return x
-    return inner()
-
-print(outer())
