@@ -20,6 +20,7 @@ Write-Host "Running Luna regression tests..." -ForegroundColor Cyan
 
 Get-ChildItem "tests\*.luna" | ForEach-Object {
     $testName = $_.Name
+    $shouldFail = $testName -like '*.should_fail.*'
     Write-Host -NoNewline "Running $testName... "
 
     # Merge stdout + stderr
@@ -37,12 +38,22 @@ Get-ChildItem "tests\*.luna" | ForEach-Object {
     Add-Content -Path $OutFile -Value $cleanOutput
     Add-Content -Path $OutFile -Value ""
 
-    if ($exitCode -eq 0) {
-        Write-Host "PASSED" -ForegroundColor Green
-        $Passed++
+    if ($shouldFail) {
+        if ($exitCode -ne 0) {
+            Write-Host "PASSED (expected failure)" -ForegroundColor Green
+            $Passed++
+        } else {
+            Write-Host "FAILED (expected failure but passed)" -ForegroundColor Red
+            $Failed++
+        }
     } else {
-        Write-Host "FAILED (exit code: $exitCode)" -ForegroundColor Red
-        $Failed++
+        if ($exitCode -eq 0) {
+            Write-Host "PASSED" -ForegroundColor Green
+            $Passed++
+        } else {
+            Write-Host "FAILED (exit code: $exitCode)" -ForegroundColor Red
+            $Failed++
+        }
     }
 }
 

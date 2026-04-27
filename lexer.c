@@ -444,11 +444,31 @@ TokenList *lexer_tokenize(Lexer *lexer) {
         fprintf(stderr, "Out of memory\n");
         exit(1);
     }
-    
+
     list->head = NULL;
     list->tail = NULL;
     list->count = 0;
-    
+
+    /* Handle BOMs */
+    const unsigned char *src = (const unsigned char *)lexer->source;
+    if (src[0] == 0xEF && src[1] == 0xBB && src[2] == 0xBF) {
+        /* UTF-8 BOM — skip it */
+        lexer->current += 3;
+    } else if ((src[0] == 0xFF && src[1] == 0xFE) || (src[0] == 0xFE && src[1] == 0xFF)) {
+        /* UTF-16 BOM — not supported */
+        Token *err = (Token *)malloc(sizeof(Token));
+        err->type = TOK_ERROR;
+        err->value = malloc(64);
+        strcpy(err->value, "UTF-16 encoding is not supported; please use UTF-8");
+        err->line = 1;
+        err->column = 1;
+        err->next = NULL;
+        list->head = err;
+        list->tail = err;
+        list->count = 1;
+        return list;
+    }
+
     while (true) {
         Token *token = scan_token(lexer);
         
@@ -460,7 +480,14 @@ TokenList *lexer_tokenize(Lexer *lexer) {
         list->tail = token;
         list->count++;
         
-        if (token->type == TOK_EOF || token->type == TOK_ERROR) {
+        if (token->type == TOK_EOF) {
+            break;
+        }
+        if (token->type == TOK_ERROR) {
+            Token *eof_token = make_token(lexer, TOK_EOF, lexer->current, 0);
+            list->tail->next = eof_token;
+            list->tail = eof_token;
+            list->count++;
             break;
         }
     }

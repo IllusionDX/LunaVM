@@ -23,6 +23,10 @@ echo "Running Luna regression tests..."
 
 for test_file in tests/*.luna; do
     test_name="$(basename "$test_file")"
+    should_fail=0
+    case "$test_name" in
+        *.should_fail.*) should_fail=1 ;;
+    esac
     printf "Running %s... " "$test_name"
 
     tmp_file="$(mktemp)"
@@ -39,12 +43,22 @@ for test_file in tests/*.luna; do
         echo ""
     } >> "$OUT_FILE"
 
-    if [ "$exit_code" -eq 0 ]; then
-        echo "PASSED"
-        ((PASSED++)) || true
+    if [ "$should_fail" -eq 1 ]; then
+        if [ "$exit_code" -ne 0 ]; then
+            echo "PASSED (expected failure)"
+            ((PASSED++)) || true
+        else
+            echo "FAILED (expected failure but passed)"
+            ((FAILED++)) || true
+        fi
     else
-        echo "FAILED (exit code: $exit_code)"
-        ((FAILED++)) || true
+        if [ "$exit_code" -eq 0 ]; then
+            echo "PASSED"
+            ((PASSED++)) || true
+        else
+            echo "FAILED (exit code: $exit_code)"
+            ((FAILED++)) || true
+        fi
     fi
 done
 

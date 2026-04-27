@@ -69,6 +69,18 @@ static int execute_native_program(const char *source) {
         return 1;
     }
 
+    /* Check for lexer errors (e.g. unsupported encoding) before parsing */
+    Token *t = tokens->head;
+    while (t) {
+        if (t->type == TOK_ERROR) {
+            fprintf(stderr, "Lexer error: %s\n", t->value ? t->value : "Unknown lexer error");
+            token_list_free(tokens);
+            lexer_free(lexer);
+            return 1;
+        }
+        t = t->next;
+    }
+
     Parser *parser = parser_new(tokens);
     Program *program = parser_parse(parser);
 
