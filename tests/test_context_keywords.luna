@@ -1,0 +1,18 @@
+var list = [1, 2, 3]
+var dict = {"a": 1}
+var string = "hello"
+var bool = true
+var char = 'x'
+
+print(list)
+print(dict)
+print(string)
+print(bool)
+print(char)
+
+var x: int = 100
+var y: string = "world"
+var z: list = [10, 20]
+print(x)
+print(y)
+print(z)

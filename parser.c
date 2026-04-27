@@ -115,9 +115,7 @@ Decl *make_decl(DeclKind kind) {
 /* ============== Type hint tokens ============== */
 
 bool is_type_hint_token(TokenType t) {
-    return t == TOK_INT_TYPE || t == TOK_FLOAT_TYPE || t == TOK_DOUBLE_TYPE ||
-           t == TOK_BOOL_TYPE || t == TOK_CHAR_TYPE || t == TOK_STRING_TYPE ||
-           t == TOK_LIST_TYPE || t == TOK_DICT || t == TOK_IDENTIFIER;
+    return t == TOK_IDENTIFIER;
 }
 
 bool is_type_hint_start(Parser *parser) {
@@ -126,7 +124,8 @@ bool is_type_hint_start(Parser *parser) {
 
     int offset = 1;
     Token *next = peek_ahead(parser, offset);
-    if (tok->type == TOK_LIST_TYPE || tok->type == TOK_DICT) {
+    if (tok->type == TOK_IDENTIFIER &&
+        (strcmp(tok->value, "list") == 0 || strcmp(tok->value, "dict") == 0)) {
         if (next && next->type == TOK_LT) {
             int depth = 1;
             offset++;

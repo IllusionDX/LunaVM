@@ -140,14 +140,6 @@ static Keyword keywords[] = {
     {"import", TOK_IMPORT},
     {"from", TOK_FROM},
     {"var", TOK_VAR},
-    {"dict", TOK_DICT},
-    {"int", TOK_INT_TYPE},
-    {"float", TOK_FLOAT_TYPE},
-    {"double", TOK_DOUBLE_TYPE},
-    {"bool", TOK_BOOL_TYPE},
-    {"char", TOK_CHAR_TYPE},
-    {"string", TOK_STRING_TYPE},
-    {"list", TOK_LIST_TYPE},
     {NULL, TOK_EOF}
 };
 
@@ -546,7 +538,6 @@ const char *token_type_name(TokenType type) {
         case TOK_NULL: return "NULL";
         case TOK_DEF: return "DEF";
         case TOK_CONST: return "CONST";
-        case TOK_DICT: return "DICT";
         case TOK_CLASS: return "CLASS";
         case TOK_EXTENDS: return "EXTENDS";
         case TOK_NEW: return "NEW";
@@ -575,13 +566,6 @@ const char *token_type_name(TokenType type) {
         case TOK_IMPORT: return "IMPORT";
         case TOK_FROM: return "FROM";
         case TOK_VAR: return "VAR";
-        case TOK_INT_TYPE: return "INT_TYPE";
-        case TOK_FLOAT_TYPE: return "FLOAT_TYPE";
-        case TOK_DOUBLE_TYPE: return "DOUBLE_TYPE";
-        case TOK_BOOL_TYPE: return "BOOL_TYPE";
-        case TOK_CHAR_TYPE: return "CHAR_TYPE";
-        case TOK_STRING_TYPE: return "STRING_TYPE";
-    case TOK_LIST_TYPE: return "LIST_TYPE";
         case TOK_PLUS: return "PLUS";
         case TOK_MINUS: return "MINUS";
         case TOK_STAR: return "STAR";

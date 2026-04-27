@@ -34,7 +34,7 @@ var x: int = 5                  # recommended
 var x : int = 5                 # also valid
 ```
 
-> Note: `list`, `dict`, `int`, `float`, `string`, `bool`, and `char` are reserved keywords and cannot be used as variable names. This restriction will be lifted in a future release.
+> Note: `list`, `dict`, `int`, `float`, `string`, `bool`, and `char` are context-sensitive type-hint keywords. They are valid as identifiers everywhere except after `:` in declarations (e.g., `var x: int = 5`).
 
 ### Base Types
 
