@@ -282,6 +282,12 @@ static void mark_object(Object *obj) {
             }
             break;
         }
+        case OBJ_BOUND_METHOD: {
+            ObjBoundMethod *bm = (ObjBoundMethod *)obj;
+            mark_value(bm->self);
+            if (bm->fn) mark_object((Object*)bm->fn);
+            break;
+        }
         default: break;
     }
 }
@@ -938,6 +944,45 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 DECODE;
                 goto *op_labels[OP(instr)];
             }
+        } else if (IS_BOUND_METHOD(fn_val)) {
+            ObjBoundMethod *bm = (ObjBoundMethod *)AS_OBJ(fn_val);
+            ObjFunction *fn = bm->fn;
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = fn->native_fn(vm, scratch, nargs);
+                SET_REG(ret_reg, result);
+                DECODE; goto *op_labels[OP(instr)];
+            } else {
+                if (vm->frame_count >= MAX_FRAMES) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    goto op_throw;
+                }
+                CallFrame *caller = &FRAME;
+                CallFrame *callee = &vm->frames[vm->frame_count];
+                callee->chunk = fn->chunk;
+                callee->ip = 0;
+                /* Overwrite bound method slot with self; base points there so reg 0 = self */
+                SET_REG(fn_reg, bm->self);
+                callee->base = caller->base + fn_reg;
+                callee->closure = NULL;
+                callee->ret_reg = ret_reg;
+                int needed = callee->base + fn->chunk->max_registers;
+                if (needed > vm->stack_cap) {
+                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                /* nargs+1 because self occupies reg 0 */
+                for (int i = nargs + 1; i < fn->chunk->max_registers; i++)
+                    vm->stack[callee->base + i] = make_null();
+                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                vm->frame_count++;
+                CHUNK = callee->chunk;
+                IP = 0;
+                DECODE;
+                goto *op_labels[OP(instr)];
+            }
         } else {
             char *s = value_to_string(fn_val);
             char buf[256];
@@ -1365,16 +1410,21 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                         SET_REG(RA, inst->fields[fi]);
                         ic->inst = inst; ic->name = field; ic->index = fi;
                     } else {
-                        /* method lookup — return null for now (bound methods are future work) */
+                        /* method lookup — create bound method */
+                        int mi = -1;
                         if (inst->klass) {
                             for (int i = 0; i < inst->klass->method_count; i++) {
                                 if (strcmp(inst->klass->method_names[i], field->chars) == 0) {
-                                    SET_REG_PRIM(RA, make_null());
-                                    break;
+                                    mi = i; break;
                                 }
                             }
                         }
-                        if (fi < 0) SET_REG_PRIM(RA, make_null());
+                        if (mi >= 0) {
+                            ObjBoundMethod *bm = new_bound_method(obj, inst->klass->methods[mi]);
+                            SET_REG(RA, make_obj((Object*)bm));
+                        } else {
+                            SET_REG_PRIM(RA, make_null());
+                        }
                     }
                 }
                 break;

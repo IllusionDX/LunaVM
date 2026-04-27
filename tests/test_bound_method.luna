@@ -1,0 +1,15 @@
+class Player:
+    var hp
+    
+    def _init():
+        self.hp = 100
+    
+    def damage(amount):
+        self.hp -= amount
+        return self.hp
+
+var p = new Player()
+var fn = p.damage
+print(fn(20))
+print(fn(30))
+print(p.hp)

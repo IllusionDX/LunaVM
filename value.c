@@ -305,6 +305,17 @@ ObjClosure *new_closure(ObjFunction *function) {
     return cl;
 }
 
+ObjBoundMethod *new_bound_method(Value self, ObjFunction *fn) {
+    ObjBoundMethod *bm = malloc(sizeof(ObjBoundMethod));
+    if (!bm) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)bm, OBJ_BOUND_METHOD, sizeof(ObjBoundMethod));
+    bm->self = self;
+    if (IS_OBJ(self) && AS_OBJ(self)) retain_obj(AS_OBJ(self));
+    bm->fn = fn;
+    if (fn) retain_obj((Object*)fn);
+    return bm;
+}
+
 ObjEnum *new_enum(const char *name, int count) {
     ObjEnum *e = malloc(sizeof(ObjEnum));
     if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
@@ -405,6 +416,9 @@ void free_object_container(Object *obj) {
             free(cls->methods);
             free(cls); break;
         }
+        case OBJ_BOUND_METHOD: {
+            free(obj); break;
+        }
         default: free(obj); break;
     }
 }
@@ -469,6 +483,12 @@ void free_object(Object *obj) {
             for (int i = 0; i < cls->method_count; i++) {
                 if (cls->methods[i]) release_obj((Object*)cls->methods[i]);
             }
+            break;
+        }
+        case OBJ_BOUND_METHOD: {
+            ObjBoundMethod *bm = (ObjBoundMethod *)obj;
+            release_value(bm->self);
+            if (bm->fn) release_obj((Object*)bm->fn);
             break;
         }
         default: break;
@@ -592,6 +612,12 @@ char *value_to_string(Value v) {
                 int n = snprintf(out, cap, "<enum %s (%d variants)>", e->name, e->count);
                 if (n >= cap) { cap = n + 1; out = realloc(out, cap); snprintf(out, cap, "<enum %s (%d variants)>", e->name, e->count); }
                 char *r = strdup(out); free(out); return r;
+            }
+            case OBJ_BOUND_METHOD: {
+                ObjBoundMethod *bm = (ObjBoundMethod*)obj;
+                ObjFunction *f = bm->fn;
+                snprintf(buf, sizeof(buf), "<bound method %s>", f && f->name ? f->name : "?");
+                return strdup(buf);
             }
             default: return strdup("<object>");
         }

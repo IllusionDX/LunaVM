@@ -868,18 +868,16 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         int ck = chunk_add_string(c->chunk, expr->data.new_expr.class_name);
         emit_ABx(c, OP_NEW, (uint8_t)target, (uint16_t)ck);
         int nargs = expr->data.new_expr.arg_count;
-        if (nargs > 0) {
-            int saved_base = c->temp_base;
-            /* INVOKE: method name at obj_reg+1 (target+1), args at obj_reg+2.., dest at target+nargs+1 */
-            c->temp_base = target + nargs + 2;
-            for (int i = 0; i < nargs; i++) {
-                compile_expr_into(c, expr->data.new_expr.arguments[i], target + 2 + i);
-            }
-            c->temp_base = saved_base;
-            int mk = chunk_add_string(c->chunk, "_init");
-            emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
-            emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
+        int saved_base = c->temp_base;
+        /* INVOKE: method name at obj_reg+1 (target+1), args at obj_reg+2.., dest at target+nargs+1 */
+        c->temp_base = target + nargs + 2;
+        for (int i = 0; i < nargs; i++) {
+            compile_expr_into(c, expr->data.new_expr.arguments[i], target + 2 + i);
         }
+        c->temp_base = saved_base;
+        int mk = chunk_add_string(c->chunk, "_init");
+        emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
+        emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
         break;
     }
 
