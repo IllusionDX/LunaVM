@@ -175,12 +175,15 @@ static Value bn_type(VM *vm, Value *args, int n) {
         else if (IS_DOUBLE(args[0])) t = "double";
         else if (IS_OBJ(args[0])) {
             switch (AS_OBJ(args[0])->type) {
-                case OBJ_STRING:   t = "string";   break;
-                case OBJ_LIST:     t = "list";     break;
-                case OBJ_DICT:     t = "dict";     break;
-                case OBJ_INSTANCE: t = ((ObjInstance*)AS_OBJ(args[0]))->class_name; break;
-                case OBJ_FUNCTION: t = "function"; break;
-                default:           t = "object";   break;
+                case OBJ_STRING:     t = "string";     break;
+                case OBJ_LIST:       t = "list";       break;
+                case OBJ_DICT:       t = "dict";       break;
+                case OBJ_INSTANCE:   t = ((ObjInstance*)AS_OBJ(args[0]))->class_name; break;
+                case OBJ_FUNCTION:   t = "function";   break;
+                case OBJ_EXCEPTION:  t = "exception";  break;
+                case OBJ_CLOSURE:    t = "closure";    break;
+                case OBJ_ENUM:       t = "enum";       break;
+                default:             t = "object";     break;
             }
         }
     }
