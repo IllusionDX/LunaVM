@@ -1453,35 +1453,50 @@ static void compile_function(Compiler *c, Decl *decl) {
 
 static void compile_class(Compiler *c, Decl *decl) {
     const char *name = decl->data.class_decl.name;
-    ObjInstance *proto = new_instance(name, decl->data.class_decl.base_class, 4);
+    ObjClass *cls = new_class(name, decl->data.class_decl.base_class);
 
-    /* Inherit from parent prototype if extends is specified */
+    /* Inheritance */
     if (decl->data.class_decl.base_class) {
         Value parent_val;
         if (vm_get_global(c->vm, decl->data.class_decl.base_class, &parent_val)
-            && IS_INSTANCE(parent_val)) {
-            ObjInstance *parent = (ObjInstance*)AS_OBJ(parent_val);
-            /* Copy parent fields */
-            for (int i = 0; i < parent->field_count; i++) {
-                instance_set_field(proto, parent->field_names[i], parent->fields[i]);
+            && IS_CLASS(parent_val)) {
+            ObjClass *parent = (ObjClass*)AS_OBJ(parent_val);
+            cls->base = parent;
+            retain_obj((Object*)parent);
+
+            /* Copy parent's prototype fields to new prototype */
+            if (parent->prototype) {
+                ObjInstance *pp = parent->prototype;
+                cls->prototype = new_instance(cls, pp->field_capacity > 4 ? pp->field_capacity : 4);
+                for (int i = 0; i < pp->field_count; i++) {
+                    /* Already cloned by new_instance since klass->prototype was set */
+                }
             }
+
             /* Copy parent methods */
             if (parent->method_count > 0) {
-                proto->methods = malloc(sizeof(ObjFunction*) * parent->method_count);
-                memcpy(proto->methods, parent->methods,
-                       sizeof(ObjFunction*) * parent->method_count);
-                proto->method_count = parent->method_count;
-                proto->method_capacity = parent->method_count;
+                cls->methods = malloc(sizeof(ObjFunction*) * parent->method_count);
+                cls->method_names = malloc(sizeof(char*) * parent->method_count);
+                memcpy(cls->methods, parent->methods, sizeof(ObjFunction*) * parent->method_count);
                 for (int i = 0; i < parent->method_count; i++) {
-                    if (proto->methods[i]) retain_obj((Object*)proto->methods[i]);
+                    cls->method_names[i] = strdup(parent->method_names[i]);
+                    if (cls->methods[i]) retain_obj((Object*)cls->methods[i]);
                 }
+                cls->method_count = parent->method_count;
+                cls->method_capacity = parent->method_count;
             }
         }
     }
 
+    /* Create prototype with default field values */
+    cls->prototype = new_instance(cls, 4);
+    /* The prototype's klass points to cls, but we should NOT retain-cycle.
+       The prototype is owned by the class, and the class is owned by globals,
+       so when the class is freed, it frees the prototype too. */
+
     /* Fields */
     for (int i = 0; i < decl->data.class_decl.field_count; i++) {
-        instance_set_field(proto, decl->data.class_decl.fields[i].name, make_null());
+        instance_set_field(cls->prototype, decl->data.class_decl.fields[i].name, make_null());
     }
 
     /* Methods */
@@ -1525,17 +1540,20 @@ static void compile_class(Compiler *c, Decl *decl) {
         for (int j = 0; j < m->data.function.param_count; j++)
             mf->param_names[j + 1] = strdup(m->data.function.params[j].name);
 
-        /* Append to proto methods */
-        if (proto->method_count >= proto->method_capacity) {
-            proto->method_capacity = proto->method_capacity ? proto->method_capacity * 2 : 4;
-            proto->methods = realloc(proto->methods, sizeof(ObjFunction*) * proto->method_capacity);
+        /* Store in class */
+        if (cls->method_count >= cls->method_capacity) {
+            cls->method_capacity = cls->method_capacity ? cls->method_capacity * 2 : 4;
+            cls->methods = realloc(cls->methods, sizeof(ObjFunction*) * cls->method_capacity);
+            cls->method_names = realloc(cls->method_names, sizeof(char*) * cls->method_capacity);
         }
-        proto->methods[proto->method_count++] = mf;
+        cls->method_names[cls->method_count] = strdup(m->data.function.name);
+        cls->methods[cls->method_count] = mf;
         retain_obj((Object*)mf);
+        cls->method_count++;
     }
 
-    Value proto_val = make_obj((Object*)proto);
-    vm_set_global(c->vm, name, proto_val, false);
+    Value cls_val = make_obj((Object*)cls);
+    vm_set_global(c->vm, name, cls_val, false);
 }
 
 static void compile_enum(Compiler *c, Decl *decl) {

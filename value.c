@@ -211,18 +211,49 @@ static void dict_transition_to_heap(ObjDict *d) {
     }
 }
 
-ObjInstance *new_instance(const char *class_name, const char *base_class, int cap) {
+ObjClass *new_class(const char *name, const char *base_name) {
+    (void)base_name;
+    ObjClass *cls = malloc(sizeof(ObjClass));
+    if (!cls) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)cls, OBJ_CLASS, sizeof(ObjClass));
+    cls->name = strdup(name);
+    cls->base = NULL;
+    cls->prototype = NULL;
+    cls->methods = NULL;
+    cls->method_names = NULL;
+    cls->method_count = 0;
+    cls->method_capacity = 0;
+    return cls;
+}
+
+ObjInstance *new_instance(ObjClass *klass, int cap) {
     ObjInstance *inst = malloc(sizeof(ObjInstance));
     if (!inst) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)inst, OBJ_INSTANCE, sizeof(ObjInstance) + sizeof(Value) * cap + sizeof(ObjFunction*) * 0);
-    inst->class_name    = strdup(class_name);
-    inst->base_class    = base_class ? strdup(base_class) : NULL;
+    init_object((Object*)inst, OBJ_INSTANCE, sizeof(ObjInstance) + sizeof(Value) * cap);
+    inst->class_name    = strdup(klass->name);
+    inst->klass         = klass;
+    retain_obj((Object*)klass);
     inst->field_capacity = cap > 0 ? cap : 4;
     inst->field_count   = 0;
     inst->field_names   = calloc(inst->field_capacity, sizeof(char *));
     inst->fields        = calloc(inst->field_capacity, sizeof(Value));
-    inst->methods       = NULL;
-    inst->method_count  = 0;
+
+    /* Copy prototype fields if they exist */
+    if (klass->prototype) {
+        ObjInstance *proto = klass->prototype;
+        for (int i = 0; i < proto->field_count; i++) {
+            if (inst->field_count >= inst->field_capacity) {
+                inst->field_capacity = inst->field_capacity * 2;
+                inst->field_names = realloc(inst->field_names, inst->field_capacity * sizeof(char *));
+                inst->fields      = realloc(inst->fields,      inst->field_capacity * sizeof(Value));
+            }
+            inst->field_names[inst->field_count] = strdup(proto->field_names[i]);
+            inst->fields[inst->field_count] = proto->fields[i];
+            if (IS_OBJ(proto->fields[i]) && AS_OBJ(proto->fields[i]))
+                retain_obj(AS_OBJ(proto->fields[i]));
+            inst->field_count++;
+        }
+    }
     return inst;
 }
 
@@ -330,11 +361,9 @@ void free_object_container(Object *obj) {
         case OBJ_INSTANCE: {
             ObjInstance *inst = (ObjInstance *)obj;
             if (inst->class_name) free(inst->class_name);
-            if (inst->base_class) free(inst->base_class);
             for (int i = 0; i < inst->field_count; i++) {
                 if (inst->field_names[i]) free(inst->field_names[i]);
             }
-            if (inst->methods) free(inst->methods);
             free(inst->field_names); free(inst->fields); free(inst); break;
         }
         case OBJ_FUNCTION: {
@@ -368,6 +397,17 @@ void free_object_container(Object *obj) {
             free(e->name);
             for (int i = 0; i < e->count; i++) free(e->names[i]);
             free(e->names); free(e->values); free(e); break;
+        }
+        case OBJ_CLASS: {
+            ObjClass *cls = (ObjClass *)obj;
+            free(cls->name);
+            if (cls->method_names) {
+                for (int i = 0; i < cls->method_count; i++)
+                    if (cls->method_names[i]) free(cls->method_names[i]);
+                free(cls->method_names);
+            }
+            free(cls->methods);
+            free(cls); break;
         }
         default: free(obj); break;
     }
@@ -409,11 +449,7 @@ void free_object(Object *obj) {
             for (int i = 0; i < inst->field_count; i++) {
                 release_value(inst->fields[i]);
             }
-            if (inst->methods) {
-                for (int i = 0; i < inst->method_count; i++) {
-                    if (inst->methods[i]) release_obj((Object*)inst->methods[i]);
-                }
-            }
+            if (inst->klass) release_obj((Object*)inst->klass);
             break;
         }
         case OBJ_UPVALUE: {
@@ -430,6 +466,15 @@ void free_object(Object *obj) {
             break;
         }
         case OBJ_ENUM: break; /* no child Values to release */
+        case OBJ_CLASS: {
+            ObjClass *cls = (ObjClass *)obj;
+            if (cls->prototype) release_obj((Object*)cls->prototype);
+            if (cls->base) release_obj((Object*)cls->base);
+            for (int i = 0; i < cls->method_count; i++) {
+                if (cls->methods[i]) release_obj((Object*)cls->methods[i]);
+            }
+            break;
+        }
         default: break;
     }
 

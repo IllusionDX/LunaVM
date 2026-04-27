@@ -247,9 +247,7 @@ static void mark_object(Object *obj) {
             for (int i = 0; i < inst->field_count; i++) {
                 mark_value(inst->fields[i]);
             }
-            for (int i = 0; i < inst->method_count; i++) {
-                mark_object((Object*)inst->methods[i]);
-            }
+            if (inst->klass) mark_object((Object*)inst->klass);
             break;
         }
         case OBJ_CLOSURE: {
@@ -273,6 +271,15 @@ static void mark_object(Object *obj) {
         case OBJ_UPVALUE: {
             ObjUpvalue *uv = (ObjUpvalue *)obj;
             mark_value(uv->closed);
+            break;
+        }
+        case OBJ_CLASS: {
+            ObjClass *cls = (ObjClass *)obj;
+            if (cls->base) mark_object((Object*)cls->base);
+            if (cls->prototype) mark_object((Object*)cls->prototype);
+            for (int i = 0; i < cls->method_count; i++) {
+                mark_object((Object*)cls->methods[i]);
+            }
             break;
         }
         default: break;
@@ -382,12 +389,8 @@ void mark_and_sweep(VM *vm) {
                 ObjInstance *inst = (ObjInstance *)g;
                 for (int i = 0; i < inst->field_count; i++) release_value(inst->fields[i]);
                 inst->field_count = 0;
-                if (inst->methods) {
-                    for (int i = 0; i < inst->method_count; i++) {
-                        if (inst->methods[i]) release_obj((Object*)inst->methods[i]);
-                    }
-                    inst->method_count = 0;
-                }
+                if (inst->klass) release_obj((Object*)inst->klass);
+                inst->klass = NULL;
                 break;
             }
             case OBJ_CLOSURE: {
@@ -404,6 +407,18 @@ void mark_and_sweep(VM *vm) {
                 ObjUpvalue *uv = (ObjUpvalue *)g;
                 release_value(uv->closed);
                 uv->closed = make_null();
+                break;
+            }
+            case OBJ_CLASS: {
+                ObjClass *cls = (ObjClass *)g;
+                if (cls->prototype) release_obj((Object*)cls->prototype);
+                cls->prototype = NULL;
+                if (cls->base) release_obj((Object*)cls->base);
+                cls->base = NULL;
+                for (int i = 0; i < cls->method_count; i++) {
+                    if (cls->methods[i]) release_obj((Object*)cls->methods[i]);
+                }
+                cls->method_count = 0;
                 break;
             }
             default: break;
@@ -1067,26 +1082,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         ObjString *cls_str = KSTROBJ(BX);
         if (!cls_str) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
         const char *cls_name = cls_str->chars;
-        Value proto_val;
-        ObjInstance *proto = NULL;
-        if (vm_get_global(vm, cls_name, &proto_val) && IS_INSTANCE(proto_val)) {
-            proto = (ObjInstance*)AS_OBJ(proto_val);
+        Value cls_val;
+        if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception("vm: class not found for new"));
+            goto op_throw;
         }
-        ObjInstance *new_inst = new_instance(cls_name, proto ? proto->base_class : NULL, 4);
-        if (proto) {
-            for (int i = 0; i < proto->field_count; i++)
-                instance_set_field(new_inst, proto->field_names[i], proto->fields[i]);
-            
-            if (proto->method_count > 0) {
-                new_inst->methods = malloc(sizeof(ObjFunction*) * proto->method_count);
-                memcpy(new_inst->methods, proto->methods, sizeof(ObjFunction*) * proto->method_count);
-                new_inst->method_count = proto->method_count;
-                new_inst->method_capacity = proto->method_count;
-                for (int i = 0; i < proto->method_count; i++) {
-                    if (new_inst->methods[i]) retain_obj((Object*)new_inst->methods[i]);
-                }
-            }
-        }
+        ObjClass *cls = (ObjClass*)AS_OBJ(cls_val);
+        ObjInstance *new_inst = new_instance(cls, 4);
         SET_REG(RA, make_obj((Object*)new_inst));
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -1340,7 +1343,16 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                         SET_REG(RA, inst->fields[fi]);
                         ic->inst = inst; ic->name = field; ic->index = fi;
                     } else {
-                        SET_REG_PRIM(RA, make_null());
+                        /* method lookup — return null for now (bound methods are future work) */
+                        if (inst->klass) {
+                            for (int i = 0; i < inst->klass->method_count; i++) {
+                                if (strcmp(inst->klass->method_names[i], field->chars) == 0) {
+                                    SET_REG_PRIM(RA, make_null());
+                                    break;
+                                }
+                            }
+                        }
+                        if (fi < 0) SET_REG_PRIM(RA, make_null());
                     }
                 }
                 break;
@@ -1356,6 +1368,17 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 }
                 if (fi >= 0) SET_REG_PRIM(RA, make_int(e->values[fi]));
                 else SET_REG_PRIM(RA, make_null());
+                break;
+            }
+            case OBJ_CLASS: {
+                ObjClass *cls = (ObjClass*)AS_OBJ(obj);
+                if (strcmp(field->chars, "name") == 0) {
+                    SET_REG(RA, make_obj((Object*)new_string(cls->name, (int)strlen(cls->name))));
+                } else if (strcmp(field->chars, "base") == 0) {
+                    SET_REG(RA, cls->base ? make_obj((Object*)cls->base) : make_null());
+                } else {
+                    SET_REG_PRIM(RA, make_null());
+                }
                 break;
             }
             default: SET_REG_PRIM(RA, make_null()); break;
@@ -1418,47 +1441,50 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                     int idx = h & (IC_CACHE_SIZE - 1);
                     IC_MemberEntry *ic = &vm->method_ic[idx];
                     int mi = -1;
-                    if (ic->inst == obj_inst && ic->name == mname_obj) {
-                        mi = ic->index;
-                    } else {
-                        /* Search backwards so child methods shadow inherited ones */
-                        for (int i = obj_inst->method_count - 1; i >= 0; i--) {
-                            ObjFunction *m = obj_inst->methods[i];
-                            if (m && strcmp(m->name, mname_obj->chars) == 0) { mi = i; break; }
-                        }
-                        if (mi >= 0) { ic->inst = obj_inst; ic->name = mname_obj; ic->index = mi; }
-                    }
-                    if (mi >= 0) {
-                        ObjFunction *m = obj_inst->methods[mi];
-                        SET_REG(obj_reg + 1, obj); // Bind 'self' to first arg slot
-                        if (m->is_native) {
-                            result = m->native_fn(vm, scratch, nargs);
+                    ObjClass *k = obj_inst->klass;
+                    if (k) {
+                        if (ic->inst == obj_inst && ic->name == mname_obj) {
+                            mi = ic->index;
                         } else {
-                            if (vm->frame_count < MAX_FRAMES) {
-                                CallFrame *caller = &FRAME;
-                                CallFrame *callee = &vm->frames[vm->frame_count];
-                                callee->chunk = m->chunk;
-                                callee->ip = 0;
-                                callee->base = caller->base + obj_reg + 1;
-                                callee->ret_reg = ret_reg;
-                                int need = callee->base + m->chunk->max_registers;
-                                if (need > vm->stack_cap) {
-                                    vm->stack_cap = need < 64 ? 64 : need * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                }
-                                vm->stack[callee->base] = obj; /* self at reg 0 */
-                                /* args already aligned: callee reg 1 = caller reg obj_reg+2 */
-                                for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
-                                    vm->stack[callee->base + j] = make_null();
-                                vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                                vm->frame_count++;
-                                CHUNK = callee->chunk;
-                                IP = 0;
-                                DECODE;
-                                goto *op_labels[OP(instr)];
+                            /* Search backwards so child methods shadow inherited ones */
+                            for (int i = k->method_count - 1; i >= 0; i--) {
+                                ObjFunction *m = k->methods[i];
+                                if (m && strcmp(k->method_names[i], mname_obj->chars) == 0) { mi = i; break; }
                             }
+                            if (mi >= 0) { ic->inst = obj_inst; ic->name = mname_obj; ic->index = mi; }
                         }
-                        handled = true;
+                        if (mi >= 0) {
+                            ObjFunction *m = k->methods[mi];
+                            SET_REG(obj_reg + 1, obj); // Bind 'self' to first arg slot
+                            if (m->is_native) {
+                                result = m->native_fn(vm, scratch, nargs);
+                            } else {
+                                if (vm->frame_count < MAX_FRAMES) {
+                                    CallFrame *caller = &FRAME;
+                                    CallFrame *callee = &vm->frames[vm->frame_count];
+                                    callee->chunk = m->chunk;
+                                    callee->ip = 0;
+                                    callee->base = caller->base + obj_reg + 1;
+                                    callee->ret_reg = ret_reg;
+                                    int need = callee->base + m->chunk->max_registers;
+                                    if (need > vm->stack_cap) {
+                                        vm->stack_cap = need < 64 ? 64 : need * 2;
+                                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                    }
+                                    vm->stack[callee->base] = obj; /* self at reg 0 */
+                                    /* args already aligned: callee reg 1 = caller reg obj_reg+2 */
+                                    for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
+                                        vm->stack[callee->base + j] = make_null();
+                                    vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                                    vm->frame_count++;
+                                    CHUNK = callee->chunk;
+                                    IP = 0;
+                                    DECODE;
+                                    goto *op_labels[OP(instr)];
+                                }
+                            }
+                            handled = true;
+                        }
                     }
                     break;
                 }
@@ -1493,49 +1519,44 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value result = make_null();
         bool handled = false;
 
-        /* Look up parent prototype via base_class */
-        if (inst->base_class) {
-            Value parent_val;
-            if (vm_get_global(vm, inst->base_class, &parent_val)
-                && IS_INSTANCE(parent_val)) {
-                ObjInstance *parent = (ObjInstance*)AS_OBJ(parent_val);
-                /* Search parent's methods (forward: parent's own methods first) */
-                for (int i = 0; i < parent->method_count; i++) {
-                    ObjFunction *m = parent->methods[i];
-                    if (m && strcmp(m->name, mname) == 0) {
-                        SET_REG(self_reg + 1, self);
-                        if (m->is_native) {
-                            Value scratch[256];
-                            for (int j = 0; j < nargs; j++)
-                                scratch[j] = REG(ret_reg + 2 + j);
-                            result = m->native_fn(vm, scratch, nargs);
-                        } else {
-                            if (vm->frame_count < MAX_FRAMES) {
-                                CallFrame *caller = &FRAME;
-                                CallFrame *callee = &vm->frames[vm->frame_count];
-                                callee->chunk = m->chunk;
-                                callee->ip = 0;
-                                callee->base = caller->base + self_reg + 1;
-                                callee->ret_reg = ret_reg;
-                                int need = callee->base + m->chunk->max_registers;
-                                if (need > vm->stack_cap) {
-                                    vm->stack_cap = need < 64 ? 64 : need * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                }
-                                vm->stack[callee->base] = self;
-                                for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
-                                    vm->stack[callee->base + j] = make_null();
-                                vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                                vm->frame_count++;
-                                CHUNK = callee->chunk;
-                                IP = 0;
-                                DECODE;
-                                goto *op_labels[OP(instr)];
+        /* Look up parent class via klass->base */
+        if (inst->klass && inst->klass->base) {
+            ObjClass *base = inst->klass->base;
+            for (int i = 0; i < base->method_count; i++) {
+                ObjFunction *m = base->methods[i];
+                if (m && strcmp(base->method_names[i], mname) == 0) {
+                    SET_REG(self_reg + 1, self);
+                    if (m->is_native) {
+                        Value scratch[256];
+                        for (int j = 0; j < nargs; j++)
+                            scratch[j] = REG(ret_reg + 2 + j);
+                        result = m->native_fn(vm, scratch, nargs);
+                    } else {
+                        if (vm->frame_count < MAX_FRAMES) {
+                            CallFrame *caller = &FRAME;
+                            CallFrame *callee = &vm->frames[vm->frame_count];
+                            callee->chunk = m->chunk;
+                            callee->ip = 0;
+                            callee->base = caller->base + self_reg + 1;
+                            callee->ret_reg = ret_reg;
+                            int need = callee->base + m->chunk->max_registers;
+                            if (need > vm->stack_cap) {
+                                vm->stack_cap = need < 64 ? 64 : need * 2;
+                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
                             }
+                            vm->stack[callee->base] = self;
+                            for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
+                                vm->stack[callee->base + j] = make_null();
+                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            vm->frame_count++;
+                            CHUNK = callee->chunk;
+                            IP = 0;
+                            DECODE;
+                            goto *op_labels[OP(instr)];
                         }
-                        handled = true;
-                        break;
                     }
+                    handled = true;
+                    break;
                 }
             }
         }

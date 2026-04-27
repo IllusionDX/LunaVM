@@ -100,7 +100,8 @@ typedef enum {
     OBJ_EXCEPTION,
     OBJ_UPVALUE,
     OBJ_CLOSURE,
-    OBJ_ENUM
+    OBJ_ENUM,
+    OBJ_CLASS
 } ObjType;
 
 /* ============================================================ */
@@ -156,6 +157,7 @@ static inline Value make_obj(void *ptr) {
 #define IS_EXCEPTION(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_EXCEPTION))
 #define IS_CLOSURE(v)  (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLOSURE))
 #define IS_ENUM(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_ENUM))
+#define IS_CLASS(v)    (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLASS))
 
 /* ============================================================ */
 /* Native function signature                                     */
@@ -207,20 +209,27 @@ typedef struct {
     ObjDictEntry inline_entries[4]; /* inline buffer for SOO */
 } ObjDict;
 
+/* Class object — first-class runtime representation of a class */
+typedef struct ObjClass {
+    Object              obj;
+    char               *name;
+    struct ObjClass    *base;          /* parent class, NULL if none */
+    struct ObjInstance *prototype;     /* template with default field values */
+    struct ObjFunction **methods;
+    char               **method_names;
+    int                  method_count;
+    int                  method_capacity;
+} ObjClass;
+
 /* Class instance — fields as a parallel-array open dict */
 typedef struct ObjInstance {
     Object              obj;
     char               *class_name;
-    char               *base_class;   /* NULL if no parent */
     char              **field_names;
     Value              *fields;
     int                 field_count;
     int                 field_capacity;
-    /* Method table: shallow array of borrowed ObjFunction pointers
-     * from the class definition chunk; not owned by the instance. */
-    struct ObjFunction **methods;
-    int                  method_count;
-    int                  method_capacity;
+    struct ObjClass    *klass;         /* owning class (retained) */
 } ObjInstance;
 
 /* Upvalue descriptor — stored in ObjFunction for CLOSURE instruction */
@@ -293,8 +302,8 @@ typedef struct {
 ObjString   *new_string(const char *chars, int length);
 ObjList     *new_list(int capacity);
 ObjDict     *new_dict(void);
-ObjInstance *new_instance(const char *class_name, const char *base_class,
-                          int initial_capacity);
+ObjInstance *new_instance(struct ObjClass *klass, int field_capacity);
+ObjClass    *new_class(const char *name, const char *base_name);
 ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
 ObjException *new_exception(const char *message);

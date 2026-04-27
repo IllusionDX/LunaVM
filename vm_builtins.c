@@ -178,11 +178,19 @@ static Value bn_type(VM *vm, Value *args, int n) {
                 case OBJ_STRING:     t = "string";     break;
                 case OBJ_LIST:       t = "list";       break;
                 case OBJ_DICT:       t = "dict";       break;
-                case OBJ_INSTANCE:   t = ((ObjInstance*)AS_OBJ(args[0]))->class_name; break;
+                case OBJ_INSTANCE: {
+                    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
+                    if (inst->klass) {
+                        return make_obj((Object*)inst->klass);
+                    }
+                    t = "instance";
+                    break;
+                }
                 case OBJ_FUNCTION:   t = "function";   break;
                 case OBJ_EXCEPTION:  t = "exception";  break;
                 case OBJ_CLOSURE:    t = "closure";    break;
                 case OBJ_ENUM:       t = "enum";       break;
+                case OBJ_CLASS:      t = "class";      break;
                 default:             t = "object";     break;
             }
         }
