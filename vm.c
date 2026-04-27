@@ -643,44 +643,46 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     DECODE;
     goto *op_labels[OP(instr)];
 
-    /* -------------------------------------------------------- */
-    /* 5.  MOVE                                                 */
-    /* -------------------------------------------------------- */
+    /* ---- Constants & Loading ---- */
+    /* 0.  OP_LOADK */
+    op_loadk:
+        SET_REG(RA, CONST(BX));
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* 1.  OP_LOADNULL */
+    op_loadnull:
+        SET_REG_PRIM(RA, make_null());
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* 2.  OP_LOADTRUE */
+    op_loadtrue:
+        SET_REG_PRIM(RA, make_bool(true));
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* 3.  OP_LOADFALSE */
+    op_loadfalse:
+        SET_REG_PRIM(RA, make_bool(false));
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* 4.  OP_LOADI */
+    op_loadi:
+        SET_REG_PRIM(RA, make_int(SBX));
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* ---- Register Ops ---- */
+    /* 5.  OP_MOVE */
     op_move:
         SET_REG(RA, REG(RB));
         DECODE; goto *op_labels[OP(instr)];
 
+    /* 6.  OP_SWAP */
     op_swap: {
         Value t = REG(RA); REG(RA) = REG(RB); REG(RB) = t;
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 0-4.  LOADK / LOADNULL / LOADTRUE / LOADFALSE / LOADI               */
-    /* -------------------------------------------------------- */
-    op_loadk:
-        SET_REG(RA, CONST(BX));
-        DECODE; goto *op_labels[OP(instr)];
-    op_loadnull:
-        SET_REG_PRIM(RA, make_null());
-        DECODE; goto *op_labels[OP(instr)];
-    op_loadi:
-        SET_REG_PRIM(RA, make_int(SBX));
-        DECODE; goto *op_labels[OP(instr)];
-
-    /* -------------------------------------------------------- */
-    /* 2-3.  LOADTRUE / LOADFALSE                             */
-    /* -------------------------------------------------------- */
-    op_loadtrue:
-        SET_REG_PRIM(RA, make_bool(true));
-        DECODE; goto *op_labels[OP(instr)];
-    op_loadfalse:
-        SET_REG_PRIM(RA, make_bool(false));
-        DECODE; goto *op_labels[OP(instr)];
-
-    /* -------------------------------------------------------- */
-    /* 7-11.  Arithmetic                                         */
-    /* -------------------------------------------------------- */
+    /* ---- Arithmetic (ABC: A = B op C) ---- */
+    /* 7.  OP_ADD */
     op_add: {
         Value _L = RKB;
         Value _R = RKC;
@@ -691,8 +693,13 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         }
         DECODE; goto *op_labels[OP(instr)];
     }
+
+    /* 8.  OP_SUB */
     op_sub: { Value _L=RKB,_R=RKC; if(IS_INT(_L)&&IS_INT(_R)){SET_REG_PRIM(RA,make_int(AS_INT(_L)-AS_INT(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
+    /* 9.  OP_MUL */
     op_mul: { Value _L=RKB,_R=RKC; if(IS_INT(_L)&&IS_INT(_R)){SET_REG_PRIM(RA,make_int(AS_INT(_L)*AS_INT(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_MUL));} DECODE; goto *op_labels[OP(instr)]; }
+
+    /* 10. OP_DIV */
     op_div: {
         Value _L = RKB, _R = RKC;
         if (IS_INT(_L) && IS_INT(_R)) {
@@ -708,6 +715,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         }
         DECODE; goto *op_labels[OP(instr)];
     }
+
+    /* 11. OP_MOD */
     op_mod: {
         Value _L = RKB, _R = RKC;
         if (IS_INT(_L) && IS_INT(_R)) {
@@ -724,45 +733,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* ---- Integer-immediate fast paths ---- */
-    op_addi: {
-        Value v = REG(RA);
-        if (IS_INT(v))         REG(RA) = make_int(AS_INT(v) + (int8_t)B);
-        else if (IS_DOUBLE(v)) REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)B);
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_subi: {
-        Value v = REG(RA);
-        if (IS_INT(v))         REG(RA) = make_int(AS_INT(v) - (int8_t)B);
-        else if (IS_DOUBLE(v)) REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)B);
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* -------------------------------------------------------- */
-    /* 21-26.  Comparisons                                      */
-    /* -------------------------------------------------------- */
-    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)< AS_INT(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
-    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)<=AS_INT(_R)):do_cmp(_L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
-    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)> AS_INT(_R)):do_cmp(_L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
-    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)>=AS_INT(_R)):do_cmp(_L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
-    op_eq: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_EQ)); DECODE; goto *op_labels[OP(instr)];
-    op_ne: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_NE)); DECODE; goto *op_labels[OP(instr)];
-
-    /* -------------------------------------------------------- */
-    /* 13-18.  Bitwise                                          */
-    /* -------------------------------------------------------- */
-    op_band: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) & to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
-    op_bor:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) | to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
-    op_bxor: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) ^ to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
-    op_shl:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) << to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
-    op_shr:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) >> to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
-    op_bnot: SET_REG_PRIM(RA, make_int(~to_i64(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
-
-    /* -------------------------------------------------------- */
-    /* 13 & 28.  NEG / NOT                                        */
-    /* -------------------------------------------------------- */
-    op_not: SET_REG_PRIM(RA, make_bool(!is_truthy(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
-
+    /* 12. OP_NEG */
     op_neg: {
         Value v = REG(RB);
         if (IS_INT(v))    { SET_REG_PRIM(RA, make_int(-AS_INT(v)));     DECODE; goto *op_labels[OP(instr)]; }
@@ -771,22 +742,72 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 28-30.  Jumps                                            */
-    /* -------------------------------------------------------- */
+    /* 13. OP_BAND */
+    op_band: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) & to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    /* 14. OP_BOR */
+    op_bor:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) | to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    /* 15. OP_BXOR */
+    op_bxor: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) ^ to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    /* 16. OP_BNOT */
+    op_bnot: SET_REG_PRIM(RA, make_int(~to_i64(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
+    /* 17. OP_SHL */
+    op_shl:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) << to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
+    /* 18. OP_SHR */
+    op_shr:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) >> to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
+
+    /* ---- Integer-immediate arithmetic (ABC: A = A op (int8_t)B) ---- */
+    /* 19. OP_ADDI */
+    op_addi: {
+        Value v = REG(RA);
+        if (IS_INT(v))         REG(RA) = make_int(AS_INT(v) + (int8_t)B);
+        else if (IS_DOUBLE(v)) REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)B);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 20. OP_SUBI */
+    op_subi: {
+        Value v = REG(RA);
+        if (IS_INT(v))         REG(RA) = make_int(AS_INT(v) - (int8_t)B);
+        else if (IS_DOUBLE(v)) REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)B);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* ---- Comparison (ABC: A = B cmp C, result is bool) ---- */
+    /* 21. OP_EQ */
+    op_eq: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_EQ)); DECODE; goto *op_labels[OP(instr)];
+    /* 22. OP_NE */
+    op_ne: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_NE)); DECODE; goto *op_labels[OP(instr)];
+    /* 23. OP_LT */
+    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)< AS_INT(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
+    /* 24. OP_LE */
+    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)<=AS_INT(_R)):do_cmp(_L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
+    /* 25. OP_GT */
+    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)> AS_INT(_R)):do_cmp(_L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
+    /* 26. OP_GE */
+    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)>=AS_INT(_R)):do_cmp(_L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
+
+    /* ---- Logical ---- */
+    /* 27. OP_NOT */
+    op_not: SET_REG_PRIM(RA, make_bool(!is_truthy(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
+
+    /* ---- Control Flow ---- */
+    /* 28. OP_JMP */
     op_jmp:
         IP += sBx;
         DECODE; goto *op_labels[OP(instr)];
+
+    /* 29. OP_JZ */
     op_jz:
         if (!is_truthy(REG(RA))) IP += sBx;
         DECODE; goto *op_labels[OP(instr)];
+
+    /* 30. OP_JNZ */
     op_jnz:
         if (is_truthy(REG(RA))) IP += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
-    /* -------------------------------------------------------- */
-    /* 31.  CALL                                                */
-    /* -------------------------------------------------------- */
+    /* ---- Functions ---- */
+    /* 31. OP_CALL */
     op_call: {
         uint8_t ret_reg = RA;
         uint8_t fn_reg  = B;
@@ -880,9 +901,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 32.  RET                                                 */
-    /* -------------------------------------------------------- */
+    /* 32. OP_RET */
     op_ret: {
         uint8_t ret_reg = RA;
         Value retval = REG(ret_reg);
@@ -913,19 +932,153 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 34.  LEAVE (close upvalues)                               */
-    /* -------------------------------------------------------- */
+    /* 33. OP_ENTER */
+    op_enter:
+        /* Stack is pre-allocated by vm_run_chunk based on max_registers */
+        DECODE; goto *op_labels[OP(instr)];
+
+    /* 34. OP_LEAVE */
     op_leave:
         close_upvalues(vm, vm->frame_count);
         DECODE; goto *op_labels[OP(instr)];
 
-    /* -------------------------------------------------------- */
-    /* 41-42.  NEWDICT / NEWLIST                                */
-    /* -------------------------------------------------------- */
-    op_newlist: SET_REG(RA, make_obj((Object*)new_list((int)Bx))); DECODE; goto *op_labels[OP(instr)];
+    /* 35. OP_CLOSURE */ {
+        uint8_t k = B;
+        uint8_t dst = RA;
+        Value fn_val = CONST(k);
+        if (!IS_FUNCTION(fn_val)) {
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception("vm: CLOSURE needs function constant"));
+            goto op_throw;
+        }
+        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
+        ObjClosure *cl = new_closure(fn);
+        for (int i = 0; i < fn->upvalue_count; i++) {
+            uint8_t is_local = fn->upvalue_descriptors[i].is_local;
+            uint8_t index    = fn->upvalue_descriptors[i].index;
+            if (is_local) {
+                cl->upvalues[i] = capture_upvalue(vm, FRAME.base + index);
+            } else {
+                if (FRAME.closure && index < (uint8_t)FRAME.closure->upvalue_count)
+                    cl->upvalues[i] = FRAME.closure->upvalues[index];
+                else
+                    cl->upvalues[i] = NULL;
+            }
+            if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
+        }
+        SET_REG(dst, make_obj((Object*)cl));
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 35. OP_CLOSURE */
+    op_closure: {
+        uint8_t k = B;
+        uint8_t dst = RA;
+        Value fn_val = CONST(k);
+        if (!IS_FUNCTION(fn_val)) {
+            release_value(_exc);
+            _exc = make_obj((Object*)new_exception("vm: CLOSURE needs function constant"));
+            goto op_throw;
+        }
+        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
+        ObjClosure *cl = new_closure(fn);
+        for (int i = 0; i < fn->upvalue_count; i++) {
+            uint8_t is_local = fn->upvalue_descriptors[i].is_local;
+            uint8_t index    = fn->upvalue_descriptors[i].index;
+            if (is_local) {
+                cl->upvalues[i] = capture_upvalue(vm, FRAME.base + index);
+            } else {
+                if (FRAME.closure && index < (uint8_t)FRAME.closure->upvalue_count)
+                    cl->upvalues[i] = FRAME.closure->upvalues[index];
+                else
+                    cl->upvalues[i] = NULL;
+            }
+            if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
+        }
+        SET_REG(dst, make_obj((Object*)cl));
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* ---- Globals ---- */
+    /* 36. OP_GETGLOBAL */
+    op_getglobal: {
+        Value v;
+        if (vm_get_global_fast(vm, KSTROBJ(BX), &v)) SET_REG(RA, v);
+        else SET_REG_PRIM(RA, make_null());
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    /* 37. OP_SETGLOBAL */
+    op_setglobal: {
+        vm_set_global(vm, KSTR(BX), REG(RA), false);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* ---- Upvalues ---- */
+    /* 38. OP_GETUPVAL */
+    op_getupval: {
+        uint8_t upv_idx = B;
+        uint8_t dst = RA;
+        if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
+            ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
+            SET_REG(dst, uv->is_open ? vm->stack[uv->stack_index] : uv->closed);
+        } else {
+            SET_REG_PRIM(dst, make_null());
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    /* 39. OP_SETUPVAL */
+    op_setupval: {
+        uint8_t upv_idx = B;
+        uint8_t src = RA;
+        if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
+            ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
+            Value val = REG(src);
+            if (uv->is_open) {
+                SET_STACK(uv->stack_index, val);
+            } else {
+                if (IS_OBJ(val) && AS_OBJ(val)) retain_obj(AS_OBJ(val));
+                Value old = uv->closed;
+                uv->closed = val;
+                if (IS_OBJ(old) && AS_OBJ(old)) release_obj(AS_OBJ(old));
+            }
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* ---- Object Ops ---- */
+    /* 40. OP_NEW */
+    op_new: {
+        ObjString *cls_str = KSTROBJ(BX);
+        if (!cls_str) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
+        const char *cls_name = cls_str->chars;
+        Value proto_val;
+        ObjInstance *proto = NULL;
+        if (vm_get_global(vm, cls_name, &proto_val) && IS_INSTANCE(proto_val)) {
+            proto = (ObjInstance*)AS_OBJ(proto_val);
+        }
+        ObjInstance *new_inst = new_instance(cls_name, proto ? proto->base_class : NULL, 4);
+        if (proto) {
+            for (int i = 0; i < proto->field_count; i++)
+                instance_set_field(new_inst, proto->field_names[i], proto->fields[i]);
+            
+            if (proto->method_count > 0) {
+                new_inst->methods = malloc(sizeof(ObjFunction*) * proto->method_count);
+                memcpy(new_inst->methods, proto->methods, sizeof(ObjFunction*) * proto->method_count);
+                new_inst->method_count = proto->method_count;
+                new_inst->method_capacity = proto->method_count;
+                for (int i = 0; i < proto->method_count; i++) {
+                    if (new_inst->methods[i]) retain_obj((Object*)new_inst->methods[i]);
+                }
+            }
+        }
+        SET_REG(RA, make_obj((Object*)new_inst));
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    /* 41. OP_NEWDICT */
     op_newdict: SET_REG(RA, make_obj((Object*)new_dict())); DECODE; goto *op_labels[OP(instr)];
-    
+    /* 42. OP_NEWLIST */
+    op_newlist: SET_REG(RA, make_obj((Object*)new_list((int)Bx))); DECODE; goto *op_labels[OP(instr)];
+    /* 43. OP_LISTAPPEND */
     op_listappend: {
         Value lst = REG(RA);
         Value val = REG(RB);
@@ -939,6 +1092,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
+    /* 44. OP_GETITER */
     op_getiter: {
         Value iter = REG(RB);
         if (IS_DICT(iter)) {
@@ -962,6 +1116,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
+    /* 45. OP_FORLOOP */
     op_forloop: {
         Value iter = REG(RA);
         Value state = REG(RA + 1);
@@ -1008,40 +1163,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 40.  NEW                                             */
-    /* -------------------------------------------------------- */
-    op_new: {
-        ObjString *cls_str = KSTROBJ(BX);
-        if (!cls_str) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
-        const char *cls_name = cls_str->chars;
-        Value proto_val;
-        ObjInstance *proto = NULL;
-        if (vm_get_global(vm, cls_name, &proto_val) && IS_INSTANCE(proto_val)) {
-            proto = (ObjInstance*)AS_OBJ(proto_val);
-        }
-        ObjInstance *new_inst = new_instance(cls_name, proto ? proto->base_class : NULL, 4);
-        if (proto) {
-            for (int i = 0; i < proto->field_count; i++)
-                instance_set_field(new_inst, proto->field_names[i], proto->fields[i]);
-            
-            if (proto->method_count > 0) {
-                new_inst->methods = malloc(sizeof(ObjFunction*) * proto->method_count);
-                memcpy(new_inst->methods, proto->methods, sizeof(ObjFunction*) * proto->method_count);
-                new_inst->method_count = proto->method_count;
-                new_inst->method_capacity = proto->method_count;
-                for (int i = 0; i < proto->method_count; i++) {
-                    if (new_inst->methods[i]) retain_obj((Object*)new_inst->methods[i]);
-                }
-            }
-        }
-        SET_REG(RA, make_obj((Object*)new_inst));
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* -------------------------------------------------------- */
-    /* 46-47.  INDEXGET / INDEXSET                              */
-    /* -------------------------------------------------------- */
+    /* 46. OP_INDEXGET */
     op_indexget: {
         Value obj = REG(RB);
         Value key = REG(RC);
@@ -1066,6 +1188,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         } else SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
+    /* 47. OP_INDEXSET */
     op_indexset: {
         Value obj = REG(RA);
         Value key = REG(RB);
@@ -1077,9 +1200,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 48.  SLICE                                               */
-    /* -------------------------------------------------------- */
+    /* 48. OP_SLICE */
     op_slice: {
         Value obj = REG(RB);
         Value start_val = REG(RB + 1);
@@ -1181,41 +1302,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 38-39.  GETUPVAL / SETUPVAL                              */
-    /* -------------------------------------------------------- */
-    op_getupval: {
-        uint8_t upv_idx = B;
-        uint8_t dst = RA;
-        if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
-            ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
-            SET_REG(dst, uv->is_open ? vm->stack[uv->stack_index] : uv->closed);
-        } else {
-            SET_REG_PRIM(dst, make_null());
-        }
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_setupval: {
-        uint8_t upv_idx = B;
-        uint8_t src = RA;
-        if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
-            ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
-            Value val = REG(src);
-            if (uv->is_open) {
-                SET_STACK(uv->stack_index, val);
-            } else {
-                if (IS_OBJ(val) && AS_OBJ(val)) retain_obj(AS_OBJ(val));
-                Value old = uv->closed;
-                uv->closed = val;
-                if (IS_OBJ(old) && AS_OBJ(old)) release_obj(AS_OBJ(old));
-            }
-        }
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* -------------------------------------------------------- */
-    /* 49-50.  MEMBERGET / MEMBERSET                            */
-    /* -------------------------------------------------------- */
+    /* 49. OP_MEMBERGET */
     op_memberget: {
         Value obj = REG(RB);
         ObjString *field = KSTROBJ(RC);
@@ -1259,6 +1346,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         }
         DECODE; goto *op_labels[OP(instr)];
     }
+
+    /* 50. OP_MEMBERSET */
     op_memberset: {
         Value obj = REG(RA);
         ObjString *field = KSTROBJ(RC);
@@ -1285,9 +1374,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 51.  INVOKE                                              */
-    /* -------------------------------------------------------- */
+    /* ---- Invocation ---- */
+    /* 51. OP_INVOKE */
     op_invoke: {
         uint8_t ret_reg = RA;
         uint8_t obj_reg = B;
@@ -1372,132 +1460,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* -------------------------------------------------------- */
-    /* 35.  CLOSURE                                             */
-    /* -------------------------------------------------------- */
-    op_closure: {
-        uint8_t k = B;
-        uint8_t dst = RA;
-        Value fn_val = CONST(k);
-        if (!IS_FUNCTION(fn_val)) {
-            release_value(_exc);
-            _exc = make_obj((Object*)new_exception("vm: CLOSURE needs function constant"));
-            goto op_throw;
-        }
-        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
-        ObjClosure *cl = new_closure(fn);
-        for (int i = 0; i < fn->upvalue_count; i++) {
-            uint8_t is_local = fn->upvalue_descriptors[i].is_local;
-            uint8_t index    = fn->upvalue_descriptors[i].index;
-            if (is_local) {
-                cl->upvalues[i] = capture_upvalue(vm, FRAME.base + index);
-            } else {
-                if (FRAME.closure && index < (uint8_t)FRAME.closure->upvalue_count)
-                    cl->upvalues[i] = FRAME.closure->upvalues[index];
-                else
-                    cl->upvalues[i] = NULL;
-            }
-            if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
-        }
-        SET_REG(dst, make_obj((Object*)cl));
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* -------------------------------------------------------- */
-    /* 33.  ENTER                                               */
-    /* -------------------------------------------------------- */
-    op_enter:
-        /* Stack is pre-allocated by vm_run_chunk based on max_registers */
-        DECODE; goto *op_labels[OP(instr)];
-
-    /* -------------------------------------------------------- */
-    /* 36.  GETGLOBAL                                           */
-    /* -------------------------------------------------------- */
-    op_getglobal: {
-        Value v;
-        if (vm_get_global_fast(vm, KSTROBJ(BX), &v)) SET_REG(RA, v);
-        else SET_REG_PRIM(RA, make_null());
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* -------------------------------------------------------- */
-    /* 37.  SETGLOBAL                                           */
-    /* -------------------------------------------------------- */
-    op_setglobal: {
-        vm_set_global(vm, KSTR(BX), REG(RA), false);
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* -------------------------------------------------------- */
-    /* 53.  THROW                                               */
-    /* -------------------------------------------------------- */
-    op_throw: {
-        if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
-            _exc = REG(RA);
-        }
-        vm->last_exception = _exc;
-        /* unwind to the nearest catch */
-        while (vm->try_stack) {
-            TryFrame *tf = vm->try_stack;
-            if (tf->frame_depth <= vm->frame_count) {
-                /* unwind call frames */
-                while (vm->frame_count > tf->frame_depth) {
-                    close_upvalues(vm, vm->frame_count);
-                    vm->frame_count--;
-                }
-                vm->stack_count = tf->stack_count;
-                SET_REG(tf->exc_reg, _exc);
-                int catch_ip = tf->catch_ip;
-                vm->try_stack = tf->next;
-                free(tf);
-                _exc = make_null();
-                CHUNK = FRAME.chunk;
-                IP = catch_ip;
-                DECODE;
-                goto *op_labels[OP(instr)];
-            }
-            /* stale frame from deeper call, pop it */
-            vm->try_stack = tf->next;
-            free(tf);
-        }
-        return VM_EXCEPTION;
-    }
-
-    /* -------------------------------------------------------- */
-    /* 54.  TRY                                                 */
-    /* -------------------------------------------------------- */
-    op_try: {
-        TryFrame *tf = malloc(sizeof(TryFrame));
-        tf->catch_ip   = IP + sBx;
-        tf->frame_depth = vm->frame_count;
-        tf->stack_count = vm->stack_count;
-        tf->exc_reg    = RA;
-        tf->next       = vm->try_stack;
-        vm->try_stack  = tf;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* -------------------------------------------------------- */
-    /* 55.  ENDTRY                                              */
-    /* -------------------------------------------------------- */
-    op_endtry: {
-        if (vm->try_stack) {
-            TryFrame *tf = vm->try_stack;
-            vm->try_stack = tf->next;
-            free(tf);
-        }
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* -------------------------------------------------------- */
-    /* 56.  HALT                                               */
-    /* -------------------------------------------------------- */
-    op_halt:
-        return VM_OK;
-
-    /* -------------------------------------------------------- */
-    /* 52.  SUPER                                               */
-    /* -------------------------------------------------------- */
+    /* 52. OP_SUPER */
     op_super: {
         uint8_t ret_reg = RA;
         uint8_t self_reg = RB;
@@ -1572,9 +1535,68 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
+    /* ---- Exceptions ---- */
+    /* 53. OP_THROW */
+    op_throw: {
+        if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
+            _exc = REG(RA);
+        }
+        vm->last_exception = _exc;
+        /* unwind to the nearest catch */
+        while (vm->try_stack) {
+            TryFrame *tf = vm->try_stack;
+            if (tf->frame_depth <= vm->frame_count) {
+                /* unwind call frames */
+                while (vm->frame_count > tf->frame_depth) {
+                    close_upvalues(vm, vm->frame_count);
+                    vm->frame_count--;
+                }
+                vm->stack_count = tf->stack_count;
+                SET_REG(tf->exc_reg, _exc);
+                int catch_ip = tf->catch_ip;
+                vm->try_stack = tf->next;
+                free(tf);
+                _exc = make_null();
+                CHUNK = FRAME.chunk;
+                IP = catch_ip;
+                DECODE;
+                goto *op_labels[OP(instr)];
+            }
+            /* stale frame from deeper call, pop it */
+            vm->try_stack = tf->next;
+            free(tf);
+        }
+        return VM_EXCEPTION;
+    }
 
+    /* 54. OP_TRY */
+    op_try: {
+        TryFrame *tf = malloc(sizeof(TryFrame));
+        tf->catch_ip   = IP + sBx;
+        tf->frame_depth = vm->frame_count;
+        tf->stack_count = vm->stack_count;
+        tf->exc_reg    = RA;
+        tf->next       = vm->try_stack;
+        vm->try_stack  = tf;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 55. OP_ENDTRY */
+    op_endtry: {
+        if (vm->try_stack) {
+            TryFrame *tf = vm->try_stack;
+            vm->try_stack = tf->next;
+            free(tf);
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 56. OP_HALT */
+    op_halt:
+        return VM_OK;
 
     /* ============================================================ */
+    
 #undef DECODE
 #undef FRAME
 #undef CHUNK
@@ -1590,7 +1612,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
 }
 
 /* ============================================================ */
-/* Upvalue helpers                                               */
+/* Upvalue helpers                                              */
 /* ============================================================ */
 
 ObjUpvalue *capture_upvalue(VM *vm, int stack_idx) {
