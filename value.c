@@ -265,6 +265,7 @@ ObjFunction *new_function(const char *name) {
     f->name        = strdup(name ? name : "<fn>");
     f->chunk       = NULL;
     f->param_names = NULL;
+    f->param_name_objs = NULL;
     f->param_count = 0;
     f->upvalue_count = 0;
     f->upvalue_descriptors = NULL;
@@ -384,6 +385,7 @@ void free_object_container(Object *obj) {
                 for (int i = 0; i < f->param_count; i++) free(f->param_names[i]);
                 free(f->param_names);
             }
+            free(f->param_name_objs);
             if (f->chunk) {
                 chunk_free(f->chunk);
                 free(f->chunk);

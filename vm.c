@@ -1031,6 +1031,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         }
         CallFrame *callee = &FRAME;
         int old_base = callee->base;
+        release_value(callee->kw_args);
         close_upvalues(vm, vm->frame_count);
         for (int i = 0; i < callee->chunk->max_registers; i++) SET_REG(i, make_null());
         
@@ -1727,6 +1728,13 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         uint8_t param_idx = RA;
         int32_t skip = sBx;
         bool has_arg = (FRAME.nargs > (int)param_idx);
+        if (!has_arg && FRAME.fn && FRAME.fn->param_name_objs &&
+            IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type == OBJ_DICT) {
+            ObjDict *kw = (ObjDict*)AS_OBJ(FRAME.kw_args);
+            Value key_val = make_obj((Object*)FRAME.fn->param_name_objs[param_idx]);
+            Value v = dict_get(kw, key_val);
+            has_arg = !IS_NIL(v);
+        }
         if (has_arg) {
             IP += skip;
         }
@@ -1735,17 +1743,15 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
 
     /* 58. OP_KWARGS */
     op_kwargs: {
-        if (IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type == OBJ_DICT) {
+        if (FRAME.fn && FRAME.fn->param_name_objs &&
+            IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type == OBJ_DICT) {
             ObjDict *kw = (ObjDict*)AS_OBJ(FRAME.kw_args);
-            if (FRAME.fn) {
-                for (int i = 0; i < FRAME.fn->param_count; i++) {
-                    const char *pname = FRAME.fn->param_names[i];
-                    Value key_val = make_obj((Object*)new_string(pname, (int)strlen(pname)));
-                    bool found = dict_has(kw, key_val);
-                    if (found) {
-                        Value v = dict_get(kw, key_val);
-                        SET_REG(i, v);
-                    }
+            for (int i = 0; i < FRAME.fn->param_count; i++) {
+                ObjString *key_str = FRAME.fn->param_name_objs[i];
+                Value key_val = make_obj((Object*)key_str);
+                Value v = dict_get(kw, key_val);
+                if (!IS_NIL(v)) {
+                    SET_REG(i, v);
                 }
             }
         }

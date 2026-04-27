@@ -315,7 +315,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.5-alpha` | Done | Arrow functions / lambdas: `(a, b) => a + b`, `() => 42`, `(x) => x * x`. Higher-order functions supported. Parser gains `peek_ahead(n)` for non-destructive lookahead. Fixed multi-assignment bug where `a, b, c = 1, 2, 3` was incorrectly rejected. Refactored `is_type_hint_start` to use `peek_ahead` instead of raw pointer chasing. UTF-16 BOM detection in lexer (rejects UTF-16 with clear error; supports UTF-8 BOM skip). Added `.should_fail.` test convention for regression tests that expect failure. |
 | `0.2.6-alpha` | Done | Multiline comments: `"""..."""` for block comments spanning multiple lines. Lexer consumes everything between triple-quotes without generating tokens. |
 | `0.2.7-alpha` | Done | `in` operator for membership testing: `item in list`, `key in dict`, `substring in string`. Type-hint keywords (`list`, `dict`, `int`, `float`, `string`, `bool`, `char`, `double`) are now context-sensitive — valid as identifiers everywhere except after `:` in declarations. Parser checks token text instead of hardcoded token types for type hints. |
-| `0.2.8-alpha` | **Current** | Bound methods (`ObjBoundMethod`): `obj.method` returns a callable bound to `obj`. `OP_CALL` handles bound method invocation (self as reg 0). `_init` auto-call fix for zero-argument constructors. |
+| `0.2.8-alpha` | Done | Bound methods (`ObjBoundMethod`): `obj.method` returns a callable bound to `obj`. `OP_CALL` handles bound method invocation (self as reg 0). `_init` auto-call fix for zero-argument constructors. |
+| `0.2.9-alpha` | **Current** | Default arguments (`def f(a, b=10):`) and keyword arguments (`f(a=5, b=3)`). Pre-interned param name keys for O(1) kwargs lookup. Eliminated string-interning overhead on every function call. |
 
 ## Roadmap
 

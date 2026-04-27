@@ -253,6 +253,9 @@ typedef struct ObjFunction {
     struct Chunk *chunk;
     /* Parameter names — for debug and future reflection */
     char **param_names;
+    /* Pre-interned ObjString* for each parameter name — avoids redundant
+       string interning on every keyword-args lookup (Issue #1). */
+    ObjString **param_name_objs;
     int param_count;
     /* Native flag */
     bool is_native;

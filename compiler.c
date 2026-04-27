@@ -542,17 +542,17 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             int kwargs_reg = target + pos_count + 1;
             emit_ABC(c, OP_NEWDICT, (uint8_t)kwargs_reg, 0, 0);
             /* Build kwargs dict */
+            int key_reg = alloc_reg(c);
+            int val_reg = alloc_reg(c);
             for (int i = 0; i < nargs; i++) {
                 if (expr->data.call.arg_names[i] != NULL) {
-                    int key_reg = alloc_reg(c);
                     emit_loadstring(c, (uint8_t)key_reg, expr->data.call.arg_names[i]);
-                    int val_reg = alloc_reg(c);
                     compile_expr_into(c, expr->data.call.arguments[i], val_reg);
                     emit_ABC(c, OP_INDEXSET, (uint8_t)kwargs_reg, (uint8_t)key_reg, (uint8_t)val_reg);
-                    free_reg(c);
-                    free_reg(c);
                 }
             }
+            free_reg(c);
+            free_reg(c);
             c->temp_base = saved_base;
             emit_ABC(c, OP_KCALL, (uint8_t)target, (uint8_t)target, (uint8_t)pos_count);
         } else {
@@ -1459,8 +1459,11 @@ static int compile_function_value(Compiler *c, const char *name,
     fn->param_count = param_count;
     if (param_count > 0) {
         fn->param_names = malloc(sizeof(char*) * param_count);
-        for (int i = 0; i < param_count; i++)
+        fn->param_name_objs = malloc(sizeof(ObjString*) * param_count);
+        for (int i = 0; i < param_count; i++) {
             fn->param_names[i] = strdup(params[i].name);
+            fn->param_name_objs[i] = new_string(params[i].name, (int)strlen(params[i].name));
+        }
     }
     fn->upvalue_count = sub.upvalue_count;
     if (sub.upvalue_count > 0) {
@@ -1593,9 +1596,15 @@ static void compile_class(Compiler *c, Decl *decl) {
         *mf->chunk      = mchunk;
         mf->param_count = m->data.function.param_count + 1; /* +self */
         mf->param_names = malloc(sizeof(char*) * mf->param_count);
+        mf->param_name_objs = malloc(sizeof(ObjString*) * mf->param_count);
         mf->param_names[0] = strdup("self");
-        for (int j = 0; j < m->data.function.param_count; j++)
+        mf->param_name_objs[0] = new_string("self", 4);
+        for (int j = 0; j < m->data.function.param_count; j++) {
             mf->param_names[j + 1] = strdup(m->data.function.params[j].name);
+            mf->param_name_objs[j + 1] = new_string(
+                m->data.function.params[j].name,
+                (int)strlen(m->data.function.params[j].name));
+        }
 
         /* Store in class */
         if (cls->method_count >= cls->method_capacity) {
