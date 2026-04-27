@@ -1,0 +1,43 @@
+# Test ternary conditional expression
+
+# Basic ternary
+var x = 10
+var result = x if x > 5 else 0
+print(result)
+
+# Ternary with false condition
+var y = 3
+result = y if y > 5 else 100
+print(result)
+
+# Ternary with null
+var maybe = null
+var name = maybe if maybe != null else "default"
+print(name)
+
+# Nested ternary
+var a = 5
+var b = 10
+var c = a if a > b else (b if b > 8 else 0)
+print(c)
+
+# Ternary in assignment
+var score = 75
+var grade = "A" if score >= 90 else ("B" if score >= 80 else "C")
+print(grade)
+
+# Ternary with arithmetic
+var val = 7
+print(val * 2 if val > 5 else val)
+
+# Ternary returning 0 (valid value, not null)
+var zero_test = 0
+print(42 if zero_test == 0 else 99)
+
+# Ternary with empty string (valid value, not null)
+var empty = ""
+print("has content" if empty != "" else "empty")
+
+# Chained ternary in var decl
+var chained = 1 if false else (2 if false else 3)
+print(chained)

@@ -621,6 +621,27 @@ static Expr *parse_or(Parser *parser) {
     return left;
 }
 
+static Expr *parse_ternary(Parser *parser) {
+    Expr *then_expr = parse_or(parser);
+    if (match(parser, TOK_IF)) {
+        ParserState state = save_state(parser);
+        advance(parser); /* consume 'if' */
+        Expr *condition = parse_or(parser);
+        if (match(parser, TOK_ELSE)) {
+            advance(parser); /* consume 'else' */
+            Expr *else_expr = parse_ternary(parser);
+            Expr *expr = make_expr(EXPR_TERNARY);
+            expr->data.ternary.then_expr = then_expr;
+            expr->data.ternary.condition = condition;
+            expr->data.ternary.else_expr = else_expr;
+            return expr;
+        }
+        /* No 'else' found — not a ternary, restore and return then_expr */
+        restore_state(parser, state);
+    }
+    return then_expr;
+}
+
 /* ============== Assignment expression parsing ============== */
 
 static bool is_multi_assignment(Parser *parser) {
@@ -644,7 +665,7 @@ static bool is_multi_assignment(Parser *parser) {
 }
 
 static Expr *parse_assignment(Parser *parser) {
-    Expr *first = parse_or(parser);
+    Expr *first = parse_ternary(parser);
 
     /* Multi-target assignment (a, b = c, d). */
     if (first->kind == EXPR_IDENTIFIER && is_multi_assignment(parser)) {
@@ -673,14 +694,14 @@ static Expr *parse_assignment(Parser *parser) {
             int value_count = 0;
             Expr **values = (Expr **)malloc(value_cap * sizeof(Expr *));
 
-            values[value_count++] = parse_or(parser);
+            values[value_count++] = parse_ternary(parser);
             while (match(parser, TOK_COMMA)) {
                 advance(parser);
                 if (value_count >= value_cap) {
                     value_cap *= 2;
                     values = (Expr **)realloc(values, value_cap * sizeof(Expr *));
                 }
-                values[value_count++] = parse_or(parser);
+                values[value_count++] = parse_ternary(parser);
             }
 
             Expr *multi = make_expr(EXPR_MULTI_ASSIGN);
