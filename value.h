@@ -2,7 +2,7 @@
  *
  * Value layout (64-bit):
  *   Real doubles are stored as raw IEEE-754 bits.
- *   All other values are tagged with a quiet-NaN signature (0x7FFC in
+ *   All other values are tagged with a quiet-NaN signature (0x7FF8 in
  *   the top 16 bits) so they are never confused with valid doubles.
  *
  *   Pointer (Obj*):  QNAN | ptr          (ptr is 8-byte aligned => low 3 bits = 000)
@@ -99,7 +99,7 @@ static inline int64_t as_int64(Value v) {
 
 /* FFI Boundary Sanitization: ALL external C doubles MUST pass through make_double().
  * Hardware NaNs have random payloads that could collide with object type signatures.
- * make_double() normalizes them to payload=1 (safe for doubles, never collides).
+ * make_double() normalizes them to payload=10 (safe for doubles, never collides).
  * Usage: return make_double(external_c_function(...));
  * NEVER: return raw_double_value;  // UNSAFE — can crash the VM */
 #define RETURN_EXT_DOUBLE(d) make_double((double)(d))
@@ -155,18 +155,14 @@ typedef struct Object {
 /*
  * TYPE TAG ENCODING EVOLUTION:
  *
- *   3-bit (current) — bits 48, 49, 63  →  8 types.  ALL SLOTS ARE NOW OCCUPIED.
- *   4-bit (needed)  — bits 47-50        → 16 types.  Bit 47 must be reclaimed.
- *   5-bit (future)  — bits 47-50 + 63   → 32 types.  Bit 63 becomes free after
- *                     the move to contiguous 47-50 encoding.
+ *   3-bit (legacy) — bits 48, 49, 63  →  8 types.  Was used before 4-bit expansion.
+ *   4-bit (current) — bits 47-50       → 16 types.  Bit 47 reclaimed from QNAN_TAG
+ *                     by changing it from 0x7FFC to 0x7FF8 (dropping bit 50 from
+ *                     the signature).  `t & 15` encoded in contiguous bits 47-50.
+ *   5-bit (future)  — bits 47-50 + 63  → 32 types.  Bit 63 becomes available as a
+ *                     5th tag bit after NaN normalization (make_double sets bit 63=0).
  *
- * To expand to 4-bit:
- *   - Change QNAN_TAG from 0x7FFC... to 0x7FF8... (drop bit 50 from the signature).
- *   - Encode `t & 15` into contiguous bits 47-50 in make_obj() and TYPE_SIGNATURE().
- *   - AS_OBJ's mask 0x00007FFFFFFFFFFF already strips bit 47, so pointers stay safe.
- *   - Bit 63 is freed and can be added back later as a 5th type tag bit if needed.
- *
- * User-space pointers are restricted to 47 bits (128 TB), so bit 47 is always 0.
+ * bit 63 must be 0 for all tagged values and normalized NaNs for 5-bit expansion.
  */
 
 static inline Value make_obj(void *ptr) {

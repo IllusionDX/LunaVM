@@ -56,7 +56,7 @@ All values are stored in a single `uint64_t`. Real IEEE-754 doubles use their ra
 │   │    │  │  │  │  └────── Type tag bit 0 (OBJ_STRING=0, OBJ_LIST=1, ...)
 │   │    │  │  │  └───────── Type tag bit 1
 │   │    │  │  └──────────── Type tag bit 2
-│   │    │  └─────────────── Type tag bit 3 (OBJ_ENUM=8)
+│   │    │  └─────────────── Type tag bit 3 (OBJ_CLASS=8)
 │   │    └────────────────── Quiet-NaN bit (must be 1)
 │   └─────────────────────── Exponent (all 1s = NaN)
 └─────────────────────────── Sign bit (0, arbitrary for NaN)
@@ -64,7 +64,7 @@ All values are stored in a single `uint64_t`. Real IEEE-754 doubles use their ra
 
 - **Bits 0-2**: Sub-tag (`nil`=1, `true`=2, `false`=3, `int`=4, `empty`=5). Object pointers have `000` because `malloc` is 8-byte aligned.
 - **Bits 3-46**: Payload (integer value shifted left by 3, or pointer address).
-- **Bits 47-50**: 4-bit **object type tag** (`OBJ_STRING`..`OBJ_ENUM`).
+- **Bits 47-50**: 4-bit **object type tag** (`OBJ_STRING`..`OBJ_BOUND_METHOD`).
 - **Bit 51**: Quiet-NaN bit (must be 1, otherwise it's a signaling NaN and the FPU may trap).
 - **Bits 52-62**: Exponent (all 1s, required by IEEE-754 for NaN).
 - **Bit 63**: Sign (0, arbitrary for NaN).
@@ -317,7 +317,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.7-alpha` | Done | `in` operator for membership testing: `item in list`, `key in dict`, `substring in string`. Type-hint keywords (`list`, `dict`, `int`, `float`, `string`, `bool`, `char`) are now context-sensitive — valid as identifiers everywhere except after `:` in declarations. Parser checks token text instead of hardcoded token types for type hints. |
 | `0.2.8-alpha` | Done | Bound methods (`ObjBoundMethod`): `obj.method` returns a callable bound to `obj`. `OP_CALL` handles bound method invocation (self as reg 0). `_init` auto-call fix for zero-argument constructors. |
 | `0.2.9-alpha` | Done | Default arguments (`def f(a, b=10):`) and keyword arguments (`f(a=5, b=3)`). Pre-interned param name keys for O(1) kwargs lookup. Eliminated string-interning overhead on every function call. |
-| `0.2.10-alpha` | **Current** | Keyword arguments for method calls: `obj.method(a=5, b=10)`. Compiler emits `OP_MEMBERGET` + `OP_KCALL` instead of `OP_INVOKE` when kwargs are present. |
+| `0.2.10-alpha` | Done | Keyword arguments for method calls: `obj.method(a=5, b=10)`. Compiler emits `OP_MEMBERGET` + `OP_KCALL` instead of `OP_INVOKE` when kwargs are present. |
+| `0.2.11-alpha` | **Current** | QNAN_TAG collision fix: changed from `0x7FFC` to `0x7FF8` (bit 50 = 0) so 16 type signatures are unique. Inf/NaN value support: `IS_INF`, `IS_POS_INF`, `IS_NEG_INF`, `IS_NAN` macros, `make_pos_inf()`, `make_neg_inf()`, Inf division results in `OP_DIV`/`OP_MOD`. `make_double()` normalizes all NaNs to payload=10. 32-type expansion path documented in NaN-boxing architecture section. |
 
 ## Roadmap
 

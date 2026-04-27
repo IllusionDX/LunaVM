@@ -870,23 +870,23 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_not: SET_REG_PRIM(RA, make_bool(!is_truthy(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
 
     /* ---- Control Flow ---- */
-    /* 28. OP_JMP */
+    /* 29. OP_JMP */
     op_jmp:
         IP += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
-    /* 29. OP_JZ */
+    /* 30. OP_JZ */
     op_jz:
         if (!is_truthy(REG(RA))) IP += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
-    /* 30. OP_JNZ */
+    /* 31. OP_JNZ */
     op_jnz:
         if (is_truthy(REG(RA))) IP += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
     /* ---- Functions ---- */
-    /* 31. OP_CALL */
+    /* 32. OP_CALL */
     op_call: {
         uint8_t ret_reg = RA;
         uint8_t fn_reg  = B;
@@ -1028,7 +1028,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 32. OP_RET */
+    /* 33. OP_RET */
     op_ret: {
         uint8_t ret_reg = RA;
         Value retval = REG(ret_reg);
@@ -1060,45 +1060,17 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         goto *op_labels[OP(instr)];
     }
 
-    /* 33. OP_ENTER */
+    /* 34. OP_ENTER */
     op_enter:
         /* Stack is pre-allocated by vm_run_chunk based on max_registers */
         DECODE; goto *op_labels[OP(instr)];
 
-    /* 34. OP_LEAVE */
+    /* 35. OP_LEAVE */
     op_leave:
         close_upvalues(vm, vm->frame_count);
         DECODE; goto *op_labels[OP(instr)];
 
-    /* 35. OP_CLOSURE */ {
-        uint8_t k = B;
-        uint8_t dst = RA;
-        Value fn_val = CONST(k);
-        if (!IS_FUNCTION(fn_val)) {
-            release_value(_exc);
-            _exc = make_exception_instance(vm, "vm: CLOSURE needs function constant");
-            goto op_throw;
-        }
-        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
-        ObjClosure *cl = new_closure(fn);
-        for (int i = 0; i < fn->upvalue_count; i++) {
-            uint8_t is_local = fn->upvalue_descriptors[i].is_local;
-            uint8_t index    = fn->upvalue_descriptors[i].index;
-            if (is_local) {
-                cl->upvalues[i] = capture_upvalue(vm, FRAME.base + index);
-            } else {
-                if (FRAME.closure && index < (uint8_t)FRAME.closure->upvalue_count)
-                    cl->upvalues[i] = FRAME.closure->upvalues[index];
-                else
-                    cl->upvalues[i] = NULL;
-            }
-            if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
-        }
-        SET_REG(dst, make_obj((Object*)cl));
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* 35. OP_CLOSURE */
+    /* 36. OP_CLOSURE */
     op_closure: {
         uint8_t k = B;
         uint8_t dst = RA;
@@ -1128,21 +1100,21 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* ---- Globals ---- */
-    /* 36. OP_GETGLOBAL */
+    /* 37. OP_GETGLOBAL */
     op_getglobal: {
         Value v;
         if (vm_get_global_fast(vm, KSTROBJ(BX), &v)) SET_REG(RA, v);
         else SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 37. OP_SETGLOBAL */
+    /* 38. OP_SETGLOBAL */
     op_setglobal: {
         vm_set_global(vm, KSTR(BX), REG(RA), false);
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* ---- Upvalues ---- */
-    /* 38. OP_GETUPVAL */
+    /* 39. OP_GETUPVAL */
     op_getupval: {
         uint8_t upv_idx = B;
         uint8_t dst = RA;
@@ -1154,7 +1126,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         }
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 39. OP_SETUPVAL */
+    /* 40. OP_SETUPVAL */
     op_setupval: {
         uint8_t upv_idx = B;
         uint8_t src = RA;
@@ -1174,7 +1146,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* ---- Object Ops ---- */
-    /* 40. OP_NEW */
+    /* 41. OP_NEW */
     op_new: {
         ObjString *cls_str = KSTROBJ(BX);
         if (!cls_str) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
@@ -1190,11 +1162,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         SET_REG(RA, make_obj((Object*)new_inst));
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 41. OP_NEWDICT */
+    /* 42. OP_NEWDICT */
     op_newdict: SET_REG(RA, make_obj((Object*)new_dict())); DECODE; goto *op_labels[OP(instr)];
-    /* 42. OP_NEWLIST */
+    /* 43. OP_NEWLIST */
     op_newlist: SET_REG(RA, make_obj((Object*)new_list((int)Bx))); DECODE; goto *op_labels[OP(instr)];
-    /* 43. OP_LISTAPPEND */
+    /* 44. OP_LISTAPPEND */
     op_listappend: {
         Value lst = REG(RA);
         Value val = REG(RB);
@@ -1208,7 +1180,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 44. OP_GETITER */
+    /* 45. OP_GETITER */
     op_getiter: {
         Value iter = REG(RB);
         if (IS_DICT(iter)) {
@@ -1232,7 +1204,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 45. OP_FORLOOP */
+    /* 46. OP_FORLOOP */
     op_forloop: {
         Value iter = REG(RA);
         Value state = REG(RA + 1);
@@ -1279,7 +1251,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 46. OP_INDEXGET */
+    /* 47. OP_INDEXGET */
     op_indexget: {
         Value obj = REG(RB);
         Value key = REG(RC);
@@ -1304,7 +1276,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         } else SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 47. OP_INDEXSET */
+    /* 48. OP_INDEXSET */
     op_indexset: {
         Value obj = REG(RA);
         Value key = REG(RB);
@@ -1316,7 +1288,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 48. OP_SLICE */
+    /* 49. OP_SLICE */
     op_slice: {
         Value obj = REG(RB);
         Value start_val = REG(RB + 1);
@@ -1418,7 +1390,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 49. OP_MEMBERGET */
+    /* 50. OP_MEMBERGET */
     op_memberget: {
         Value obj = REG(RB);
         ObjString *field = KSTROBJ(RC);
@@ -1488,7 +1460,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 50. OP_MEMBERSET */
+    /* 51. OP_MEMBERSET */
     op_memberset: {
         Value obj = REG(RA);
         ObjString *field = KSTROBJ(RC);
@@ -1516,7 +1488,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* ---- Invocation ---- */
-    /* 51. OP_INVOKE */
+    /* 52. OP_INVOKE */
     op_invoke: {
         uint8_t ret_reg = RA;
         uint8_t obj_reg = B;
@@ -1607,7 +1579,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 52. OP_SUPER */
+    /* 53. OP_SUPER */
     op_super: {
         uint8_t ret_reg = RA;
         uint8_t self_reg = RB;
@@ -1681,7 +1653,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* ---- Exceptions ---- */
-    /* 53. OP_THROW */
+    /* 54. OP_THROW */
     op_throw: {
         if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
             _exc = REG(RA);
@@ -1714,7 +1686,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         return VM_EXCEPTION;
     }
 
-    /* 54. OP_TRY */
+    /* 55. OP_TRY */
     op_try: {
         TryFrame *tf = malloc(sizeof(TryFrame));
         tf->catch_ip   = IP + sBx;
@@ -1726,7 +1698,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 55. OP_ENDTRY */
+    /* 56. OP_ENDTRY */
     op_endtry: {
         if (vm->try_stack) {
             TryFrame *tf = vm->try_stack;
@@ -1771,7 +1743,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 58. OP_KCALL */
+    /* 59. OP_KCALL */
     op_kcall: {
         uint8_t ret_reg = RA;
         uint8_t fn_reg  = B;
@@ -1914,7 +1886,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 59. OP_HALT */
+    /* 60. OP_HALT */
     op_halt:
         return VM_OK;
 
