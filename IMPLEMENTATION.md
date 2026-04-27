@@ -476,23 +476,84 @@ def add_item(item, items = null):
 
 **Type hints with defaults:** The parser accepts `def connect(host: string = "localhost", port: int = 8080):`. The type hint is parsed first, then the `=` and default value.
 
-### `type()` vs `is` — Type Inspection Philosophy
+### Type System — Three Operators (Planned)
 
-Luna separates **granular type inspection** (`type()`) from **categorical type checking** (`is`):
+**Status: Not yet implemented.** This section documents the design for three type-checking operators that will land in a future release (target: `0.3.x` after modules/imports).
 
-| Mechanism | Granularity | Example |
-|-----------|-------------|---------|
-| `type(x)` | **Granular** — returns the exact runtime type | `type(42)` → `"int"` (future: `"int32"`), `type(bigint_val)` → `"bigint"` |
-| `is` | **Categorical** — checks broad categories | `x is number` → true for int, float, int64, float32, etc. |
+| Operator | Question | Use case |
+|----------|----------|----------|
+| `type(x)` | "What **is** this object?" | Introspection, debugging, metaprogramming |
+| `x is T` | "Is this **exactly** T?" | Fast guard clauses, null checks, primitive dispatch |
+| `isinstance(x, T)` | "Can I **treat** this as T?" | Polymorphism, inheritance checks |
 
-**`type(x)`** always returns the most specific type name available. When boxed granular types (`int64`, `uint8`, `float32`, `bigint`) land, `type()` will return their exact names (e.g., `"int64"`). This gives programmers precise visibility into what they're holding.
+#### `type(x)` — Exact runtime type (current behavior, no changes planned)
 
-**`is`** starts simple and expands later:
-- Phase 1 (now-ish): `x is number` — true for any numeric type (int immediate, double, and future boxed integers/floats). This is the 90% case.
-- Phase 2 (future): `x is int`, `x is float` — categorical checks for integer family vs floating-point family.
-- Phase 3 (future, maybe): `x is int32`, `x is uint8` — exact granular matches. Only needed if the JIT can't optimize the check away.
+Will continue to return the canonical type representation. Primitives and builtin objects return **strings**; class instances return their **class object**.
 
-The guiding principle: `type()` is for debugging and serialization (you want to know exactly what you have). `is` is for control flow (you want to know if something fits a broad category). This mirrors how you'd use `typeof` vs `instanceof` in TypeScript, but simpler.
+| Value | Will return |
+|-------|-------------|
+| `null` | `"null"` |
+| `true`/`false` | `"bool"` |
+| `5` | `"int"` |
+| `3.14` | `"double"` |
+| `"hello"` | `"string"` |
+| `[1,2]` | `"list"` |
+| `def(): ...` | `"function"` / `"closure"` / `"bound_method"` |
+| `new Player()` | `Player` class object |
+
+#### `x is T` / `x is not T` — Exact type assertion (planned)
+
+Will be a fast exact-match. No inheritance, no polymorphism. Direct tag/bit/class comparison.
+
+| Expression | Planned VM check |
+|------------|------------------|
+| `x is null` | `IS_NIL(x)` |
+| `x is bool` | `IS_BOOL(x)` |
+| `x is int` | `IS_INT(x)` |
+| `x is double` | `IS_DOUBLE(x)` |
+| `x is number` | `IS_INT(x) \|\| IS_DOUBLE(x)` |
+| `x is string` | `IS_OBJ_TYPE(x, OBJ_STRING)` |
+| `x is list` | `IS_OBJ_TYPE(x, OBJ_LIST)` |
+| `x is dict` | `IS_OBJ_TYPE(x, OBJ_DICT)` |
+| `x is function` | function \| closure \| bound_method |
+| `x is class` | `IS_OBJ_TYPE(x, OBJ_CLASS)` |
+| `x is enum` | `IS_OBJ_TYPE(x, OBJ_ENUM)` |
+| `x is instance` | `IS_OBJ_TYPE(x, OBJ_INSTANCE)` |
+| `x is object` | `IS_OBJ(x)` |
+| `x is Player` | `IS_INSTANCE(x) && klass == Player_class` |
+
+**`is`** will be fast because it is exact match. For class names, it will be a pointer comparison on `klass`. No hash lookups, no chain walks.
+
+#### `isinstance(x, T)` — Compatibility check (planned)
+
+Will walk the class hierarchy for instances. For primitives, will work the same as `is` (no hierarchy yet).
+
+| Expression | Planned VM check |
+|------------|------------------|
+| `isinstance(x, int)` | `IS_INT(x)` |
+| `isinstance(x, number)` | `IS_INT(x) \|\| IS_DOUBLE(x)` |
+| `isinstance(x, Player)` | `IS_INSTANCE(x) && klass_chain_contains(klass, Player_class)` |
+| `isinstance(x, object)` | `true` for any value |
+
+For objects, will walk `klass → base → base → ...` until match or null.
+
+#### Why all three are needed
+
+- **`is`** for speed: `x is null`, `x is int` will be single bitwise checks. Intended for hot loops and guard clauses.
+- **`isinstance`** for polymorphism: `isinstance(hero, Entity)` will return `true` when `hero` is a `Warrior` extending `Entity`. Respects inheritance.
+- **`type`** for introspection: `type(x)` lets you compare types (`type(x) == type(y)`) and do metaprogramming.
+
+#### Implementation status
+
+**Heavy refactor.** Will require:
+1. Lexer: `TOK_IS`, `TOK_NOT` (already exist but need `is not` sequence handling)
+2. Parser: new precedence level between equality and `and`
+3. AST: `EXPR_IS_TYPE` node
+4. Compiler: `OP_ISTYPE` (ABC, builtin category) and `OP_INSTANCEOF` (ABx, class name lookup)
+5. VM: dispatch loop handlers for both opcodes
+6. Builtins: `isinstance()` function in `vm_builtins.c`
+
+Target: `0.3.x` after modules/imports land, since it touches the same compiler pipeline.
 
 ## Security
 
