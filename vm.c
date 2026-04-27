@@ -308,11 +308,13 @@ void mark_and_sweep(VM *vm) {
     }
     for (int i = 0; i < vm->frame_count; i++) {
         if (vm->frames[i].closure) mark_object((Object*)vm->frames[i].closure);
+        if (vm->frames[i].fn) mark_object((Object*)vm->frames[i].fn);
         if (vm->frames[i].chunk) {
             for (int j = 0; j < vm->frames[i].chunk->const_count; j++) {
                 mark_value(vm->frames[i].chunk->constants[j]);
             }
         }
+        mark_value(vm->frames[i].kw_args);
     }
     ObjUpvalue *uv = vm->open_upvalues;
     while (uv) {
@@ -593,6 +595,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     frame->ip = 0;
     frame->base = vm->stack_count;
     frame->ret_reg = 0;
+    frame->nargs = 0;
+    frame->kw_args = make_null();
     int needed = frame->base + chunk->max_registers;
     if (needed > vm->stack_cap) {
         vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -681,7 +685,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_throw,         // 54 OP_THROW
         &&op_try,           // 55 OP_TRY
         &&op_endtry,        // 56 OP_ENDTRY
-        &&op_halt           // 57 OP_HALT
+        &&op_default,       // 57 OP_DEFAULT
+        &&op_kwargs,        // 58 OP_KWARGS
+        &&op_kcall,         // 59 OP_KCALL
+        &&op_halt           // 60 OP_HALT
     };
 
     DECODE;
@@ -894,6 +901,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->base = caller->base + fn_reg + 1;
                 callee->closure = NULL;
                 callee->ret_reg = ret_reg;
+                callee->nargs = nargs;
+                callee->kw_args = make_null();
+                callee->fn = fn;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -930,6 +940,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->base = caller->base + fn_reg + 1;
                 callee->closure = cl;
                 callee->ret_reg = ret_reg;
+                callee->nargs = nargs;
+                callee->kw_args = make_null();
+                callee->fn = fn;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -968,6 +981,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->base = caller->base + fn_reg;
                 callee->closure = NULL;
                 callee->ret_reg = ret_reg;
+                callee->nargs = nargs;
+                callee->kw_args = make_null();
+                callee->fn = fn;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -1538,6 +1554,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                                     callee->ip = 0;
                                     callee->base = caller->base + obj_reg + 1;
                                     callee->ret_reg = ret_reg;
+                                    callee->nargs = nargs;
+                                    callee->kw_args = make_null();
+                                    callee->fn = m;
                                     int need = callee->base + m->chunk->max_registers;
                                     if (need > vm->stack_cap) {
                                         vm->stack_cap = need < 64 ? 64 : need * 2;
@@ -1611,6 +1630,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                             callee->ip = 0;
                             callee->base = caller->base + self_reg + 1;
                             callee->ret_reg = ret_reg;
+                            callee->nargs = nargs;
+                            callee->kw_args = make_null();
+                            callee->fn = m;
                             int need = callee->base + m->chunk->max_registers;
                             if (need > vm->stack_cap) {
                                 vm->stack_cap = need < 64 ? 64 : need * 2;
@@ -1700,7 +1722,180 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 56. OP_HALT */
+    /* 57. OP_DEFAULT */
+    op_default: {
+        uint8_t param_idx = RA;
+        int32_t skip = sBx;
+        bool has_arg = (FRAME.nargs > (int)param_idx);
+        if (has_arg) {
+            IP += skip;
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 58. OP_KWARGS */
+    op_kwargs: {
+        if (IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type == OBJ_DICT) {
+            ObjDict *kw = (ObjDict*)AS_OBJ(FRAME.kw_args);
+            if (FRAME.fn) {
+                for (int i = 0; i < FRAME.fn->param_count; i++) {
+                    const char *pname = FRAME.fn->param_names[i];
+                    Value key_val = make_obj((Object*)new_string(pname, (int)strlen(pname)));
+                    bool found = dict_has(kw, key_val);
+                    if (found) {
+                        Value v = dict_get(kw, key_val);
+                        SET_REG(i, v);
+                    }
+                }
+            }
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 58. OP_KCALL */
+    op_kcall: {
+        uint8_t ret_reg = RA;
+        uint8_t fn_reg  = B;
+        uint8_t nargs   = C;
+        Value fn_val = REG(fn_reg);
+        Value kw_args_val = REG(fn_reg + nargs + 1);
+        if (IS_FUNCTION(fn_val)) {
+            ObjFunction *fn = (ObjFunction *)AS_OBJ(fn_val);
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = fn->native_fn(vm, scratch, nargs);
+                SET_REG(ret_reg, result);
+                DECODE; goto *op_labels[OP(instr)];
+            } else {
+                if (vm->frame_count >= MAX_FRAMES) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    goto op_throw;
+                }
+                CallFrame *caller = &FRAME;
+                CallFrame *callee = &vm->frames[vm->frame_count];
+                callee->chunk = fn->chunk;
+                callee->ip = 0;
+                callee->base = caller->base + fn_reg + 1;
+                callee->closure = NULL;
+                callee->ret_reg = ret_reg;
+                callee->nargs = nargs;
+                callee->kw_args = kw_args_val;
+                retain_value(kw_args_val);
+                callee->fn = fn;
+                int needed = callee->base + fn->chunk->max_registers;
+                if (needed > vm->stack_cap) {
+                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                for (int i = nargs; i < fn->chunk->max_registers; i++)
+                    vm->stack[callee->base + i] = make_null();
+                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                vm->frame_count++;
+                CHUNK = callee->chunk;
+                IP = 0;
+                DECODE;
+                goto *op_labels[OP(instr)];
+            }
+        } else if (IS_CLOSURE(fn_val)) {
+            ObjClosure *cl = (ObjClosure *)AS_OBJ(fn_val);
+            ObjFunction *fn = cl->function;
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = fn->native_fn(vm, scratch, nargs);
+                SET_REG(ret_reg, result);
+                DECODE; goto *op_labels[OP(instr)];
+            } else {
+                if (vm->frame_count >= MAX_FRAMES) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    goto op_throw;
+                }
+                CallFrame *caller = &FRAME;
+                CallFrame *callee = &vm->frames[vm->frame_count];
+                callee->chunk = fn->chunk;
+                callee->ip = 0;
+                callee->base = caller->base + fn_reg + 1;
+                callee->closure = cl;
+                callee->ret_reg = ret_reg;
+                callee->nargs = nargs;
+                callee->kw_args = kw_args_val;
+                retain_value(kw_args_val);
+                callee->fn = fn;
+                int needed = callee->base + fn->chunk->max_registers;
+                if (needed > vm->stack_cap) {
+                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                for (int i = nargs; i < fn->chunk->max_registers; i++)
+                    vm->stack[callee->base + i] = make_null();
+                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                vm->frame_count++;
+                CHUNK = callee->chunk;
+                IP = 0;
+                DECODE;
+                goto *op_labels[OP(instr)];
+            }
+        } else if (IS_BOUND_METHOD(fn_val)) {
+            ObjBoundMethod *bm = (ObjBoundMethod *)AS_OBJ(fn_val);
+            ObjFunction *fn = bm->fn;
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = fn->native_fn(vm, scratch, nargs);
+                SET_REG(ret_reg, result);
+                DECODE; goto *op_labels[OP(instr)];
+            } else {
+                if (vm->frame_count >= MAX_FRAMES) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    goto op_throw;
+                }
+                CallFrame *caller = &FRAME;
+                CallFrame *callee = &vm->frames[vm->frame_count];
+                callee->chunk = fn->chunk;
+                callee->ip = 0;
+                SET_REG(fn_reg, bm->self);
+                callee->base = caller->base + fn_reg;
+                callee->closure = NULL;
+                callee->ret_reg = ret_reg;
+                callee->nargs = nargs;
+                callee->kw_args = kw_args_val;
+                retain_value(kw_args_val);
+                callee->fn = fn;
+                int needed = callee->base + fn->chunk->max_registers;
+                if (needed > vm->stack_cap) {
+                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                for (int i = nargs + 1; i < fn->chunk->max_registers; i++)
+                    vm->stack[callee->base + i] = make_null();
+                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                vm->frame_count++;
+                CHUNK = callee->chunk;
+                IP = 0;
+                DECODE;
+                goto *op_labels[OP(instr)];
+            }
+        } else {
+            char *s = value_to_string(fn_val);
+            char buf[256];
+            if (IS_OBJ(fn_val)) {
+                snprintf(buf, sizeof(buf), "vm: attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type, s);
+            } else {
+                snprintf(buf, sizeof(buf), "vm: attempt to call non-function (got %s)", s);
+            }
+            free(s);
+            release_value(_exc);
+            _exc = make_exception_instance(vm, buf);
+            goto op_throw;
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 59. OP_HALT */
     op_halt:
         return VM_OK;
 

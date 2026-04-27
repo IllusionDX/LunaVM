@@ -1,0 +1,29 @@
+def greet(name, greeting = "Hello"):
+    print(greeting + ", " + name)
+
+greet("World")
+greet("World", "Hi")
+greet(name="World")
+greet("World", greeting="Hi")
+greet(greeting="Hi", name="World")
+
+def add(a, b = 10):
+    return a + b
+
+print(add(5))
+print(add(5, 3))
+print(add(a=5))
+print(add(5, b=3))
+print(add(b=3, a=5))
+
+def multi_default(a = 1, b = 2, c = 3):
+    return a + b + c
+
+print(multi_default())
+print(multi_default(10))
+print(multi_default(10, 20))
+print(multi_default(10, 20, 30))
+print(multi_default(a=10))
+print(multi_default(b=20))
+print(multi_default(c=30))
+print(multi_default(a=10, b=20, c=30))

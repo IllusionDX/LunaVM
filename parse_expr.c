@@ -376,20 +376,51 @@ static Expr *parse_postfix(Parser *parser) {
             advance(parser);
             int capacity = 4;
             Expr **args = (Expr **)malloc(capacity * sizeof(Expr *));
+            char **arg_names = (char **)malloc(capacity * sizeof(char *));
             int arg_count = 0;
+            bool seen_kwarg = false;
 
             while (!match(parser, TOK_RPAREN) && !match(parser, TOK_EOF)) {
-                if (arg_count >= capacity) { capacity *= 2; args = realloc(args, capacity * sizeof(Expr *)); }
-                args[arg_count++] = parse_expression(parser);
+                if (arg_count >= capacity) { capacity *= 2; args = realloc(args, capacity * sizeof(Expr *)); arg_names = realloc(arg_names, capacity * sizeof(char *)); }
+                /* Check for keyword argument: identifier = expr */
+                Token *next = peek(parser);
+                Token *after = peek_ahead(parser, 1);
+                if (next && next->type == TOK_IDENTIFIER && after && after->type == TOK_ASSIGN) {
+                    if (seen_kwarg == false) seen_kwarg = true;
+                    arg_names[arg_count] = strdup(next->value);
+                    advance(parser); /* consume identifier */
+                    advance(parser); /* consume = */
+                    args[arg_count] = parse_expression(parser);
+                } else {
+                    if (seen_kwarg) {
+                        parser_error(parser, "Positional argument after keyword argument");
+                    }
+                    arg_names[arg_count] = NULL;
+                    args[arg_count] = parse_expression(parser);
+                }
+                arg_count++;
                 if (match(parser, TOK_COMMA)) advance(parser);
                 else break;
             }
             expect(parser, TOK_RPAREN, "Expected ')' after arguments");
 
+            /* Check for duplicate keyword names */
+            if (seen_kwarg) {
+                for (int i = 0; i < arg_count; i++) {
+                    if (!arg_names[i]) continue;
+                    for (int j = i + 1; j < arg_count; j++) {
+                        if (arg_names[j] && strcmp(arg_names[i], arg_names[j]) == 0) {
+                            parser_error(parser, "Duplicate keyword argument '%s'", arg_names[i]);
+                        }
+                    }
+                }
+            }
+
             Expr *call = make_expr(EXPR_CALL);
             call->data.call.callee = expr;
             call->data.call.arguments = args;
             call->data.call.arg_count = arg_count;
+            call->data.call.arg_names = arg_names;
             expr = call;
         }
         else if (match(parser, TOK_DOT)) {

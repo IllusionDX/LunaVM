@@ -16,6 +16,7 @@ typedef struct Decl Decl;
 
 typedef struct FunctionParam {
     char *name;
+    Expr *default_value; /* NULL means required parameter */
 } FunctionParam;
 
 typedef enum {
@@ -82,6 +83,7 @@ typedef struct Expr {
             Expr *callee;
             Expr **arguments;
             int arg_count;
+            char **arg_names;       /* NULL for positional, name for keyword */
         } call;
         struct {
             Expr *obj;

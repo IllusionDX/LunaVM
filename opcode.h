@@ -139,6 +139,11 @@ typedef enum {
     OP_TRY,         /* AsBx : push try, catch at PC+sBx                   */
     OP_ENDTRY,      /* ABC  : pop try frame (A,B,C unused)               */
 
+    /* ---- Default arguments & keyword calls ---- */
+    OP_DEFAULT,     /* AsBx : if arg[RA] provided OR in kw_args then PC += sBx else fall through */
+    OP_KWARGS,      /* ABC  : populate params from kwargs dict (A,B,C unused) */
+    OP_KCALL,       /* ABC  : A = kcall B(pos_args=C, kwargs at B+C+1) */
+
     OP_HALT,        /* ABC  : stop VM (A,B,C unused)                     */
 
     OP_COUNT        /* sentinel — total opcode count                       */

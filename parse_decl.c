@@ -18,6 +18,7 @@ FunctionParam *parse_parameters(Parser *parser, int *count) {
 
     int capacity = 4;
     FunctionParam *params = (FunctionParam *)malloc(capacity * sizeof(FunctionParam));
+    bool seen_default = false;
 
     while (!match(parser, TOK_RPAREN) && !match(parser, TOK_EOF)) {
         if (*count >= capacity) {
@@ -27,10 +28,19 @@ FunctionParam *parse_parameters(Parser *parser, int *count) {
 
         Token *name = expect(parser, TOK_IDENTIFIER, "Expected parameter name");
         params[*count].name = strdup(name ? name->value : "");
+        params[*count].default_value = NULL;
 
         if (match(parser, TOK_COLON)) {
             advance(parser);
             skip_type_hint(parser);
+        }
+
+        if (match(parser, TOK_ASSIGN)) {
+            advance(parser);
+            params[*count].default_value = parse_expression(parser);
+            seen_default = true;
+        } else if (seen_default) {
+            parser_error(parser, "Non-default parameter follows default parameter");
         }
 
         (*count)++;

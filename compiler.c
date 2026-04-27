@@ -286,7 +286,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target);
 static void compile_stmt(Compiler *c, Stmt *stmt);
 static void compile_decl(Compiler *c, Decl *decl);
 static int compile_function_value(Compiler *c, const char *name,
-                                   char **param_names, int param_count,
+                                   FunctionParam *params, int param_count,
                                    Stmt **body, int body_count);
 
 /* ============================================================ */
@@ -484,6 +484,13 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     case EXPR_CALL: {
         Expr *callee = expr->data.call.callee;
         int nargs = expr->data.call.arg_count;
+        bool has_keywords = false;
+        for (int i = 0; i < nargs; i++) {
+            if (expr->data.call.arg_names && expr->data.call.arg_names[i]) {
+                has_keywords = true;
+                break;
+            }
+        }
         /* Detect method call: callee is field access */
         if (callee->kind == EXPR_FIELD_ACCESS) {
             Expr *obj = callee->data.field_access.obj;
@@ -514,6 +521,40 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
                 emit_ABC(c, OP_INVOKE, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
             }
+        } else if (has_keywords) {
+            /* Keyword call: compile callee, positional args, kwargs dict, then OP_KCALL */
+            compile_expr_into(c, callee, target);
+            int pos_count = 0;
+            for (int i = 0; i < nargs; i++) {
+                if (expr->data.call.arg_names[i] == NULL) pos_count = i + 1;
+            }
+            int saved_base = c->temp_base;
+            c->temp_base = target + 1 + nargs + 1;
+            /* Compile positional args into target+1..target+pos_count */
+            int compiled_pos = 0;
+            for (int i = 0; i < nargs; i++) {
+                if (expr->data.call.arg_names[i] == NULL) {
+                    compile_expr_into(c, expr->data.call.arguments[i], target + 1 + compiled_pos);
+                    compiled_pos++;
+                }
+            }
+            /* Create kwargs dict at target + pos_count + 1 */
+            int kwargs_reg = target + pos_count + 1;
+            emit_ABC(c, OP_NEWDICT, (uint8_t)kwargs_reg, 0, 0);
+            /* Build kwargs dict */
+            for (int i = 0; i < nargs; i++) {
+                if (expr->data.call.arg_names[i] != NULL) {
+                    int key_reg = alloc_reg(c);
+                    emit_loadstring(c, (uint8_t)key_reg, expr->data.call.arg_names[i]);
+                    int val_reg = alloc_reg(c);
+                    compile_expr_into(c, expr->data.call.arguments[i], val_reg);
+                    emit_ABC(c, OP_INDEXSET, (uint8_t)kwargs_reg, (uint8_t)key_reg, (uint8_t)val_reg);
+                    free_reg(c);
+                    free_reg(c);
+                }
+            }
+            c->temp_base = saved_base;
+            emit_ABC(c, OP_KCALL, (uint8_t)target, (uint8_t)target, (uint8_t)pos_count);
         } else {
             compile_expr_into(c, callee, target);
             int saved_base = c->temp_base;
@@ -882,15 +923,11 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_FUNCTION: {
-        int param_count = expr->data.function.param_count;
-        char **pnames = malloc(sizeof(char*) * param_count);
-        for (int i = 0; i < param_count; i++)
-            pnames[i] = expr->data.function.params[i].name;
         int fn_const = compile_function_value(c, expr->data.function.name,
-                                               pnames, param_count,
+                                               expr->data.function.params,
+                                               expr->data.function.param_count,
                                                expr->data.function.body,
                                                expr->data.function.body_count);
-        free(pnames);
         emit_ABx(c, OP_CLOSURE, (uint8_t)target, (uint16_t)fn_const);
         break;
     }
@@ -1365,7 +1402,7 @@ static void compile_decl(Compiler *c, Decl *decl) {
 }
 
 static int compile_function_value(Compiler *c, const char *name,
-                                   char **param_names, int param_count,
+                                   FunctionParam *params, int param_count,
                                    Stmt **body, int body_count) {
     Chunk fn_chunk;
     chunk_init(&fn_chunk, name ? name : "");
@@ -1387,9 +1424,24 @@ static int compile_function_value(Compiler *c, const char *name,
     emit_enter(&sub, (uint16_t)param_count);
 
     for (int i = 0; i < param_count; i++) {
-        add_local(&sub, param_names[i], i);
+        add_local(&sub, params[i].name, i);
     }
     sub.temp_base = param_count;
+
+    /* Emit default value prologues */
+    for (int i = 0; i < param_count; i++) {
+        if (params[i].default_value) {
+            /* Emit OP_DEFAULT i, 0 (placeholder) */
+            int placeholder = chunk_emit_AsBx(sub.chunk, sub.line, OP_DEFAULT, (uint8_t)i, 0);
+            /* Compile default expression into register i */
+            compile_expr_into(&sub, params[i].default_value, i);
+            /* Patch placeholder with skip offset */
+            int skip = sub.chunk->count - placeholder - 1;
+            chunk_patch_sBx(sub.chunk, placeholder, skip);
+        }
+    }
+    /* Emit kwargs remapping (populates params from kwargs dict) */
+    emit_ABC(&sub, OP_KWARGS, 0, 0, 0);
 
     for (int i = 0; i < body_count; i++) {
         compile_stmt(&sub, body[i]);
@@ -1408,7 +1460,7 @@ static int compile_function_value(Compiler *c, const char *name,
     if (param_count > 0) {
         fn->param_names = malloc(sizeof(char*) * param_count);
         for (int i = 0; i < param_count; i++)
-            fn->param_names[i] = strdup(param_names[i]);
+            fn->param_names[i] = strdup(params[i].name);
     }
     fn->upvalue_count = sub.upvalue_count;
     if (sub.upvalue_count > 0) {
@@ -1427,14 +1479,10 @@ static void compile_function(Compiler *c, Decl *decl) {
     const char *name = decl->data.function.name;
     int param_count  = decl->data.function.param_count;
 
-    char **pnames = malloc(sizeof(char*) * param_count);
-    for (int i = 0; i < param_count; i++)
-        pnames[i] = decl->data.function.params[i].name;
-
-    int fn_const = compile_function_value(c, name, pnames, param_count,
-                                          decl->data.function.body,
-                                          decl->data.function.body_count);
-    free(pnames);
+    int fn_const = compile_function_value(c, name,
+                                           decl->data.function.params, param_count,
+                                           decl->data.function.body,
+                                           decl->data.function.body_count);
 
     int r = alloc_reg(c);
 
@@ -1522,6 +1570,17 @@ static void compile_class(Compiler *c, Decl *decl) {
             add_local(&sub, m->data.function.params[j].name, j + 1);
         }
         sub.temp_base = m->data.function.param_count + 1;
+        /* Emit default value prologues for method params (reg j+1 because self is reg 0) */
+        for (int j = 0; j < m->data.function.param_count; j++) {
+            if (m->data.function.params[j].default_value) {
+                int placeholder = chunk_emit_AsBx(sub.chunk, sub.line, OP_DEFAULT, (uint8_t)(j + 1), 0);
+                compile_expr_into(&sub, m->data.function.params[j].default_value, j + 1);
+                int skip = sub.chunk->count - placeholder - 1;
+                chunk_patch_sBx(sub.chunk, placeholder, skip);
+            }
+        }
+        emit_ABC(&sub, OP_KWARGS, 0, 0, 0);
+
         for (int j = 0; j < m->data.function.body_count; j++)
             compile_stmt(&sub, m->data.function.body[j]);
         emit_loadnull(&sub, 0);

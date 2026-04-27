@@ -26,6 +26,9 @@ typedef struct {
     int          base;       /* stack offset for this frame   */
     ObjClosure  *closure;    /* closure for upvalue access    */
     int          ret_reg;    /* caller's destination register */
+    int          nargs;      /* number of positional args passed */
+    Value        kw_args;    /* kwargs dict or make_null() if none */
+    struct ObjFunction *fn;  /* the function being executed (for param names) */
 } CallFrame;
 
 /* ---- Global variable entry (chained hash table) ---- */

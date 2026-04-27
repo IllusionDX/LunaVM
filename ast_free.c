@@ -43,8 +43,11 @@ void free_expr(Expr *expr) {
         free_expr(expr->data.call.callee);
         for (int i = 0; i < expr->data.call.arg_count; i++) {
             free_expr(expr->data.call.arguments[i]);
+            if (expr->data.call.arg_names && expr->data.call.arg_names[i])
+                free(expr->data.call.arg_names[i]);
         }
         free(expr->data.call.arguments);
+        if (expr->data.call.arg_names) free(expr->data.call.arg_names);
         break;
 
     case EXPR_FIELD_ACCESS:
@@ -101,6 +104,8 @@ void free_expr(Expr *expr) {
         if (expr->data.function.name) free(expr->data.function.name);
         for (int i = 0; i < expr->data.function.param_count; i++) {
             free(expr->data.function.params[i].name);
+            if (expr->data.function.params[i].default_value)
+                free_expr(expr->data.function.params[i].default_value);
         }
         free(expr->data.function.params);
         for (int i = 0; i < expr->data.function.body_count; i++) {
@@ -262,6 +267,8 @@ void free_decl(Decl *decl) {
         free(decl->data.function.name);
         for (int i = 0; i < decl->data.function.param_count; i++) {
             free(decl->data.function.params[i].name);
+            if (decl->data.function.params[i].default_value)
+                free_expr(decl->data.function.params[i].default_value);
         }
         free(decl->data.function.params);
         for (int i = 0; i < decl->data.function.body_count; i++) {
