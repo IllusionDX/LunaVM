@@ -56,7 +56,7 @@ typedef uint64_t Value;
 #define IS_INF(v)    (((v) & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && ((v) & 0x000fffffffffffffULL) == 0)
 #define IS_POS_INF(v) ((v) == 0x7ff0000000000000ULL)
 #define IS_NEG_INF(v) ((v) == 0xfff0000000000000ULL)
-#define IS_NAN(v)    ((v) == 0x7ff8000000000006ULL)
+#define IS_NAN(v)    ((v) == 0x7ff800000000000AULL)
 
 #define make_pos_inf() ((Value)0x7ff0000000000000ULL)
 #define make_neg_inf() ((Value)0xfff0000000000000ULL)
@@ -75,9 +75,10 @@ static inline Value make_double(double d) {
     if (abs_v >= 0x7FF0000000000000ULL) {
         /* If it's not exactly +Inf, it's a NaN (any payload, any sign) */
         if (abs_v != 0x7FF0000000000000ULL) {
-            /* Normalize ALL NaNs to safe positive quiet NaN, payload=6.
-               Payload=6 avoids collision with sub-tags (NIL=1, TRUE=2, FALSE=3, INT=4, EMPTY=5). */
-            return 0x7FF8000000000006ULL;
+            /* Normalize ALL NaNs to safe positive quiet NaN, payload=10 (0x0A).
+               Payload=10 is well outside the sub-tag range (1-5), ensuring
+               no collision with NIL, TRUE, FALSE, INT, EMPTY, or future sub-tags. */
+            return 0x7FF800000000000AULL;
         }
         /* It's +Inf or -Inf — pass through unchanged */
     }

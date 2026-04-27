@@ -455,8 +455,9 @@ Lua and LuaJIT expose only one numeric type to the user: `number` (double). Inte
 **The Safe NaN Contract:**
 - `QNAN_TAG = 0x7FF8000000000000` (base pattern, payload=0)
 - `TYPE_SIGNATURE(0) = 0x7FF8000000000000` (OBJ_STRING — payload=0 is RESERVED for objects)
-- `make_double()` normalizes ALL NaNs to `0x7FF8000000000001` (payload≥1)
-- **Hardware NaNs can NEVER collide with object signatures** because payload=0 is reserved and enforced by the gatekeeper
+- `make_double()` normalizes ALL NaNs to `0x7FF8000000000006` (payload=6)
+- Payload=6 avoids collision with sub-tags: `NIL=1`, `TRUE=2`, `FALSE=3`, `INT=4`, `EMPTY=5`
+- **Hardware NaNs can NEVER collide with object signatures** because payload=0 is reserved and payload=6 is safely outside the sub-tag range
 
 **History of the collision bug (fixed in 0.2.10):**
 - Old `QNAN_TAG = 0x7FFC` had bit 50 = 1, which overlapped with type tag bits 47-50
