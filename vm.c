@@ -664,6 +664,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_jmp,           // 29 OP_JMP
         &&op_jz,            // 30 OP_JZ
         &&op_jnz,           // 31 OP_JNZ
+        &&op_jnil,          // 32 OP_JNIL
         &&op_call,          // 32 OP_CALL
         &&op_ret,           // 33 OP_RET
         &&op_enter,         // 34 OP_ENTER
@@ -886,8 +887,13 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         if (is_truthy(REG(RA))) IP += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
+    /* 32. OP_JNIL */
+    op_jnil:
+        if (IS_NIL(REG(RA))) IP += sBx;
+        DECODE; goto *op_labels[OP(instr)];
+
     /* ---- Functions ---- */
-    /* 32. OP_CALL */
+    /* 33. OP_CALL */
     op_call: {
         uint8_t ret_reg = RA;
         uint8_t fn_reg  = B;
@@ -1029,7 +1035,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 33. OP_RET */
+    /* 34. OP_RET */
     op_ret: {
         uint8_t ret_reg = RA;
         Value retval = REG(ret_reg);

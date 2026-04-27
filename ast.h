@@ -88,6 +88,7 @@ typedef struct Expr {
         struct {
             Expr *obj;
             char *field;
+            bool optional;
         } field_access;
         struct {
             Expr *obj;

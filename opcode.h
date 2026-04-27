@@ -98,6 +98,7 @@ typedef enum {
     OP_JMP,         /* AsBx : PC += sBx                                   */
     OP_JZ,          /* AsBx : if !A then PC += sBx                        */
     OP_JNZ,         /* AsBx : if  A then PC += sBx                        */
+    OP_JNIL,        /* AsBx : if A == null then PC += sBx                 */
 
     /* ---- Functions ---- */
     OP_CALL,        /* ABC  : A = call B(args B+1..B+C)                   */

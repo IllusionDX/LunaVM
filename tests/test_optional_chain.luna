@@ -1,0 +1,31 @@
+# Test optional chaining
+
+class Player:
+    var name
+    var inventory
+    
+    def _init(n):
+        self.name = n
+        self.inventory = null
+
+# Null object → null
+var p1 = null
+var name = p1?.name ?? "unknown"
+print(name)
+
+# Non-null object → field value
+var p2 = new Player("Zim")
+name = p2?.name ?? "unknown"
+print(name)
+
+# Chained optional: null in middle → null
+var inv = p2?.inventory?.length ?? 0
+print(inv)
+
+# Chained optional: all exist → value
+p2.inventory = [1, 2, 3]
+inv = p2?.inventory?.length ?? 0
+print(inv)
+
+# Optional on non-null with method call
+print(p2?.inventory)

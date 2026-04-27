@@ -625,6 +625,10 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
 
     case EXPR_FIELD_ACCESS: {
         compile_expr_into(c, expr->data.field_access.obj, target);
+        int jnil = -1;
+        if (expr->data.field_access.optional) {
+            jnil = emit_jump(c, OP_JNIL, (uint8_t)target);
+        }
         int fk = chunk_add_string(c->chunk, expr->data.field_access.field);
         if (fk > 255) {
             /* Too many constants for inline C field — use LOADK + INDEXGET */
@@ -635,6 +639,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         } else {
             emit_ABC(c, OP_MEMBERGET, (uint8_t)target, (uint8_t)target, (uint8_t)fk);
         }
+        if (jnil >= 0) patch_jump(c, jnil);
         break;
     }
 

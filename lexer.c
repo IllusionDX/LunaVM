@@ -273,9 +273,6 @@ static Token *scan_operator(Lexer *lexer) {
             if (next == '=') { advance(lexer); return make_token(lexer, TOK_GE, start, 2); }
             if (next == '>') { advance(lexer); return make_token(lexer, TOK_RSHIFT, start, 2); }
             return make_token(lexer, TOK_GT, start, 1);
-        case '?':
-            if (next == '?') { advance(lexer); return make_token(lexer, TOK_COALESCE, start, 2); }
-            return make_token(lexer, TOK_ERROR, start, 1);
         case '&':
             return make_token(lexer, TOK_AMPERSAND, start, 1);
         case '|':
@@ -304,6 +301,10 @@ static Token *scan_operator(Lexer *lexer) {
             return make_token(lexer, TOK_DOT, start, 1);
         case ';':
             return make_token(lexer, TOK_SEMICOLON, start, 1);
+        case '?':
+            if (next == '?') { advance(lexer); return make_token(lexer, TOK_COALESCE, start, 2); }
+            if (next == '.') { advance(lexer); return make_token(lexer, TOK_QUESTION_DOT, start, 2); }
+            return make_token(lexer, TOK_ERROR, start, 1);
         default:
             return make_token(lexer, TOK_ERROR, start, 1);
     }

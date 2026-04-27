@@ -320,7 +320,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.10-alpha` | Done | Keyword arguments for method calls: `obj.method(a=5, b=10)`. Compiler emits `OP_MEMBERGET` + `OP_KCALL` instead of `OP_INVOKE` when kwargs are present. |
 | `0.2.11-alpha` | Done | QNAN_TAG collision fix: changed from `0x7FFC` to `0x7FF8` (bit 50 = 0) so 16 type signatures are unique. Inf/NaN value support: `IS_INF`, `IS_POS_INF`, `IS_NEG_INF`, `IS_NAN` macros, `make_pos_inf()`, `make_neg_inf()`, Inf division results in `OP_DIV`/`OP_MOD`. `make_double()` normalizes all NaNs to payload=10. 32-type expansion path documented in NaN-boxing architecture section. |
 | `0.2.12-alpha` | Done | Nullish coalescing (`??`): `var name = nickname ?? "Unknown"` — evaluates to RHS only when LHS is `null`, preserving `false`, `0`, and `""`. Short-circuit evaluation. Test consolidation: merged duplicate closure, lambda, list, and object tests. |
-| `0.2.13-alpha` | **Current** | Ternary expression (`a if cond else b`): Python-style conditional expression. Parses with backtracking to avoid conflict with list comprehension `if` filters. |
+| `0.2.13-alpha` | Done | Ternary expression (`a if cond else b`): Python-style conditional expression. Parses with backtracking to avoid conflict with list comprehension `if` filters. |
+| `0.2.14-alpha` | **Current** | Optional chaining (`?.`): `obj?.field` returns `null` if `obj` is `null`, otherwise accesses `field`. Chains correctly: `a?.b?.c`. Short-circuit via `OP_JNIL`. |
 
 ## Roadmap
 

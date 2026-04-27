@@ -423,12 +423,14 @@ static Expr *parse_postfix(Parser *parser) {
             call->data.call.arg_names = arg_names;
             expr = call;
         }
-        else if (match(parser, TOK_DOT)) {
+        else if (match(parser, TOK_DOT) || match(parser, TOK_QUESTION_DOT)) {
+            bool optional = match(parser, TOK_QUESTION_DOT);
             advance(parser);
-            Token *field = expect(parser, TOK_IDENTIFIER, "Expected field name after '.'");
+            Token *field = expect(parser, TOK_IDENTIFIER, "Expected field name after '.' or '?.'");
             Expr *access = make_expr(EXPR_FIELD_ACCESS);
             access->data.field_access.obj = expr;
             access->data.field_access.field = strdup(field ? field->value : "");
+            access->data.field_access.optional = optional;
             expr = access;
         }
         else if (match(parser, TOK_LBRACKET)) {
