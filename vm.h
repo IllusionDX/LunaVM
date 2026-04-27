@@ -90,6 +90,9 @@ typedef struct VM {
     IC_MemberEntry member_ic[IC_CACHE_SIZE];
     IC_MemberEntry method_ic[IC_CACHE_SIZE];
     uint64_t       instr_count;
+
+    /* Built-in Exception class (fast access) */
+    struct ObjClass *exception_class;
 } VM;
 
 /* ---- Result codes ---- */

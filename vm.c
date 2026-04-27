@@ -450,6 +450,23 @@ void mark_and_sweep(VM *vm) {
 void vm_init(VM *vm) {
     memset(vm, 0, sizeof(VM));
     vm_register_builtins(vm);
+
+    /* Register built-in Exception class */
+    {
+        ObjClass *exc_cls = new_class("Exception", NULL);
+        /* Create prototype instance with default fields */
+        ObjInstance *proto = new_instance(exc_cls, 4);
+        instance_set_field(proto, "message", make_null());
+        instance_set_field(proto, "stack_trace", make_null());
+        instance_set_field(proto, "file", make_null());
+        instance_set_field(proto, "line", make_int(0));
+        exc_cls->prototype = proto;
+        retain_obj((Object*)proto);
+        Value exc_val = make_obj((Object*)exc_cls);
+        retain_obj((Object*)exc_cls);
+        vm_set_global(vm, "Exception", exc_val, false);
+        vm->exception_class = exc_cls;
+    }
 }
 
 static void close_upvalues(VM *vm, int frame_depth);
@@ -487,6 +504,11 @@ void vm_free(VM *vm) {
         TryFrame *tf = vm->try_stack;
         vm->try_stack = tf->next;
         free(tf);
+    }
+
+    if (vm->exception_class) {
+        release_obj((Object*)vm->exception_class);
+        vm->exception_class = NULL;
     }
 
     value_free_intern_table();
@@ -557,7 +579,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         mark_and_sweep(vm);
     }
     if (vm->frame_count >= MAX_FRAMES) {
-        vm->last_exception = make_obj((Object*)new_exception("vm: frame overflow"));
+        vm->last_exception = make_exception_instance(vm, "vm: frame overflow");
         return VM_EXCEPTION;
     }
     CallFrame *frame = &vm->frames[vm->frame_count++];
@@ -720,11 +742,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value _L = RKB, _R = RKC;
         if (IS_INT(_L) && IS_INT(_R)) {
             int64_t ri = AS_INT(_R);
-            if (!ri) { release_value(_exc); _exc = make_obj((Object*)new_exception("vm: div/0")); goto op_throw; }
+            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, "vm: div/0"); goto op_throw; }
             SET_REG_PRIM(RA, make_int(AS_INT(_L) / ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
-            if (r == 0.0) { release_value(_exc); _exc = make_obj((Object*)new_exception("vm: div/0")); goto op_throw; }
+            if (r == 0.0) { release_value(_exc); _exc = make_exception_instance(vm, "vm: div/0"); goto op_throw; }
             SET_REG_PRIM(RA, make_double(to_f64(_L) / r));
         } else {
             SET_REG_PRIM(RA, make_null());
@@ -737,11 +759,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value _L = RKB, _R = RKC;
         if (IS_INT(_L) && IS_INT(_R)) {
             int64_t ri = AS_INT(_R);
-            if (!ri) { release_value(_exc); _exc = make_obj((Object*)new_exception("vm: mod/0")); goto op_throw; }
+            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, "vm: mod/0"); goto op_throw; }
             SET_REG_PRIM(RA, make_int(AS_INT(_L) % ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
-            if (r == 0.0) { release_value(_exc); _exc = make_obj((Object*)new_exception("vm: mod/0")); goto op_throw; }
+            if (r == 0.0) { release_value(_exc); _exc = make_exception_instance(vm, "vm: mod/0"); goto op_throw; }
             SET_REG_PRIM(RA, make_double(fmod(to_f64(_L), r)));
         } else {
             SET_REG_PRIM(RA, make_null());
@@ -856,7 +878,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_obj((Object*)new_exception("vm: call stack overflow"));
+                    _exc = make_exception_instance(vm, "vm: call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -892,7 +914,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_obj((Object*)new_exception("vm: call stack overflow"));
+                    _exc = make_exception_instance(vm, "vm: call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -926,7 +948,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             }
             free(s);
             release_value(_exc);
-            _exc = make_obj((Object*)new_exception(buf));
+            _exc = make_exception_instance(vm, buf);
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -979,7 +1001,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value fn_val = CONST(k);
         if (!IS_FUNCTION(fn_val)) {
             release_value(_exc);
-            _exc = make_obj((Object*)new_exception("vm: CLOSURE needs function constant"));
+            _exc = make_exception_instance(vm, "vm: CLOSURE needs function constant");
             goto op_throw;
         }
         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
@@ -1008,7 +1030,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value fn_val = CONST(k);
         if (!IS_FUNCTION(fn_val)) {
             release_value(_exc);
-            _exc = make_obj((Object*)new_exception("vm: CLOSURE needs function constant"));
+            _exc = make_exception_instance(vm, "vm: CLOSURE needs function constant");
             goto op_throw;
         }
         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
@@ -1085,7 +1107,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value cls_val;
         if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
             release_value(_exc);
-            _exc = make_obj((Object*)new_exception("vm: class not found for new"));
+            _exc = make_exception_instance(vm, "vm: class not found for new");
             goto op_throw;
         }
         ObjClass *cls = (ObjClass*)AS_OBJ(cls_val);
@@ -1105,7 +1127,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             list_add((ObjList*)AS_OBJ(lst), val);
         } else {
             release_value(_exc);
-            _exc = make_obj((Object*)new_exception("vm: listappend on non-list"));
+            _exc = make_exception_instance(vm, "vm: listappend on non-list");
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1167,12 +1189,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 }
                 default:
                     release_value(_exc);
-                    _exc = make_obj((Object*)new_exception("vm: object is not iterable"));
+                    _exc = make_exception_instance(vm, "vm: object is not iterable");
                     goto op_throw;
             }
         } else {
             release_value(_exc);
-            _exc = make_obj((Object*)new_exception("vm: non-object is not iterable"));
+            _exc = make_exception_instance(vm, "vm: non-object is not iterable");
             goto op_throw;
         }
 
@@ -1496,7 +1518,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             char buf[256];
             snprintf(buf, sizeof(buf), "vm: unknown method '%s'", mname);
             release_value(_exc);
-            _exc = make_obj((Object*)new_exception(buf));
+            _exc = make_exception_instance(vm, buf);
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1566,7 +1588,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             char buf[256];
             snprintf(buf, sizeof(buf), "vm: unknown super method '%s'", mname);
             release_value(_exc);
-            _exc = make_obj((Object*)new_exception(buf));
+            _exc = make_exception_instance(vm, buf);
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1716,13 +1738,21 @@ int vm_throw(VM *vm, Value exception) {
         free(tf);
         return 1;
     }
-    if (IS_EXCEPTION(exception)) {
-        ObjException *ex = (ObjException*)AS_OBJ(exception);
-        fprintf(stderr, "Uncaught exception: %s\n", ex->message);
-    } else {
-        char *s = value_to_string(exception);
-        fprintf(stderr, "Uncaught exception: %s\n", s);
-        free(s);
+    /* Extract message from Exception instance if applicable */
+    if (IS_INSTANCE(exception) && vm->exception_class) {
+        ObjInstance *inst = (ObjInstance*)AS_OBJ(exception);
+        if (inst->klass == vm->exception_class) {
+            Value msg = instance_get_field(inst, "message");
+            if (IS_STRING(msg)) {
+                fprintf(stderr, "Uncaught exception: %s\n", ((ObjString*)AS_OBJ(msg))->chars);
+            } else {
+                fprintf(stderr, "Uncaught exception\n");
+            }
+            return 1;
+        }
     }
+    char *s = value_to_string(exception);
+    fprintf(stderr, "Uncaught exception: %s\n", s);
+    free(s);
     return 1;
 }

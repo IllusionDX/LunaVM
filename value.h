@@ -97,7 +97,6 @@ typedef enum {
     OBJ_DICT,
     OBJ_INSTANCE,
     OBJ_FUNCTION,  /* native flag lives in is_native field, not a separate type */
-    OBJ_EXCEPTION,
     OBJ_UPVALUE,
     OBJ_CLOSURE,
     OBJ_ENUM,
@@ -154,7 +153,6 @@ static inline Value make_obj(void *ptr) {
 #define IS_DICT(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_DICT))
 #define IS_INSTANCE(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_INSTANCE))
 #define IS_FUNCTION(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_FUNCTION))
-#define IS_EXCEPTION(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_EXCEPTION))
 #define IS_CLOSURE(v)  (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLOSURE))
 #define IS_ENUM(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_ENUM))
 #define IS_CLASS(v)    (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLASS))
@@ -260,14 +258,6 @@ typedef struct ObjFunction {
     struct Environment *closure;
 } ObjFunction;
 
-/* Exception */
-typedef struct {
-    Object  obj;
-    char   *message;
-    int     line;
-    char   *file;
-} ObjException;
-
 /* Upvalue — pointer to a captured variable (either on stack or closed) */
 typedef struct ObjUpvalue {
     Object       obj;
@@ -306,7 +296,7 @@ ObjInstance *new_instance(struct ObjClass *klass, int field_capacity);
 ObjClass    *new_class(const char *name, const char *base_name);
 ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
-ObjException *new_exception(const char *message);
+Value make_exception_instance(struct VM *vm, const char *message);
 ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);
 ObjEnum     *new_enum(const char *name, int count);

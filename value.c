@@ -7,6 +7,7 @@
 #include <math.h>
 #include "value.h"
 #include "chunk.h"
+#include "vm.h"
 
 /* ============================================================ */
 /* Hashing                                                       */
@@ -279,16 +280,6 @@ ObjFunction *new_native_function(const char *name, NativeFn fn) {
     return f;
 }
 
-ObjException *new_exception(const char *message) {
-    ObjException *e = malloc(sizeof(ObjException));
-    if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)e, OBJ_EXCEPTION, sizeof(ObjException) + strlen(message) + 1);
-    e->message = strdup(message);
-    e->line    = 0;
-    e->file    = strdup("<unknown>");
-    return e;
-}
-
 ObjUpvalue *new_upvalue(int stack_index) {
     ObjUpvalue *uv = malloc(sizeof(ObjUpvalue));
     if (!uv) { fprintf(stderr, "OOM\n"); exit(1); }
@@ -323,6 +314,15 @@ ObjEnum *new_enum(const char *name, int count) {
     e->names  = count > 0 ? calloc(count, sizeof(char*)) : NULL;
     e->values = count > 0 ? calloc(count, sizeof(int64_t)) : NULL;
     return e;
+}
+
+Value make_exception_instance(struct VM *vm, const char *message) {
+    if (!vm->exception_class) {
+        return make_null();
+    }
+    ObjInstance *inst = new_instance(vm->exception_class, 4);
+    instance_set_field(inst, "message", make_obj((Object*)new_string(message, strlen(message))));
+    return make_obj((Object*)inst);
 }
 
 /* ============================================================ */
@@ -379,10 +379,6 @@ void free_object_container(Object *obj) {
             }
             free(f->upvalue_descriptors);
             free(f); break;
-        }
-        case OBJ_EXCEPTION: {
-            ObjException *e = (ObjException *)obj;
-            free(e->message); free(e->file); free(e); break;
         }
         case OBJ_UPVALUE: {
             free((ObjUpvalue *)obj); break;
@@ -524,8 +520,6 @@ char *value_to_string(Value v) {
             case OBJ_INSTANCE:
                 snprintf(buf, sizeof(buf), "<instance of %s>", ((ObjInstance*)obj)->class_name);
                 return strdup(buf);
-            case OBJ_EXCEPTION:
-                return strdup(((ObjException *)obj)->message);
             case OBJ_LIST: {
                 ObjList *l = (ObjList *)obj;
                 int cap = 32; char *out = malloc(cap); int pos = 0;
