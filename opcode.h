@@ -89,6 +89,7 @@ typedef enum {
     OP_LE,          /* ABC  : A = (B <= C)                                 */
     OP_GT,          /* ABC  : A = (B > C)                                  */
     OP_GE,          /* ABC  : A = (B >= C)                                 */
+    OP_IN,          /* ABC  : A = (B in C)                                 */
 
     /* ---- Logical ---- */
     OP_NOT,         /* ABC  : A = not B                                    */

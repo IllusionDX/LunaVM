@@ -1,0 +1,14 @@
+var items = [1, 2, 3, 4, 5]
+var data = {"a": 1, "b": 2}
+var text = "hello world"
+
+print(3 in items)
+print(10 in items)
+print("a" in data)
+print("c" in data)
+print("world" in text)
+print("xyz" in text)
+print("hello" in text)
+print(1 in items)
+print("b" in data)
+print("" in text)

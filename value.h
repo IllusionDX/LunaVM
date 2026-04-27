@@ -355,6 +355,7 @@ void  list_clear(ObjList *list);
 Value list_get(ObjList *list, int index);
 void  list_set(ObjList *list, int index, Value value);
 int   list_length(ObjList *list);
+bool  list_contains(ObjList *list, Value value);
 
 /* ============================================================ */
 /* Dict operations                                               */

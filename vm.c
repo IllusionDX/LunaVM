@@ -608,36 +608,37 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_le,            // 24 OP_LE
         &&op_gt,            // 25 OP_GT
         &&op_ge,            // 26 OP_GE
-        &&op_not,           // 27 OP_NOT
-        &&op_jmp,           // 28 OP_JMP
-        &&op_jz,            // 29 OP_JZ
-        &&op_jnz,           // 30 OP_JNZ
-        &&op_call,          // 31 OP_CALL
-        &&op_ret,           // 32 OP_RET
-        &&op_enter,         // 33 OP_ENTER
-        &&op_leave,         // 34 OP_LEAVE
-        &&op_closure,       // 35 OP_CLOSURE
-        &&op_getglobal,     // 36 OP_GETGLOBAL
-        &&op_setglobal,     // 37 OP_SETGLOBAL
-        &&op_getupval,      // 38 OP_GETUPVAL
-        &&op_setupval,      // 39 OP_SETUPVAL
-        &&op_new,           // 40 OP_NEW
-        &&op_newdict,       // 41 OP_NEWDICT
-        &&op_newlist,       // 42 OP_NEWLIST
-        &&op_listappend,    // 43 OP_LISTAPPEND
-        &&op_getiter,       // 44 OP_GETITER
-        &&op_forloop,       // 45 OP_FORLOOP
-        &&op_indexget,      // 46 OP_INDEXGET
-        &&op_indexset,      // 47 OP_INDEXSET
-        &&op_slice,         // 48 OP_SLICE
-        &&op_memberget,     // 49 OP_MEMBERGET
-        &&op_memberset,     // 50 OP_MEMBERSET
-        &&op_invoke,        // 51 OP_INVOKE
-        &&op_super,         // 52 OP_SUPER
-        &&op_throw,         // 53 OP_THROW
-        &&op_try,           // 54 OP_TRY
-        &&op_endtry,        // 55 OP_ENDTRY
-        &&op_halt           // 56 OP_HALT
+        &&op_in,            // 27 OP_IN
+        &&op_not,           // 28 OP_NOT
+        &&op_jmp,           // 29 OP_JMP
+        &&op_jz,            // 30 OP_JZ
+        &&op_jnz,           // 31 OP_JNZ
+        &&op_call,          // 32 OP_CALL
+        &&op_ret,           // 33 OP_RET
+        &&op_enter,         // 34 OP_ENTER
+        &&op_leave,         // 35 OP_LEAVE
+        &&op_closure,       // 36 OP_CLOSURE
+        &&op_getglobal,     // 37 OP_GETGLOBAL
+        &&op_setglobal,     // 38 OP_SETGLOBAL
+        &&op_getupval,      // 39 OP_GETUPVAL
+        &&op_setupval,      // 40 OP_SETUPVAL
+        &&op_new,           // 41 OP_NEW
+        &&op_newdict,       // 42 OP_NEWDICT
+        &&op_newlist,       // 43 OP_NEWLIST
+        &&op_listappend,    // 44 OP_LISTAPPEND
+        &&op_getiter,       // 45 OP_GETITER
+        &&op_forloop,       // 46 OP_FORLOOP
+        &&op_indexget,      // 47 OP_INDEXGET
+        &&op_indexset,      // 48 OP_INDEXSET
+        &&op_slice,         // 49 OP_SLICE
+        &&op_memberget,     // 50 OP_MEMBERGET
+        &&op_memberset,     // 51 OP_MEMBERSET
+        &&op_invoke,        // 52 OP_INVOKE
+        &&op_super,         // 53 OP_SUPER
+        &&op_throw,         // 54 OP_THROW
+        &&op_try,           // 55 OP_TRY
+        &&op_endtry,        // 56 OP_ENDTRY
+        &&op_halt           // 57 OP_HALT
     };
 
     DECODE;
@@ -785,9 +786,24 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)> AS_INT(_R)):do_cmp(_L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 26. OP_GE */
     op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)>=AS_INT(_R)):do_cmp(_L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
+    /* 27. OP_IN */
+    op_in: {
+        Value needle = RKB;
+        Value haystack = RKC;
+        bool found = false;
+        if (IS_LIST(haystack)) {
+            found = list_contains((ObjList*)AS_OBJ(haystack), needle);
+        } else if (IS_DICT(haystack)) {
+            found = dict_has((ObjDict*)AS_OBJ(haystack), needle);
+        } else if (IS_STRING(haystack) && IS_STRING(needle)) {
+            found = strstr(((ObjString*)AS_OBJ(haystack))->chars, ((ObjString*)AS_OBJ(needle))->chars) != NULL;
+        }
+        SET_REG_PRIM(RA, make_bool(found));
+        DECODE; goto *op_labels[OP(instr)];
+    }
 
     /* ---- Logical ---- */
-    /* 27. OP_NOT */
+    /* 28. OP_NOT */
     op_not: SET_REG_PRIM(RA, make_bool(!is_truthy(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
 
     /* ---- Control Flow ---- */

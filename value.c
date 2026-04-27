@@ -692,6 +692,14 @@ void list_set(ObjList *list, int index, Value value) {
 
 int list_length(ObjList *list) { return list->count; }
 
+bool list_contains(ObjList *list, Value value) {
+    int len = list_length(list);
+    for (int i = 0; i < len; i++) {
+        if (values_equal(list_get(list, i), value)) return true;
+    }
+    return false;
+}
+
 /* ============================================================ */
 /* Dict operations                                               */
 /* ============================================================ */

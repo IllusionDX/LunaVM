@@ -534,11 +534,25 @@ static Expr *parse_equality(Parser *parser) {
     return left;
 }
 
-static Expr *parse_and(Parser *parser) {
+static Expr *parse_membership(Parser *parser) {
     Expr *left = parse_equality(parser);
-    while (match(parser, TOK_AND)) {
+    while (match(parser, TOK_IN)) {
         Token *op = advance(parser);
         Expr *right = parse_equality(parser);
+        Expr *expr = make_expr(EXPR_BINARY);
+        expr->data.binary.left = left;
+        expr->data.binary.operator = strdup(op->value);
+        expr->data.binary.right = right;
+        left = expr;
+    }
+    return left;
+}
+
+static Expr *parse_and(Parser *parser) {
+    Expr *left = parse_membership(parser);
+    while (match(parser, TOK_AND)) {
+        Token *op = advance(parser);
+        Expr *right = parse_membership(parser);
         Expr *expr = make_expr(EXPR_BINARY);
         expr->data.binary.left = left;
         expr->data.binary.operator = strdup(op->value);

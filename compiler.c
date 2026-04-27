@@ -453,6 +453,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         else if (strcmp(op_str, "<=") == 0) op = OP_LE;
         else if (strcmp(op_str, ">") == 0) op = OP_GT;
         else if (strcmp(op_str, ">=") == 0) op = OP_GE;
+        else if (strcmp(op_str, "in") == 0) op = OP_IN;
         else if (strcmp(op_str, "&") == 0) op = OP_BAND;
         else if (strcmp(op_str, "|") == 0) op = OP_BOR;
         else if (strcmp(op_str, "^") == 0) op = OP_BXOR;
