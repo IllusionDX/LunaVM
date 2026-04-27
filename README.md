@@ -196,6 +196,17 @@ def compute(x, y):
     return a + b
 ```
 
+**Lambdas:** Arrow functions for short expressions:
+
+```luna
+var add = (a, b) => a + b
+var square = (x) => x * x
+var greet = () => "Hello"
+
+var nums = [1, 2, 3, 4, 5]
+var doubled = nums.map((x) => x * 2)
+```
+
 ### Pass by Reference
 
 Objects and collections (lists, dicts) are passed by reference automatically:
@@ -374,7 +385,15 @@ Single-line comments:
 var value = 42
 ```
 
-> Multi-line comments (`"""..."""`) are planned for 0.2.0.
+Multi-line comments:
+
+```luna
+"""
+This is a multi-line comment.
+It can span multiple lines.
+"""
+var value = 42
+```
 
 ### Import (Placeholder)
 

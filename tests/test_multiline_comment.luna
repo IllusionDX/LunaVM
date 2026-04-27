@@ -1,0 +1,14 @@
+"""
+This is a multiline comment.
+It spans multiple lines.
+"""
+var x = 5
+
+"""
+Another multiline comment
+with more lines
+and more text
+"""
+var y = 10
+
+print(x + y)

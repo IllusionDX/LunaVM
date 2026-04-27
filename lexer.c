@@ -83,6 +83,22 @@ static void skip_comment(Lexer *lexer) {
     }
 }
 
+static void skip_multiline_comment(Lexer *lexer) {
+    /* consume first two quotes (caller already consumed the third) */
+    advance(lexer);
+    advance(lexer);
+    while (!is_at_end(lexer)) {
+        if (peek(lexer) == '"' && peek_next(lexer) == '"' &&
+            lexer->current[2] == '"') {
+            advance(lexer);
+            advance(lexer);
+            advance(lexer);
+            return;
+        }
+        advance(lexer);
+    }
+}
+
 /* ============== Keyword lookup ============== */
 
 typedef struct {
@@ -403,6 +419,10 @@ static Token *scan_token(Lexer *lexer) {
     }
     if (is_alpha(c)) { return scan_identifier(lexer); }
     if (is_digit(c) || (c == '.' && is_digit(peek_next(lexer)))) { return scan_number(lexer); }
+    if (c == '"' && peek_next(lexer) == '"' && lexer->current[2] == '"') {
+        skip_multiline_comment(lexer);
+        return scan_token(lexer);
+    }
     if (c == '"' || c == '\'') { return scan_string(lexer); }
     
     return scan_operator(lexer);
