@@ -426,7 +426,7 @@ Luna uses a unified 64-bit `Value` type (NaN-boxing) where all non-double values
 
 *Current types:*
 - `int32` — immediate via sub-tag `INT` (bits 0-2). Fastest: no allocation, single bitwise check.
-- `double` — raw IEEE-754. Hardware NaN (`0.0/0.0`) collides with `QNAN_TAG` (`0x7FF8...`). Known issue; future fix via payload sentinel or bit-63 negative space (V8 style).
+- `double` — raw IEEE-754. Hardware NaNs are normalized by `make_double()` to payload=10, preventing collision with `QNAN_TAG`.
 - `null`, `bool` — immediate via sub-tags.
 - Object types — 4-bit tag in bits 47-50.
 
@@ -455,9 +455,9 @@ Lua and LuaJIT expose only one numeric type to the user: `number` (double). Inte
 **The Safe NaN Contract:**
 - `QNAN_TAG = 0x7FF8000000000000` (base pattern, payload=0)
 - `TYPE_SIGNATURE(0) = 0x7FF8000000000000` (OBJ_STRING — payload=0 is RESERVED for objects)
-- `make_double()` normalizes ALL NaNs to `0x7FF8000000000006` (payload=6)
-- Payload=6 avoids collision with sub-tags: `NIL=1`, `TRUE=2`, `FALSE=3`, `INT=4`, `EMPTY=5`
-- **Hardware NaNs can NEVER collide with object signatures** because payload=0 is reserved and payload=6 is safely outside the sub-tag range
+- `make_double()` normalizes ALL NaNs to `0x7FF800000000000A` (payload=10)
+- Payload=10 (0x0A) is well outside the sub-tag range (1-5), avoiding collision with `NIL=1`, `TRUE=2`, `FALSE=3`, `INT=4`, `EMPTY=5`
+- **Hardware NaNs can NEVER collide with object signatures** because payload=0 is reserved for objects and payload=10 is safely outside the sub-tag range
 
 **History of the collision bug (fixed in 0.2.10):**
 - Old `QNAN_TAG = 0x7FFC` had bit 50 = 1, which overlapped with type tag bits 47-50
@@ -474,10 +474,10 @@ When we exhaust the ~6 remaining object type slots, we can expand to 32 types by
 | 1 | 0-15 | Types 16-31 (future) |
 
 Requirements for 32-type expansion:
-1. `make_double()` must normalize ALL NaNs (positive AND negative) to bit 63 = 0, payload = 1
+1. `make_double()` must normalize ALL NaNs (positive AND negative) to bit 63 = 0, payload = 10 (our safe payload)
 2. `-Inf` (`0xFFF0000000000000`) must be either normalized to `+Inf` or handled as a special case in `IS_DOUBLE`
 3. `make_obj()` must set bit 63 when `type_id >= 16`
-4. `IS_DOUBLE` must check: exponent ≠ all-1s OR (exponent = all-1s AND payload ≥ 1 AND bit 63 = 0)
+4. `IS_DOUBLE` must check: exponent ≠ all-1s OR (exponent = all-1s AND payload = 10 AND bit 63 = 0)
 
 **FFI Boundary Sanitization Rule:**
 
