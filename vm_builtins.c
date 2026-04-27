@@ -1,5 +1,9 @@
 /* vm_builtins.c — VM global table, native functions, collection method dispatch.
  * Included as a compilation unit alongside vm.c.
+ *
+ * FFI CONTRACT: Any builtin returning a double MUST use make_double() to
+ * sanitize hardware NaNs. Raw NaNs can collide with object type signatures.
+ * Use RETURN_EXT_DOUBLE() for external C function results.
  */
 
 #include <stdio.h>
@@ -244,6 +248,22 @@ static Value bn_isinf(VM *vm, Value *args, int n) {
     if (!n) return make_bool(false);
     return make_bool(IS_INF(args[0]));
 }
+
+/* Debug helper: verify a double value is safe for the VM.
+ * Call this in DEBUG builds when binding external C functions.
+ * Asserts if the value looks like an object signature (potential crash). */
+#ifdef DEBUG
+#include <assert.h>
+static void ffi_verify_double(Value v) {
+    if ((v & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL) {
+        /* It's a NaN or Inf. Make sure it's not payload=0 (object signature). */
+        assert((v & 0x000fffffffffffffULL) != 0 &&
+               "FFI ERROR: Hardware NaN with payload=0 would collide with object signature!");
+    }
+}
+#else
+#define ffi_verify_double(v) ((void)0)
+#endif
 
 void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);

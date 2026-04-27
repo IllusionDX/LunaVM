@@ -56,7 +56,7 @@ typedef uint64_t Value;
 #define IS_INF(v)    (((v) & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && ((v) & 0x000fffffffffffffULL) == 0)
 #define IS_POS_INF(v) ((v) == 0x7ff0000000000000ULL)
 #define IS_NEG_INF(v) ((v) == 0xfff0000000000000ULL)
-#define IS_NAN(v)    (((v) & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && ((v) & 0x000fffffffffffffULL) != 0)
+#define IS_NAN(v)    ((v) == 0x7ff8000000000006ULL)
 
 #define make_pos_inf() ((Value)0x7ff0000000000000ULL)
 #define make_neg_inf() ((Value)0xfff0000000000000ULL)
@@ -68,11 +68,18 @@ typedef uint64_t Value;
 static inline Value make_double(double d) {
     Value v;
     memcpy(&v, &d, sizeof(v));
-    /* Normalize any NaN to a canonical quiet NaN that doesn't collide with QNAN_TAG.
-       Hardware NaNs (e.g. 0x7FF8000000000000) are indistinguishable from our old QNAN_TAG.
-       We rewrite ALL NaNs to payload=1 so they are always treated as doubles. */
-    if (((v & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL) && (v & 0x000fffffffffffffULL)) {
-        return 0x7ff8000000000001ULL;
+    /* Strip sign bit for analysis — hardware can produce negative NaNs
+     * (0xFFF8...) which must be treated identically to positive NaNs. */
+    uint64_t abs_v = v & 0x7FFFFFFFFFFFFFFFULL;
+    /* Exponent all 1s means Inf or NaN */
+    if (abs_v >= 0x7FF0000000000000ULL) {
+        /* If it's not exactly +Inf, it's a NaN (any payload, any sign) */
+        if (abs_v != 0x7FF0000000000000ULL) {
+            /* Normalize ALL NaNs to safe positive quiet NaN, payload=6.
+               Payload=6 avoids collision with sub-tags (NIL=1, TRUE=2, FALSE=3, INT=4, EMPTY=5). */
+            return 0x7FF8000000000006ULL;
+        }
+        /* It's +Inf or -Inf — pass through unchanged */
     }
     return v;
 }
@@ -88,6 +95,13 @@ static inline double as_double(Value v) {
 static inline int64_t as_int64(Value v) {
     return IS_INT(v) ? (int64_t)AS_INT(v) : (int64_t)AS_DOUBLE(v);
 }
+
+/* FFI Boundary Sanitization: ALL external C doubles MUST pass through make_double().
+ * Hardware NaNs have random payloads that could collide with object type signatures.
+ * make_double() normalizes them to payload=1 (safe for doubles, never collides).
+ * Usage: return make_double(external_c_function(...));
+ * NEVER: return raw_double_value;  // UNSAFE — can crash the VM */
+#define RETURN_EXT_DOUBLE(d) make_double((double)(d))
 
 /* OBJ_VAL moved below Object struct definition */
 #define INT_VAL(i)   (QNAN_TAG | TAG_INT | ((uint64_t)(uint32_t)(i) << 3))
