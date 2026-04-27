@@ -172,7 +172,7 @@ static Value bn_type(VM *vm, Value *args, int n) {
         if (IS_NIL(args[0])) t = "null";
         else if (IS_BOOL(args[0])) t = "bool";
         else if (IS_INT(args[0])) t = "int";
-        else if (IS_DOUBLE(args[0])) t = "double";
+        else if (IS_DOUBLE(args[0])) t = "float";
         else if (IS_OBJ(args[0])) {
             switch (AS_OBJ(args[0])->type) {
                 case OBJ_STRING:     t = "string";     break;

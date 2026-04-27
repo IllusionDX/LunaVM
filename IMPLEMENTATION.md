@@ -314,7 +314,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.4-alpha` | Done | Classes / enums solidified. Expanded NaN-boxing from 3-bit to 4-bit type tags (bits 47-50) to support `OBJ_ENUM`. Compile-time class inheritance: parent fields and methods flattened into child prototype. Method override with backward search (`OP_INVOKE` searches child→parent). `OP_SUPER` implemented for `super.method()` calls. Auto-call `_init` on `new`. First-class enum objects (`ObjEnum`) with `.count()`, `.keys()`, `.values()` runtime API. |
 | `0.2.5-alpha` | Done | Arrow functions / lambdas: `(a, b) => a + b`, `() => 42`, `(x) => x * x`. Higher-order functions supported. Parser gains `peek_ahead(n)` for non-destructive lookahead. Fixed multi-assignment bug where `a, b, c = 1, 2, 3` was incorrectly rejected. Refactored `is_type_hint_start` to use `peek_ahead` instead of raw pointer chasing. UTF-16 BOM detection in lexer (rejects UTF-16 with clear error; supports UTF-8 BOM skip). Added `.should_fail.` test convention for regression tests that expect failure. |
 | `0.2.6-alpha` | Done | Multiline comments: `"""..."""` for block comments spanning multiple lines. Lexer consumes everything between triple-quotes without generating tokens. |
-| `0.2.7-alpha` | Done | `in` operator for membership testing: `item in list`, `key in dict`, `substring in string`. Type-hint keywords (`list`, `dict`, `int`, `float`, `string`, `bool`, `char`, `double`) are now context-sensitive — valid as identifiers everywhere except after `:` in declarations. Parser checks token text instead of hardcoded token types for type hints. |
+| `0.2.7-alpha` | Done | `in` operator for membership testing: `item in list`, `key in dict`, `substring in string`. Type-hint keywords (`list`, `dict`, `int`, `float`, `string`, `bool`, `char`) are now context-sensitive — valid as identifiers everywhere except after `:` in declarations. Parser checks token text instead of hardcoded token types for type hints. |
 | `0.2.8-alpha` | Done | Bound methods (`ObjBoundMethod`): `obj.method` returns a callable bound to `obj`. `OP_CALL` handles bound method invocation (self as reg 0). `_init` auto-call fix for zero-argument constructors. |
 | `0.2.9-alpha` | Done | Default arguments (`def f(a, b=10):`) and keyword arguments (`f(a=5, b=3)`). Pre-interned param name keys for O(1) kwargs lookup. Eliminated string-interning overhead on every function call. |
 | `0.2.10-alpha` | **Current** | Keyword arguments for method calls: `obj.method(a=5, b=10)`. Compiler emits `OP_MEMBERGET` + `OP_KCALL` instead of `OP_INVOKE` when kwargs are present. |
@@ -495,7 +495,7 @@ Will continue to return the canonical type representation. Primitives and builti
 | `null` | `"null"` |
 | `true`/`false` | `"bool"` |
 | `5` | `"int"` |
-| `3.14` | `"double"` |
+| `3.14` | `"float"` |
 | `"hello"` | `"string"` |
 | `[1,2]` | `"list"` |
 | `def(): ...` | `"function"` / `"closure"` / `"bound_method"` |
@@ -510,7 +510,7 @@ Will be a fast exact-match. No inheritance, no polymorphism. Direct tag/bit/clas
 | `x is null` | `IS_NIL(x)` |
 | `x is bool` | `IS_BOOL(x)` |
 | `x is int` | `IS_INT(x)` |
-| `x is double` | `IS_DOUBLE(x)` |
+| `x is float` | `IS_DOUBLE(x)` |
 | `x is number` | `IS_INT(x) \|\| IS_DOUBLE(x)` |
 | `x is string` | `IS_OBJ_TYPE(x, OBJ_STRING)` |
 | `x is list` | `IS_OBJ_TYPE(x, OBJ_LIST)` |

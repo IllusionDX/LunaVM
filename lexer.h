@@ -51,7 +51,6 @@ typedef enum {
     TOK_DICT,
     TOK_INT_TYPE,
     TOK_FLOAT_TYPE,
-    TOK_DOUBLE_TYPE,
     TOK_BOOL_TYPE,
     TOK_CHAR_TYPE,
     TOK_STRING_TYPE,
