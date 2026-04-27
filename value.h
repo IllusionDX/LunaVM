@@ -31,8 +31,8 @@ struct VM;      /* defined in vm.h */
 typedef uint64_t Value;
 
 /* Quiet NaN base: sign=0, exponent=all-1s, quiet-bit=1
- * Top 16 bits = 0x7FF8 (bit 50 is now free for the 4-bit type tag). */
-#define QNAN_TAG     ((uint64_t)0x7ff8000000000000)
+ * Top 16 bits = 0x7FFC (bit 50 is now free for the 4-bit type tag). */
+#define QNAN_TAG     ((uint64_t)0x7ffc000000000000)
 
 /* Sub-tags in the lowest 3 payload bits.
  * Pointers from malloc are at least 8-byte aligned → low 3 bits = 000. */
@@ -42,7 +42,7 @@ typedef uint64_t Value;
 #define TAG_INT      4  /* 0x100 */
 #define TAG_EMPTY    5  /* 0x101 (internal tombstone) */
 
-#define IS_DOUBLE(v) (((v) & QNAN_TAG) != QNAN_TAG)
+#define IS_DOUBLE(v) (((v) & 0x7ffc000000000000ULL) != 0x7ffc000000000000ULL)
 #define IS_OBJ(v)    (((v) & (QNAN_TAG | 7)) == QNAN_TAG)
 #define IS_NIL(v)    ((v) == (QNAN_TAG | TAG_NIL))
 #define IS_TRUE(v)   ((v) == (QNAN_TAG | TAG_TRUE))
@@ -58,6 +58,12 @@ typedef uint64_t Value;
 static inline Value make_double(double d) {
     Value v;
     memcpy(&v, &d, sizeof(v));
+    /* Normalize any NaN to a canonical quiet NaN that doesn't collide with QNAN_TAG.
+       Hardware NaNs (e.g. 0x7FF8000000000000) are indistinguishable from our old QNAN_TAG.
+       We rewrite ALL NaNs to payload=1 so they are always treated as doubles. */
+    if (((v & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL) && (v & 0x000fffffffffffffULL)) {
+        return 0x7ff8000000000001ULL;
+    }
     return v;
 }
 static inline double AS_DOUBLE(Value v) {
