@@ -313,13 +313,14 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.3-alpha` | Done | Multiple assignment / swap: `a, b = b, a`. The compiler detects the two-local-variable swap pattern and emits a single `OP_SWAP` instruction (1 cycle instead of 3 `MOVE`s). General-case multi-assignment (`a, b = 10, 20`) evaluates all RHS values into temps first, then assigns each to its target. New `EXPR_MULTI_ASSIGN` AST node. Parser improvements: backtracking (`save_state`/`restore_state`), expression-level destructuring assignments, variadic `parser_error()`. |
 | `0.2.4-alpha` | Done | Classes / enums solidified. Expanded NaN-boxing from 3-bit to 4-bit type tags (bits 47-50) to support `OBJ_ENUM`. Compile-time class inheritance: parent fields and methods flattened into child prototype. Method override with backward search (`OP_INVOKE` searches child→parent). `OP_SUPER` implemented for `super.method()` calls. Auto-call `_init` on `new`. First-class enum objects (`ObjEnum`) with `.count()`, `.keys()`, `.values()` runtime API. |
 | `0.2.5-alpha` | Done | Arrow functions / lambdas: `(a, b) => a + b`, `() => 42`, `(x) => x * x`. Higher-order functions supported. Parser gains `peek_ahead(n)` for non-destructive lookahead. Fixed multi-assignment bug where `a, b, c = 1, 2, 3` was incorrectly rejected. Refactored `is_type_hint_start` to use `peek_ahead` instead of raw pointer chasing. UTF-16 BOM detection in lexer (rejects UTF-16 with clear error; supports UTF-8 BOM skip). Added `.should_fail.` test convention for regression tests that expect failure. |
-| `0.2.6-alpha` | **Current** | Multiline comments: `"""..."""` for block comments spanning multiple lines. Lexer consumes everything between triple-quotes without generating tokens. |
+| `0.2.6-alpha` | Done | Multiline comments: `"""..."""` for block comments spanning multiple lines. Lexer consumes everything between triple-quotes without generating tokens. |
+| `0.2.7-alpha` | **Current** | `in` operator for membership testing: `item in list`, `key in dict`, `substring in string`. Type-hint keywords (`list`, `dict`, `int`, `float`, `string`, `bool`, `char`, `double`) are now context-sensitive — valid as identifiers everywhere except after `:` in declarations. Parser checks token text instead of hardcoded token types for type hints. |
 
 ## Roadmap
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.x` | Default arguments with immutability guard: `def connect(host = "localhost", port = 8080)`. Type-hint keywords (`list`, `dict`, `int`, `string`, `float`, `bool`, `char`) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. Better error messages with line/column context and suggestions. |
+| `0.2.x` | Default arguments with immutability guard: `def connect(host = "localhost", port = 8080)`. Better error messages with line/column context and suggestions. |
 | `0.3.x` | Modules, imports, and standard library (strings, math, io, os). Optional chaining (`?.`) for null-safe member access. |
 | `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
 | `0.5.x` | Exception handling (`try` / `catch` / `finally`, custom exceptions, stack traces). |
