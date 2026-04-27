@@ -319,8 +319,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.x` | Type-hint keywords (`list`, `dict`, `int`, `string`, `float`, `bool`, `char`) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. Better error messages with line/column context and suggestions. |
-| `0.3.x` | Modules, imports, and standard library (strings, math, io, os). |
+| `0.2.x` | Default arguments with immutability guard: `def connect(host = "localhost", port = 8080)`. Type-hint keywords (`list`, `dict`, `int`, `string`, `float`, `bool`, `char`) become context-sensitive — valid as identifiers everywhere except after `:` in declarations. Better error messages with line/column context and suggestions. |
+| `0.3.x` | Modules, imports, and standard library (strings, math, io, os). Optional chaining (`?.`) for null-safe member access. |
 | `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
 | `0.5.x` | Exception handling (`try` / `catch` / `finally`, custom exceptions, stack traces). |
 | `0.6.x` | Debugger / profiler. |
@@ -391,7 +391,6 @@ These would make Luna's destructuring faster than languages that rely on generic
 ### Ideas Under Consideration
 
 **From JavaScript**
-- Optional chaining (`?.`) for null-safe member access.
 - Nullish coalescing (`??`) — fallback only on `null`, preserving `false` and `0`.
 - Spread / rest operators (`...`) for list literals and function parameter lists.
 - Object shorthand and computed keys in dict literals: `{x, "key": value, [dyn]: 42}`.
@@ -400,7 +399,7 @@ These would make Luna's destructuring faster than languages that rely on generic
 **Unique / Differentiating**
 - Pipe operator (`|>`) for expression-oriented data flow.
 - Pattern matching (`match` expression) with list/dict/range patterns.
-- Named arguments with defaults: `connect(timeout=60, host="localhost")`.
+- Named arguments (call-site): `connect(timeout=60, host="localhost")` — pass arguments by name at call site.
 - First-class regex literals: `/[a-z]+/g`.
 - Traits / mixins for composable behavior without multiple inheritance.
 - Method cascading (`..`) for chaining mutating calls.
@@ -439,6 +438,39 @@ Lua and LuaJIT expose only one numeric type to the user: `number` (double). Inte
 *Future NaN-boxing redesign options:*
 1. *Payload sentinel:* Change base tag to a quiet-NaN pattern the hardware is unlikely to emit (e.g. `0x7FF8...0001`). Requires updating `IS_DOUBLE` and `IS_OBJ` to distinguish hardware NaN (treat as double) from tagged objects.
 2. *Bit-63 negative space (V8/SpiderMonkey style):* Move Luna's tagged space to `0xFFF8...` (bit 63 = 1). This makes `IS_DOUBLE(v)` a single `CMP v < 0xFFF8...` — the fastest possible type check. But requires normalizing all hardware NaNs in `make_double()` and is a sweeping change across `value.h`.
+
+## Language Design Decisions
+
+### Default Arguments
+
+Default arguments use **compile-time constants only**. The expression after `=` must be a literal of an immutable type:
+
+| Allowed | Example |
+|---------|---------|
+| Integer literal | `def foo(a = 10)` |
+| Float literal | `def foo(a = 3.14)` |
+| String literal | `def foo(a = "hello")` |
+| Boolean literal | `def foo(a = true)` |
+| Null | `def foo(a = null)` |
+
+| Rejected | Rationale |
+|----------|-----------|
+| List literal | `def foo(a = [])` — mutable, would be shared across calls |
+| Dict literal | `def foo(a = {})` — mutable, would be shared across calls |
+| Function call | `def foo(a = time.now())` — not a constant |
+| Variable reference | `def foo(a = SOME_CONST)` — not a constant |
+
+**Why:** Python's mutable default argument footgun (`def foo(a=[]): a.append(1)`) is one of the most common bugs in the language. Luna prevents it at the parser level. If you need a mutable default, use `null` and initialize in the body:
+
+```luna
+def add_item(item, items = null):
+    if items == null:
+        items = []
+    items.append(item)
+    return items
+```
+
+**Type hints with defaults:** The parser accepts `def connect(host: string = "localhost", port: int = 8080):`. The type hint is parsed first, then the `=` and default value.
 
 ## Security
 
