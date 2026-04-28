@@ -401,7 +401,7 @@ var value = 42
 import math
 ```
 
-> `import` is parsed but not yet functional. Module resolution is planned for a future release.
+> `import` is parsed but not yet functional. Module resolution is planned for 0.3.x.
 > `from ... import` syntax is parsed but has no runtime support.
 
 ### Error Handling
