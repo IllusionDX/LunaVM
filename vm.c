@@ -23,6 +23,7 @@
 #include "opcode.h"
 #include "stdlib_math.h"
 #include "stdlib_random.h"
+#include "stdlib_noise.h"
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -529,6 +530,7 @@ void vm_init(VM *vm) {
     retain_obj((Object*)vm->module_cache);
     vm_register_math_module(vm);
     vm_register_random_module(vm);
+    vm_register_noise_module(vm);
 }
 
 static void close_upvalues(VM *vm, int frame_depth);
