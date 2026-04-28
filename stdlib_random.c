@@ -311,6 +311,39 @@ static Value rng_choice(VM *vm, Value *args, int n) {
 }
 
 /* ============================================================ */
+/* rng.shuffle(list) — Fisher-Yates, in-place                    */
+/* ============================================================ */
+
+static Value rng_shuffle(VM *vm, Value *args, int n) {
+    if (n < 2) luna_throw(vm, vm->argument_error_class, "shuffle() requires a list argument");
+
+    if (!IS_OBJ(args[1]) || AS_OBJ(args[1])->type != OBJ_LIST)
+        luna_throw(vm, vm->type_error_class, "shuffle(): argument must be a list");
+
+    ObjList *list = (ObjList*)AS_OBJ(args[1]);
+    int len = list->count;
+    if (len < 2) return make_null();
+
+    ObjList *state_list = get_state_list(args[0]);
+    if (!state_list) luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
+
+    for (int i = len - 1; i > 0; i--) {
+        uint32_t raw = rng_step(state_list);
+        int j = (int)(raw % (uint32_t)(i + 1));
+        Value tmp = list->items ? list->items[i] : list->inline_items[i];
+        if (list->items) {
+            list->items[i] = list->items[j];
+            list->items[j] = tmp;
+        } else {
+            list->inline_items[i] = list->inline_items[j];
+            list->inline_items[j] = tmp;
+        }
+    }
+
+    return make_null();
+}
+
+/* ============================================================ */
 /* Module registration                                           */
 /* ============================================================ */
 
@@ -322,6 +355,7 @@ void vm_register_random_module(VM *vm) {
     class_add_native_method(rng_class, "float",  rng_float);
     class_add_native_method(rng_class, "seed",   rng_seed);
     class_add_native_method(rng_class, "choice", rng_choice);
+    class_add_native_method(rng_class, "shuffle", rng_shuffle);
     class_add_native_method(rng_class, "_call",  rng_call);
 
     ObjModule *mod = new_module("random");

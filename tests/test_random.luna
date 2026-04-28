@@ -48,3 +48,19 @@ var c1 = rng2.choice([10, 20, 30])
 var rng3 = random.PCG(777)
 var c2 = rng3.choice([10, 20, 30])
 print(c1 == c2)
+
+# rng.shuffle in-place
+var deck = [1, 2, 3, 4, 5]
+rng.shuffle(deck)
+print(deck.length == 5)
+
+# Reproducibility: same seed gives same shuffle
+var rng4 = random.PCG(999)
+var list1 = [10, 20, 30, 40]
+rng4.shuffle(list1)
+
+var rng5 = random.PCG(999)
+var list2 = [10, 20, 30, 40]
+rng5.shuffle(list2)
+
+print(list1[0] == list2[0] and list1[1] == list2[1] and list1[2] == list2[2] and list1[3] == list2[3])
