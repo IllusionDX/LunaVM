@@ -26,7 +26,8 @@ OBJECTS = $(SOURCES:.c=.o)
 
 # Header files
 HEADERS = ast.h value.h lexer.h parser.h chunk.h vm.h opcode.h compiler.h \
-    parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h stdlib_math.h stdlib_random.h
+    parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h stdlib_math.h stdlib_random.h \
+    vm_opcodes.inc
 
 # Default target
 all: $(TARGET)

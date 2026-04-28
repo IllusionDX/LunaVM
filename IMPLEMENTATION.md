@@ -330,7 +330,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.3.3-alpha` | Done | `random` stdlib module with instance-based PCG32 RNG. `random.PCG(seed)` creates isolated generator objects with `.int(min, max)`, `.float()`, `.float(min, max)`, `.seed(n)` methods. State stored in `_state` list inside `ObjInstance`. `OP_INVOKE` fix: native instance methods now correctly receive `self`. `vm_run_chunk`/`vm_execute_loop` split to eliminate `-Wclobbered` from `setjmp`/`longjmp`. |
 | `0.3.4-alpha` | Done | Callable instances: `OP_CALL` now checks for `_call` method on `ObjInstance`. `random.PCG(seed)` instances can be called directly: `rng()` returns a random float, same as `rng.float()`. Consistent with Luna's `_init` naming convention for special methods. |
 | `0.3.5-alpha` | Done | Polymorphic RNG system: single `Random` class serves multiple algorithms via tag in `_state[0]`. `random.PCG(seed)` and `random.Xorshift(seed)` constructors. Algorithm-specific `step` functions with shared dispatch. `rng.choice(seq)` as instance method using seeded RNG (not C `rand()`). Removed type guards from callable dispatch. |
-| `0.3.6-alpha` | **Current** | `rng.shuffle(list)` instance method: Fisher-Yates in-place shuffle using seeded RNG. Fixed SOO list mode handling during shuffle (inline_items vs items). Reproducible shuffle across isolated generator instances. |
+| `0.3.6-alpha` | Done | `rng.shuffle(list)` instance method: Fisher-Yates in-place shuffle using seeded RNG. Fixed SOO list mode handling during shuffle (inline_items vs items). Reproducible shuffle across isolated generator instances. |
+| `0.3.7-alpha` | **Current** | VM refactor: split `vm.c` monolith into `vm.c` (core VM, 986 lines) + `vm_opcodes.inc` (opcode handlers, 1843 lines). Computed goto preserved via `#include` inside `vm_execute_loop`. `Makefile` updated with `vm_opcodes.inc` header dependency. No behavioral changes. |
 
 ## Roadmap
 
