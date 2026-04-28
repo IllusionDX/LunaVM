@@ -37,6 +37,9 @@ typedef struct Chunk {
 
     /* Debug name (function name or "<module>") */
     char       *name;
+
+    /* Source file path (for relative import resolution) */
+    char       *source_path;
 } Chunk;
 
 /* ---- Lifecycle ---- */

@@ -26,6 +26,7 @@ void chunk_init(Chunk *chunk, const char *name) {
     chunk->max_registers = 0;
 
     chunk->name = name ? strdup(name) : strdup("<chunk>");
+    chunk->source_path = NULL;
 }
 
 void chunk_free(Chunk *chunk) {
@@ -41,6 +42,7 @@ void chunk_free(Chunk *chunk) {
     free(chunk->constants);
     free(chunk->global_cache);
     free(chunk->name);
+    free(chunk->source_path);
 
     chunk_init(chunk, NULL);
 }

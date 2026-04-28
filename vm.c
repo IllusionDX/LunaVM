@@ -613,6 +613,26 @@ static ObjDict *vm_globals_to_dict(VM *vm) {
     return d;
 }
 
+/* Extract directory component from a file path (modifies buf in-place).
+ * Handles both '/' and '\\' separators.
+ */
+static void path_dirname(const char *path, char *buf, size_t buf_size) {
+    if (!path || !path[0]) {
+        buf[0] = '\0';
+        return;
+    }
+    strncpy(buf, path, buf_size - 1);
+    buf[buf_size - 1] = '\0';
+    char *last_slash = strrchr(buf, '/');
+    char *last_backslash = strrchr(buf, '\\');
+    char *sep = last_slash > last_backslash ? last_slash : last_backslash;
+    if (sep) {
+        *sep = '\0';
+    } else {
+        buf[0] = '\0';
+    }
+}
+
 /* ============================================================ */
 /* vm_run_chunk — main dispatch loop                             */
 /* ============================================================ */
@@ -2430,7 +2450,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             DECODE; goto *op_labels[OP(instr)];
         }
 
-        char *filepath = module_resolve_path(mod_name);
+        char from_dir[1024];
+        path_dirname(FRAME.chunk && FRAME.chunk->source_path ? FRAME.chunk->source_path : NULL, from_dir, sizeof(from_dir));
+
+        char *filepath = module_resolve_path(mod_name, from_dir[0] ? from_dir : NULL);
         if (!filepath) {
             char buf[256];
             snprintf(buf, sizeof(buf), "import: module '%s' not found", mod_name);
@@ -2440,8 +2463,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         }
 
         char *source = module_read_source(filepath);
-        free(filepath);
         if (!source) {
+            free(filepath);
             char buf[256];
             snprintf(buf, sizeof(buf), "import: cannot read module '%s'", mod_name);
             release_value(_exc);
@@ -2510,6 +2533,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         ObjFunction *mod_fn = new_function(mod_name);
         mod_fn->chunk = malloc(sizeof(Chunk));
         *mod_fn->chunk = mod_chunk;
+        mod_fn->chunk->source_path = filepath;
         retain_obj((Object*)mod_fn);
 
         /* Push function onto stack and set up call frame */

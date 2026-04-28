@@ -5,8 +5,18 @@
 #include <string.h>
 #include "module.h"
 
-char *module_resolve_path(const char *module_name) {
+char *module_resolve_path(const char *module_name, const char *from_dir) {
     char path[1024];
+
+    if (from_dir && from_dir[0]) {
+        snprintf(path, sizeof(path), "%s/lib/%s.luna", from_dir, module_name);
+        FILE *f = fopen(path, "r");
+        if (f) { fclose(f); return strdup(path); }
+
+        snprintf(path, sizeof(path), "%s/%s.luna", from_dir, module_name);
+        f = fopen(path, "r");
+        if (f) { fclose(f); return strdup(path); }
+    }
 
     snprintf(path, sizeof(path), "./lib/%s.luna", module_name);
     FILE *f = fopen(path, "r");

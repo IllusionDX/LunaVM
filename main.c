@@ -56,7 +56,7 @@ static char *read_file(const char *path) {
     return buffer;
 }
 
-static int execute_native_program(const char *source) {
+static int execute_native_program(const char *source, const char *filepath) {
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: execute_native_program start\n");
 #endif
@@ -109,6 +109,7 @@ static int execute_native_program(const char *source) {
         lexer_free(lexer);
         return 1;
     }
+    chunk.source_path = filepath ? strdup(filepath) : NULL;
 
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: about to run chunk\n");
@@ -353,7 +354,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "DEBUG: read_file succeeded, calling execute_native_program\n");
 #endif
 
-    int result = execute_native_program(source);
+    int result = execute_native_program(source, argv[file_idx]);
     free(source);
     return result;
 }
