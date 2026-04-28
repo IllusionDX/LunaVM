@@ -3,7 +3,7 @@ import os
 var argv = os.args()
 
 print(os.platform() == "win32" or os.platform() == "posix")
-print(os.env("THIS_ENV_SHOULD_NOT_EXIST_12345") == null)
+print(os.getenv("THIS_ENV_SHOULD_NOT_EXIST_12345") == null)
 print(argv.length >= 2)
 print(argv[0].length > 0)
 print(argv[1].length > 0)
@@ -11,3 +11,15 @@ print(argv[1].length > 0)
 if argv.length >= 4:
     print(argv[2] == "--port")
     print(argv[3] == "8080")
+
+var sep = os.sep
+print(sep == "/")
+
+print(os.path_join("usr", "bin") == "usr/bin")
+print(os.path_join("usr/", "bin") == "usr/bin")
+print(os.path_join("folder/", "/file") == "folder/file")
+print(os.path_join("usr", "", "bin") == "usr/bin")
+print(os.path_join("/", "usr") == "/usr")
+print(os.path_join("a", "b", "c") == "a/b/c")
+print(os.path_join("C:", "Users", "Desktop") == "C:/Users/Desktop")
+print(os.path_join("usr//", "//bin") == "usr/bin")

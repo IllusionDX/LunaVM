@@ -140,14 +140,19 @@ static ObjList *get_state_list(Value self) {
 /* ============================================================ */
 
 static Value rng_int(VM *vm, Value *args, int n) {
-    if (n < 3) luna_throw(vm, vm->argument_error_class, "Random.int() requires 2 arguments: min, max");
-    if (!IS_NUMBER(args[1])) luna_throw(vm, vm->type_error_class, "Random.int(): min must be numeric");
-    if (!IS_NUMBER(args[2])) luna_throw(vm, vm->type_error_class, "Random.int(): max must be numeric");
-
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list) luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
 
     uint32_t raw = rng_step(state_list);
+
+    if (n == 1) {
+        return make_int((int32_t)raw);
+    }
+    if (n != 3) {
+        luna_throw(vm, vm->argument_error_class, "Random.int() expects 0 or 2 arguments (min, max)");
+    }
+    if (!IS_NUMBER(args[1])) luna_throw(vm, vm->type_error_class, "Random.int(): min must be numeric");
+    if (!IS_NUMBER(args[2])) luna_throw(vm, vm->type_error_class, "Random.int(): max must be numeric");
 
     int min = (int)AS_INT(args[1]);
     int max = (int)AS_INT(args[2]);
