@@ -134,6 +134,7 @@ typedef enum {
     OBJ_CLASS,
     OBJ_BOUND_METHOD,
     OBJ_MODULE,
+    OBJ_BUFFER,
     OBJ_USERDATA
 } ObjType;
 
@@ -190,6 +191,7 @@ static inline Value make_obj(void *ptr) {
 #define IS_CLASS(v)    (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLASS))
 #define IS_BOUND_METHOD(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_BOUND_METHOD))
 #define IS_MODULE(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_MODULE))
+#define IS_BUFFER(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_BUFFER))
 #define IS_USERDATA(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_USERDATA))
 
 /* ============================================================ */
@@ -267,6 +269,14 @@ typedef struct ObjModule {
     ObjString *name;      /* module name (e.g. "math") */
     ObjDict   *exports;   /* dict of name -> value */
 } ObjModule;
+
+/* Buffer â€” raw byte storage for binary I/O and network APIs */
+typedef struct ObjBuffer {
+    Object  obj;
+    uint8_t *data;
+    size_t  size;
+    size_t  capacity;
+} ObjBuffer;
 
 typedef void (*UserdataFinalizer)(void *data);
 
@@ -366,6 +376,11 @@ ObjClosure  *new_closure(ObjFunction *function);
 ObjEnum     *new_enum(const char *name, int count);
 ObjBoundMethod *new_bound_method(Value self, struct ObjFunction *fn);
 ObjModule     *new_module(const char *name);
+ObjBuffer     *new_buffer(size_t capacity);
+void           buffer_reserve(ObjBuffer *buf, size_t capacity);
+void           buffer_resize(ObjBuffer *buf, size_t size);
+void           buffer_append_byte(ObjBuffer *buf, uint8_t byte);
+void           buffer_append_data(ObjBuffer *buf, const uint8_t *data, size_t len);
 
 /* ============================================================ */
 /* Value predicates / utilities                                  */

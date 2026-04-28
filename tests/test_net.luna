@@ -1,0 +1,17 @@
+import net
+
+var tcp_sock = net.tcp()
+print(tcp_sock != null)
+
+print(net.AF_INET > 0)
+print(net.SOCK_STREAM > 0)
+print(net.SOCK_DGRAM > 0)
+
+print(net.Socket(net.AF_INET, net.SOCK_STREAM) != null)
+
+var udp_sock = net.udp()
+print(udp_sock != null)
+print(udp_sock.is_connected() == false)
+
+var addr = net.resolve("localhost")
+print(addr == "127.0.0.1")

@@ -30,6 +30,7 @@
 #include "stdlib_io.h"
 #include "stdlib_time.h"
 #include "stdlib_os.h"
+#include "stdlib_net.h"
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -317,6 +318,7 @@ static void mark_object(Object *obj) {
             if (mod->exports) mark_object((Object*)mod->exports);
             break;
         }
+        case OBJ_BUFFER: break;
         default: break;
     }
 }
@@ -542,6 +544,7 @@ void vm_init(VM *vm) {
     vm_register_io_module(vm);
     vm_register_time_module(vm);
     vm_register_os_module(vm);
+    vm_register_net_module(vm);
 }
 
 void vm_set_process_args(VM *vm, int argc, char **argv) {

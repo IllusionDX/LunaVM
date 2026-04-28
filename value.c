@@ -355,6 +355,54 @@ ObjModule *new_module(const char *name) {
     return mod;
 }
 
+ObjBuffer *new_buffer(size_t capacity) {
+    ObjBuffer *buf = malloc(sizeof(ObjBuffer));
+    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)buf, OBJ_BUFFER, sizeof(ObjBuffer) + capacity);
+    buf->size = 0;
+    buf->capacity = capacity;
+    buf->data = capacity ? malloc(capacity) : NULL;
+    if (capacity && !buf->data) { fprintf(stderr, "OOM\n"); exit(1); }
+    return buf;
+}
+
+void buffer_reserve(ObjBuffer *buf, size_t capacity) {
+    if (!buf) return;
+    if (capacity <= buf->capacity) return;
+    size_t new_cap = buf->capacity ? buf->capacity : 16;
+    while (new_cap < capacity) {
+        new_cap *= 2;
+    }
+    uint8_t *new_data = realloc(buf->data, new_cap);
+    if (!new_data) { fprintf(stderr, "OOM\n"); exit(1); }
+    if (new_cap > buf->capacity) {
+        size_t delta = new_cap - buf->capacity;
+        buf->obj.size += delta;
+        bytes_allocated += delta;
+    }
+    buf->data = new_data;
+    buf->capacity = new_cap;
+}
+
+void buffer_resize(ObjBuffer *buf, size_t size) {
+    if (!buf) return;
+    buffer_reserve(buf, size);
+    buf->size = size;
+}
+
+void buffer_append_byte(ObjBuffer *buf, uint8_t byte) {
+    if (!buf) return;
+    buffer_reserve(buf, buf->size + 1);
+    buf->data[buf->size++] = byte;
+}
+
+void buffer_append_data(ObjBuffer *buf, const uint8_t *data, size_t len) {
+    if (!buf || !data || !len) return;
+    buffer_reserve(buf, buf->size + len);
+    memcpy(buf->data + buf->size, data, len);
+    buf->size += len;
+}
+
 Value make_exception_instance(struct VM *vm, ObjClass *cls, const char *message) {
     if (!cls) cls = vm->exception_class;
     if (!cls) return make_null();
@@ -469,6 +517,12 @@ void free_object_container(Object *obj) {
         case OBJ_MODULE: {
             free(obj); break;
         }
+        case OBJ_BUFFER: {
+            ObjBuffer *buf = (ObjBuffer*)obj;
+            free(buf->data);
+            free(buf);
+            break;
+        }
         case OBJ_USERDATA: {
             ObjUserdata *ud = (ObjUserdata*)obj;
             userdata_run_finalizer(ud);
@@ -553,6 +607,7 @@ void free_object(Object *obj) {
             if (mod->exports) release_obj((Object*)mod->exports);
             break;
         }
+        case OBJ_BUFFER: break;
         case OBJ_USERDATA: break;
         default: break;
     }
@@ -693,6 +748,11 @@ char *value_to_string(Value v) {
             case OBJ_MODULE: {
                 ObjModule *mod = (ObjModule*)obj;
                 snprintf(buf, sizeof(buf), "<module %s>", mod->name ? mod->name->chars : "?");
+                return strdup(buf);
+            }
+            case OBJ_BUFFER: {
+                ObjBuffer *bufv = (ObjBuffer*)obj;
+                snprintf(buf, sizeof(buf), "<buffer %zu bytes>", bufv->size);
                 return strdup(buf);
             }
             case OBJ_USERDATA: {
