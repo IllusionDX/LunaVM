@@ -407,6 +407,43 @@ print(helper.greet("World"))
 
 Modules are loaded from the current file's directory or the working directory. Each module gets its own isolated global scope. The module cache prevents duplicate loads within a single VM lifetime.
 
+### Built-in Modules
+
+#### `time`
+
+```luna
+import time
+
+print(time.now())
+print(time.ticks_usec())
+print(time.ticks_msec())
+time.sleep(250)
+```
+
+`time.now()` returns Unix time in seconds as a float.
+`time.ticks_usec()` returns monotonic microseconds since the VM started.
+`time.ticks_msec()` returns the same elapsed time in milliseconds.
+`time.sleep(ms)` yields execution to the OS for the requested milliseconds.
+
+#### `os`
+
+```luna
+import os
+
+print(os.platform())
+print(os.env("HOME"))
+print(os.args())
+```
+
+`os.platform()` returns `"win32"` on Windows and `"posix"` on Unix-like systems.
+`os.env(key)` reads an environment variable and returns `null` if it does not exist.
+`os.exit(code)` exits the host process with the given code.
+`os.args()` returns the full host `argv` as a list:
+
+- `os.args()[0]` is the executable path
+- `os.args()[1]` is the script path
+- `os.args()[2+]` are the real script arguments
+
 ### Error Handling
 
 ```luna

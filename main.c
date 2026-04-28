@@ -56,7 +56,7 @@ static char *read_file(const char *path) {
     return buffer;
 }
 
-static int execute_native_program(const char *source, const char *filepath) {
+static int execute_native_program(const char *source, const char *filepath, int argc, char *argv[]) {
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: execute_native_program start\n");
 #endif
@@ -94,6 +94,7 @@ static int execute_native_program(const char *source, const char *filepath) {
 
     VM vm;
     vm_init(&vm);
+    vm_set_process_args(&vm, argc, argv);
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: vm_init done\n");
 #endif
@@ -191,6 +192,7 @@ static int execute_repl_line(VM *vm, const char *source) {
 static void repl(void) {
     VM vm;
     vm_init(&vm);
+    vm_set_process_args(&vm, 0, NULL);
 
     bool is_tty = _isatty(_fileno(stdin));
 
@@ -295,10 +297,16 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "DEBUG: main start\n");
 #endif
     int unbuffered = 0;
+    int file_idx = -1;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-u") == 0) {
             unbuffered = 1;
+            continue;
+        }
+        if (file_idx < 0 && argv[i][0] != '-') {
+            file_idx = i;
+            break;
         }
     }
 
@@ -312,29 +320,22 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    int file_idx = 1;
-
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-u") == 0) continue;
-
+        if (argv[i][0] != '-') break;
         if (strcmp(argv[i], "--version") == 0) {
             printf("LunaScript interpreter %s\n", LUNA_VERSION_STRING);
             printf("Register-based bytecode VM with ARC memory management\n");
             printf("Native C lexer, parser, and compiler\n");
             return 0;
         }
-
         if (strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
         }
-
-        if (argv[i][0] != '-') {
-            file_idx = i;
-        }
     }
 
-    if (file_idx >= argc) {
+    if (file_idx < 0 || file_idx >= argc) {
         fprintf(stderr, "Error: No input file specified\n");
         print_usage(argv[0]);
         return 1;
@@ -354,7 +355,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "DEBUG: read_file succeeded, calling execute_native_program\n");
 #endif
 
-    int result = execute_native_program(source, argv[file_idx]);
+    int result = execute_native_program(source, argv[file_idx], argc, argv);
     free(source);
     return result;
 }

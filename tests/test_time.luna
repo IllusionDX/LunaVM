@@ -1,0 +1,10 @@
+import time
+
+print(time.now() > 0.0)
+print(time.ticks_usec() >= 0.0)
+print(time.ticks_msec() >= 0.0)
+
+var start = time.ticks_usec()
+time.sleep(20)
+var end = time.ticks_usec()
+print(end >= start)

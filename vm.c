@@ -9,12 +9,15 @@
  *   regs[param_count..]     — locals / temporaries
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #pragma GCC diagnostic ignored "-Wclobbered"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include "vm.h"
 #include "value.h"
 #include "chunk.h"
@@ -25,6 +28,8 @@
 #include "stdlib_random.h"
 #include "stdlib_noise.h"
 #include "stdlib_io.h"
+#include "stdlib_time.h"
+#include "stdlib_os.h"
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -516,6 +521,7 @@ static ObjClass *vm_register_builtin_exception(VM *vm, const char *name, ObjClas
 
 void vm_init(VM *vm) {
     memset(vm, 0, sizeof(VM));
+    vm->time_start_us = luna_time_monotonic_us();
     vm_register_builtins(vm);
 
     /* Register built-in Exception hierarchy */
@@ -534,6 +540,13 @@ void vm_init(VM *vm) {
     vm_register_random_module(vm);
     vm_register_noise_module(vm);
     vm_register_io_module(vm);
+    vm_register_time_module(vm);
+    vm_register_os_module(vm);
+}
+
+void vm_set_process_args(VM *vm, int argc, char **argv) {
+    vm->process_argc = argc > 0 ? argc : 0;
+    vm->process_argv = argv;
 }
 
 static void close_upvalues(VM *vm, int frame_depth);

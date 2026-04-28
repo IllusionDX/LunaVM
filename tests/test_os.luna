@@ -1,0 +1,13 @@
+import os
+
+var argv = os.args()
+
+print(os.platform() == "win32" or os.platform() == "posix")
+print(os.env("THIS_ENV_SHOULD_NOT_EXIST_12345") == null)
+print(argv.length >= 2)
+print(argv[0].length > 0)
+print(argv[1].length > 0)
+
+if argv.length >= 4:
+    print(argv[2] == "--port")
+    print(argv[3] == "8080")

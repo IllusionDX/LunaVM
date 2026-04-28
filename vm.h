@@ -97,11 +97,16 @@ typedef struct VM {
     /* Last unhandled exception */
     Value       last_exception;
 
+    /* Process arguments visible to stdlib modules */
+    int         process_argc;
+    char      **process_argv;
+
     /* Inline caches */
     IC_GlobalEntry global_ic[IC_CACHE_SIZE];
     IC_MemberEntry member_ic[IC_CACHE_SIZE];
     IC_MemberEntry method_ic[IC_CACHE_SIZE];
     uint64_t       instr_count;
+    uint64_t       time_start_us; /* monotonic microseconds captured at vm_init */
 
     /* Module cache — maps module name string to ObjModule */
     ObjDict *module_cache;
@@ -131,6 +136,7 @@ void     vm_init(VM *vm);
 void     vm_free(VM *vm);
 
 void     vm_define_native(VM *vm, const char *name, NativeFn fn);
+void     vm_set_process_args(VM *vm, int argc, char **argv);
 void     vm_set_global(VM *vm, const char *name, Value value, bool is_const);
 bool     vm_get_global(VM *vm, const char *name, Value *out);
 bool     vm_get_global_fast(VM *vm, ObjString *name, Value *out);
