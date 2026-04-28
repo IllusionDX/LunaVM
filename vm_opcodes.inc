@@ -1520,6 +1520,99 @@
                     }
                     break;
                 }
+                case OBJ_MATRIX: {
+                    ObjMatrix *mat = (ObjMatrix*)AS_OBJ(obj);
+                    if (!strcmp(mname, "translate")) {
+                        if (nargs < 1 || !IS_VECTOR(scratch[0])) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "mat4.translate() expects a vector argument");
+                            goto op_throw;
+                        }
+                        ObjVector *v = (ObjVector*)AS_OBJ(scratch[0]);
+                        mat4_mul_translate(mat->m, v->data[0], v->data[1], v->data[2]);
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "rotate_x")) {
+                        if (nargs < 1 || !IS_NUMBER(scratch[0])) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "mat4.rotate_x() expects a numeric angle (degrees)");
+                            goto op_throw;
+                        }
+                        mat4_mul_rotate_x(mat->m, (float)(value_to_double(scratch[0]) * 3.141592653589793 / 180.0));
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "rotate_y")) {
+                        if (nargs < 1 || !IS_NUMBER(scratch[0])) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "mat4.rotate_y() expects a numeric angle (degrees)");
+                            goto op_throw;
+                        }
+                        mat4_mul_rotate_y(mat->m, (float)(value_to_double(scratch[0]) * 3.141592653589793 / 180.0));
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "rotate_z")) {
+                        if (nargs < 1 || !IS_NUMBER(scratch[0])) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "mat4.rotate_z() expects a numeric angle (degrees)");
+                            goto op_throw;
+                        }
+                        mat4_mul_rotate_z(mat->m, (float)(value_to_double(scratch[0]) * 3.141592653589793 / 180.0));
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "scale")) {
+                        if (nargs < 1 || !IS_VECTOR(scratch[0])) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "mat4.scale() expects a vector argument");
+                            goto op_throw;
+                        }
+                        ObjVector *v = (ObjVector*)AS_OBJ(scratch[0]);
+                        mat4_mul_scale(mat->m, v->data[0], v->data[1], v->data[2]);
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "transpose")) {
+                        mat4_transpose(mat->m, mat->m);
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "transposed")) {
+                        if (nargs != 0) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->argument_error_class, "mat4.transposed() takes no arguments");
+                            goto op_throw;
+                        }
+                        ObjMatrix *out = new_matrix();
+                        mat4_transpose(mat->m, out->m);
+                        result = make_obj((Object*)out);
+                        handled = true;
+                    } else if (!strcmp(mname, "invert")) {
+                        ObjMatrix *tmp = new_matrix();
+                        if (!mat4_invert(mat->m, tmp->m)) {
+                            release_obj((Object*)tmp);
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->value_error_class, "mat4.invert(): matrix is singular");
+                            goto op_throw;
+                        }
+                        for (int i = 0; i < 16; i++) mat->m[i] = tmp->m[i];
+                        release_obj((Object*)tmp);
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "inverted")) {
+                        if (nargs != 0) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->argument_error_class, "mat4.inverted() takes no arguments");
+                            goto op_throw;
+                        }
+                        ObjMatrix *out = new_matrix();
+                        if (!mat4_invert(mat->m, out->m)) {
+                            release_obj((Object*)out);
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->value_error_class, "mat4.inverted(): matrix is singular");
+                            goto op_throw;
+                        }
+                        result = make_obj((Object*)out);
+                        handled = true;
+                    }
+                    break;
+                }
                 default: break;
             }
         }

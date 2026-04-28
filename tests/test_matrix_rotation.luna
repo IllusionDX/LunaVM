@@ -1,0 +1,27 @@
+import math
+
+var rz = mat4()
+rz.rotate_z(90.0)
+var vz = rz * vec4(1.0, 0.0, 0.0, 1.0)
+if math.abs(vz.x) > 0.001:
+    throw("rotate_z x component wrong")
+if math.abs(vz.y - 1.0) > 0.001:
+    throw("rotate_z y component wrong")
+
+var rx = mat4()
+rx.rotate_x(90.0)
+var vx = rx * vec4(0.0, 1.0, 0.0, 1.0)
+if math.abs(vx.y) > 0.001:
+    throw("rotate_x y component wrong")
+if math.abs(vx.z - 1.0) > 0.001:
+    throw("rotate_x z component wrong")
+
+var ry = mat4()
+ry.rotate_y(90.0)
+var vy = ry * vec4(1.0, 0.0, 0.0, 1.0)
+if math.abs(vy.x) > 0.001:
+    throw("rotate_y x component wrong")
+if math.abs(vy.z + 1.0) > 0.001:
+    throw("rotate_y z component wrong")
+
+print("matrix rotation ok")

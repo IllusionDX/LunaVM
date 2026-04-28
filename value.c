@@ -391,6 +391,15 @@ ObjVector *new_vector(float x, float y, float z, float w) {
     return obj;
 }
 
+ObjMatrix *new_matrix(void) {
+    ObjMatrix *obj = malloc(sizeof(ObjMatrix));
+    if (!obj) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)obj, OBJ_MATRIX, sizeof(ObjMatrix));
+    for (int i = 0; i < 16; i++) obj->m[i] = 0.0f;
+    obj->m[0] = obj->m[5] = obj->m[10] = obj->m[15] = 1.0f;
+    return obj;
+}
+
 void buffer_reserve(ObjBuffer *buf, size_t capacity) {
     if (!buf) return;
     if (capacity <= buf->capacity) return;
@@ -564,6 +573,10 @@ void free_object_container(Object *obj) {
             free(obj);
             break;
         }
+        case OBJ_MATRIX: {
+            free(obj);
+            break;
+        }
         default: free(obj); break;
     }
 }
@@ -645,6 +658,7 @@ void free_object(Object *obj) {
         case OBJ_INT64: break;
         case OBJ_USERDATA: break;
         case OBJ_VECTOR: break;
+        case OBJ_MATRIX: break;
         default: break;
     }
 
@@ -808,6 +822,9 @@ char *value_to_string(Value v) {
                 snprintf(buf, sizeof(buf), "vec4(%.6g, %.6g, %.6g, %.6g)",
                          vec->data[0], vec->data[1], vec->data[2], vec->data[3]);
                 return strdup(buf);
+            }
+            case OBJ_MATRIX: {
+                return strdup("<mat4>");
             }
             default: return strdup("<object>");
         }

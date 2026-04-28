@@ -336,7 +336,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.3.9-alpha` | Done | `os` stdlib: full system module — directory operations (`getcwd`, `chdir`, `listdir`, `mkdir`), file operations (`rename`, `remove`, `stat`), system info (`execute`, `getpid`, `hostname`, `username`, `tmpdir`, `args`, `exit`, `platform`), environment access (`getenv`, `setenv`), path utilities (`path_join` with `/` normalization, `sep`, `pathsep`). `random.int()` now accepts 0 args (returns raw int32). |
 
 | `0.3.10-alpha` | Done | `time` stdlib (`now`, `ticks_usec`, `ticks_msec`, `sleep`) and `os` argument mapping contract (`argv[0]` executable, `argv[1]` script, `argv[2+]` user args). `ObjBuffer` infrastructure for binary parsing with `read_byte`, `read_short`, `read_int`, `read_long` promoting to `OBJ_INT64`. `buffer` stdlib with `new()` / `from_string()`. `string` helpers: `from_byte()`, `byte_at()`, `to_buffer()`. Native exception propagation now unwinds through `try/except` correctly. Strict dict access clarified: `[]` throws on missing keys, `?.[]` returns `null`. Uncaught VM exceptions now return non-zero exit codes from the CLI, and negative tests use `.should_fail.luna`.
-| `0.3.11-alpha` | **Current** | Documentation pass and test harness alignment: README updated for strict/safe dict access and `buffer` module usage. Regression suite now treats uncaught exception / missing import cases as expected failures. Version bumped after the `OBJ_INT64`, `ObjBuffer`, `time`, `os`, and exception-handling updates.
+| `0.3.11-alpha` | **Current** | Native vector and matrix types: `vec2()`, `vec3()`, `vec4()`, `mat4()` as builtin globals (no import needed). Vectors support GLSL-style element access (`.x`/`.y`/`.z`/`.w`), operators (`+`, `-`, `*`), and mutable methods (`.add()`, `.sub()`, `.mul()`, `.copy()`). Matrices are 4x4 column-major with GLSL operator semantics, mutable transform methods (`.translate()`, `.rotate_x/y/z()`, `.scale()`, `.invert()`, `.transpose()`), and immutable variants (`.inverted()`, `.transposed()`). 32-type NaN-boxing expansion enabled: OBJ_MATRIX (tag 16) is the first type using bit 63 as the 5th tag bit.
 
 ## Roadmap
 
@@ -446,19 +446,19 @@ Luna uses a unified 64-bit `Value` type (NaN-boxing) where all non-double values
 |------|---------|
 | 0-2 | Sub-tags: `NIL`(1), `TRUE`(2), `FALSE`(3), `INT`(4), `EMPTY`(5) |
 | 3-46 | Pointer payload (44 bits = 16 TB addressable) |
-| 47-50 | **4-bit object type tag** (16 slots: 15 used, 1 free in 16-slot range) |
+| 47-50 | **4-bit object type tag** (16 slots: all used) |
 | 51 | Quiet-NaN bit (must stay 1) |
 | 52-62 | Exponent (all 1s for NaN) |
-| 63 | Sign bit (NOT free — IEEE 754 NaNs can have bit 63 = 0 or 1; using it for tagging requires normalizing all hardware NaNs)
+| 63 | **5th type tag bit** (1 = types 16-31, 0 = types 0-15) — see 32-type expansion below
 
 *Current types:*
 - `int` — immediate via sub-tag `INT` (bits 0-2). Fastest: no allocation, single bitwise check. 32-bit signed.
 - `float` — raw IEEE-754 **double** (64-bit). The keyword `float` is user-facing; internally it is `double` for precision. Hardware NaNs are normalized by `make_double()` to payload=10, preventing collision with `QNAN_TAG`.
 - `null`, `bool` — immediate via sub-tags.
-- Object types — 4-bit tag in bits 47-50.
+- Object types — 5-bit tag across bits 47-50 + bit 63.
 
 *Future: Granular numeric types (post-1.0, FFI only)*
-The 4-bit type tag gives 16 slots in the zero-sign range. Already used: 15 object types, 1 free in the 16-slot range. 32-type expansion via bit 63 is enabled: bit 63 acts as the 5th tag bit for types 16-31, giving 17 slots remaining in the full 32-type space (types 16-31).
+The 4-bit type tag gave 16 slots in the zero-sign range, now fully consumed (OBJ_MATRIX = tag 16 is the first type using bit-63 expansion). Bit 63 acts as the 5th tag bit for types 16-31, giving 16 free slots in the full 32-type space.
 
 If granular types are ever needed (e.g. FFI with C libraries expecting `uint16_t*` or `float32` buffers), they will be implemented as boxed heap objects:
 - `OBJ_INTEGER` with an internal `IntegerKind` (`I8`, `I16`, `I32`, `I64`, `U8`, `U16`, `U32`, `U64`, `BIG`)
@@ -477,10 +477,10 @@ Lua and LuaJIT expose only one numeric type to the user: `number` (double). Luna
 |------|---------|
 | 0-2 | Sub-tags: `NIL`(1), `TRUE`(2), `FALSE`(3), `INT`(4), `EMPTY`(5) |
 | 3-46 | Pointer payload (44 bits = 16 TB addressable) |
-| 47-50 | **4-bit object type tag** (16 slots: 15 used, 1 free in 16-slot range) |
+| 47-50 | **4-bit object type tag** (16 slots: all used) |
 | 51 | Quiet-NaN bit (=1 for all tagged values) |
 | 52-62 | Exponent (all 1s for NaN) |
-| 63 | Sign bit (=0 for all tagged values and normalized NaNs) |
+| 63 | **5th type tag bit** (1 = types 16-31, 0 = types 0-15) |
 
 **The Safe NaN Contract:**
 - `QNAN_TAG = 0x7FF8000000000000` (base pattern, payload=0)
@@ -494,20 +494,20 @@ Lua and LuaJIT expose only one numeric type to the user: `number` (double). Luna
 - Types 0-7 and 8-15 produced identical signatures (e.g., type 0 == type 8 both = `0x7FFC000000000000`)
 - Fix: Changed `QNAN_TAG` to `0x7FF8` (bit 50 = 0), giving 16 unique signatures
 
-**32-type expansion path (documented, not yet implemented):**
+**32-type expansion (implemented in 0.3.11-alpha):**
 
-When we exhaust the ~6 remaining object type slots, we can expand to 32 types by using bit 63 as the 5th type tag bit:
+Object tags 0-15 exhausted all 16 slots. OBJ_MATRIX (tag 16) is the first type using bit 63 as the 5th tag bit:
 
 | Bit 63 | Bits 47-50 | Types |
 |--------|-----------|-------|
-| 0 | 0-15 | Types 0-15 (current) |
-| 1 | 0-15 | Types 16-31 (future) |
+| 0 | 0-15 | Types 0-15 |
+| 1 | 0-15 | Types 16-31 |
 
-Requirements for 32-type expansion:
-1. `make_double()` must normalize ALL NaNs (positive AND negative) to bit 63 = 0, payload = 10 (our safe payload)
-2. `-Inf` (`0xFFF0000000000000`) must be either normalized to `+Inf` or handled as a special case in `IS_DOUBLE`
-3. `make_obj()` must set bit 63 when `type_id >= 16`
-4. `IS_DOUBLE` must check: exponent ≠ all-1s OR (exponent = all-1s AND payload = 10 AND bit 63 = 0)
+Requirements (all satisfied):
+1. `make_double()` normalizes ALL NaNs to bit 63 = 0, payload = 10
+2. `-Inf` normalized to `+Inf` in `make_double()`
+3. `make_obj()` sets bit 63 when `type_id >= 16`
+4. `IS_DOUBLE` checks: exponent ≠ all-1s OR (exponent = all-1s AND payload = 10 AND bit 63 = 0)
 
 **FFI Boundary Sanitization Rule:**
 

@@ -161,7 +161,8 @@ typedef enum {
     OBJ_BUFFER = 12,
     OBJ_INT64 = 13,
     OBJ_USERDATA,
-    OBJ_VECTOR = 15
+    OBJ_VECTOR = 15,
+    OBJ_MATRIX = 16
 } ObjType;
 
 /* ============================================================ */
@@ -218,6 +219,7 @@ static inline Value make_obj(void *ptr) {
 #define IS_BUFFER(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_BUFFER))
 #define IS_USERDATA(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_USERDATA))
 #define IS_VECTOR(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_VECTOR))
+#define IS_MATRIX(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_MATRIX))
 
 /* ============================================================ */
 /* Native function signature                                     */
@@ -336,6 +338,11 @@ typedef struct ObjVector {
     float  data[4];   /* x, y, z, w */
 } ObjVector;
 
+typedef struct ObjMatrix {
+    Object obj;
+    float  m[16];   /* 4x4 column-major, GLES-ready */
+} ObjMatrix;
+
 /* Class instance — fields as a parallel-array open dict */
 typedef struct ObjInstance {
     Object              obj;
@@ -426,6 +433,7 @@ ObjBoundMethod *new_bound_method(Value self, struct ObjFunction *fn);
 ObjModule     *new_module(const char *name);
 ObjInt64      *new_int64(int64_t value);
 ObjVector     *new_vector(float x, float y, float z, float w);
+ObjMatrix     *new_matrix(void);
 static inline Value make_int64(int64_t value) { return make_obj((Object*)new_int64(value)); }
 Value          buffer_read_byte(const ObjBuffer *buf, size_t offset);
 Value          buffer_read_short(const ObjBuffer *buf, size_t offset);

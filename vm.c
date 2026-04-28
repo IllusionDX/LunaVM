@@ -180,6 +180,40 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         }
         return make_obj((Object*)new_vector(rx, ry, rz, rw));
     }
+    /* Matrix operations */
+    if (IS_MATRIX(L) && IS_MATRIX(R)) {
+        if (op != OP_MUL) return make_null();
+        ObjMatrix *ma = (ObjMatrix*)AS_OBJ(L);
+        ObjMatrix *mb = (ObjMatrix*)AS_OBJ(R);
+        ObjMatrix *res = new_matrix();
+        for (int col = 0; col < 4; col++) {
+            for (int row = 0; row < 4; row++) {
+                float sum = 0.0f;
+                for (int k = 0; k < 4; k++)
+                    sum += ma->m[row + k * 4] * mb->m[k + col * 4];
+                res->m[row + col * 4] = sum;
+            }
+        }
+        return make_obj((Object*)res);
+    }
+    if (IS_MATRIX(L) && IS_VECTOR(R)) {
+        if (op != OP_MUL) return make_null();
+        ObjMatrix *m = (ObjMatrix*)AS_OBJ(L);
+        ObjVector *v = (ObjVector*)AS_OBJ(R);
+        float rx = m->m[0]*v->data[0] + m->m[4]*v->data[1] + m->m[8]*v->data[2] + m->m[12]*v->data[3];
+        float ry = m->m[1]*v->data[0] + m->m[5]*v->data[1] + m->m[9]*v->data[2] + m->m[13]*v->data[3];
+        float rz = m->m[2]*v->data[0] + m->m[6]*v->data[1] + m->m[10]*v->data[2] + m->m[14]*v->data[3];
+        float rw = m->m[3]*v->data[0] + m->m[7]*v->data[1] + m->m[11]*v->data[2] + m->m[15]*v->data[3];
+        return make_obj((Object*)new_vector(rx, ry, rz, rw));
+    }
+    if (IS_MATRIX(L) && is_num(R)) {
+        if (op != OP_MUL) return make_null();
+        ObjMatrix *m = (ObjMatrix*)AS_OBJ(L);
+        float s = (float)value_to_double(R);
+        ObjMatrix *res = new_matrix();
+        for (int i = 0; i < 16; i++) res->m[i] = m->m[i] * s;
+        return make_obj((Object*)res);
+    }
     if (!is_num(L) || !is_num(R)) return make_null();
     /* Integer path */
     if (is_int_type(L) && is_int_type(R)) {
@@ -781,6 +815,86 @@ static void path_dirname(const char *path, char *buf, size_t buf_size) {
 } while (0)
 #define KSTR(n)     (((ObjString*)AS_OBJ(CONST(n)))->chars)
 #define KSTROBJ(n)  ((ObjString*)AS_OBJ(CONST(n)))
+
+/* ============================================================ */
+/* Matrix math helpers                                           */
+/* ============================================================ */
+
+static float mat4_det3(float a, float b, float c,
+                        float d, float e, float f,
+                        float g, float h, float i) {
+    return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
+}
+
+static int mat4_invert(float *m, float *out) {
+    float cof[16];
+    for (int c = 0; c < 4; c++) {
+        for (int r = 0; r < 4; r++) {
+            int c0 = (c+1)%4, c1 = (c+2)%4, c2 = (c+3)%4;
+            int r0 = (r+1)%4, r1 = (r+2)%4, r2 = (r+3)%4;
+            cof[r + c*4] = mat4_det3(
+                m[r0 + c0*4], m[r0 + c1*4], m[r0 + c2*4],
+                m[r1 + c0*4], m[r1 + c1*4], m[r1 + c2*4],
+                m[r2 + c0*4], m[r2 + c1*4], m[r2 + c2*4])
+                * (((c+r) % 2 == 0) ? 1.0f : -1.0f);
+        }
+    }
+    float det = 0.0f;
+    for (int i = 0; i < 4; i++)
+        det += m[i*4] * cof[i*4];
+    if (det == 0.0f) return 0;
+    float inv_det = 1.0f / det;
+    for (int i = 0; i < 16; i++)
+        out[i] = cof[i] * inv_det;
+    return 1;
+}
+
+static void mat4_transpose(float *m, float *out) {
+    for (int c = 0; c < 4; c++)
+        for (int r = 0; r < 4; r++)
+            out[r + c*4] = m[c + r*4];
+}
+
+static void mat4_mul_translate(float *m, float tx, float ty, float tz) {
+    for (int i = 0; i < 4; i++)
+        m[12 + i] = m[0 + i]*tx + m[4 + i]*ty + m[8 + i]*tz + m[12 + i];
+}
+
+static void mat4_mul_rotate_x(float *m, float angle) {
+    float c = cosf(angle), s = sinf(angle);
+    for (int i = 0; i < 4; i++) {
+        float a = m[4 + i], b = m[8 + i];
+        m[4 + i] = a * c + b * s;
+        m[8 + i] = -a * s + b * c;
+    }
+}
+
+static void mat4_mul_rotate_y(float *m, float angle) {
+    float c = cosf(angle), s = sinf(angle);
+    for (int i = 0; i < 4; i++) {
+        float a = m[0 + i], b = m[8 + i];
+        m[0 + i] = a * c - b * s;
+        m[8 + i] = a * s + b * c;
+    }
+}
+
+static void mat4_mul_rotate_z(float *m, float angle) {
+    float c = cosf(angle), s = sinf(angle);
+    for (int i = 0; i < 4; i++) {
+        float a = m[0 + i], b = m[4 + i];
+        m[0 + i] = a * c + b * s;
+        m[4 + i] = -a * s + b * c;
+    }
+}
+
+static void mat4_mul_scale(float *m, float sx, float sy, float sz) {
+    for (int i = 0; i < 4; i++)
+        m[0 + i] *= sx;
+    for (int i = 0; i < 4; i++)
+        m[4 + i] *= sy;
+    for (int i = 0; i < 4; i++)
+        m[8 + i] *= sz;
+}
 
 static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     (void)chunk;

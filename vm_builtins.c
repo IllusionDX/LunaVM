@@ -305,6 +305,14 @@ static Value bn_vec4(VM *vm, Value *args, int n) {
     return make_obj((Object*)new_vector(x, y, z, w));
 }
 
+static Value bn_mat4(VM *vm, Value *args, int n) {
+    (void)args;
+    if (n != 0) {
+        luna_throw(vm, vm->argument_error_class, "mat4() takes no arguments");
+    }
+    return make_obj((Object*)new_matrix());
+}
+
 /* ============================================================ */
 /* Dict method native functions — args[0] = dict (self)         */
 /* ============================================================ */
@@ -390,6 +398,7 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "vec2",  bn_vec2);
     vm_define_native(vm, "vec3",  bn_vec3);
     vm_define_native(vm, "vec4",  bn_vec4);
+    vm_define_native(vm, "mat4",  bn_mat4);
 
     /* Pre-create dict method native function objects (live for process lifetime) */
     dict_method_table[0].fn = new_native_function("dict.keys",   dict_method_keys);
