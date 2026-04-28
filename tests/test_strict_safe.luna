@@ -1,0 +1,25 @@
+# Test strict vs safe access semantics
+# Strict (. / []) throws on missing. Safe (?. / ?.[]) returns null.
+
+var d = {"a": 1}
+var lst = [10, 20, 30]
+
+# Safe access returns null
+print(d?.missing)
+print(lst?.[99])
+
+# Safe field access on null object
+var n = null
+print(n?.field)
+print(n?.[0])
+
+# Ternary with safe access
+var val = d?.missing ?? "fallback"
+print(val)
+
+# Safe slice
+print(lst?.[10:20])
+
+# Existing keys still work
+print(d.a)
+print(lst[0])

@@ -93,6 +93,7 @@ typedef struct Expr {
         struct {
             Expr *obj;
             Expr *index;
+            bool optional;
         } index_access;
         struct {
             Expr *target;
@@ -139,6 +140,7 @@ typedef struct Expr {
             Expr *start; /* optional, may be NULL */
             Expr *stop;  /* optional, may be NULL */
             Expr *step;  /* optional, may be NULL */
+            bool optional;
         } slice;
         struct {
             Expr **targets;

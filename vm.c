@@ -666,36 +666,39 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_jz,            // 30 OP_JZ
         &&op_jnz,           // 31 OP_JNZ
         &&op_jnil,          // 32 OP_JNIL
-        &&op_call,          // 32 OP_CALL
-        &&op_ret,           // 33 OP_RET
-        &&op_enter,         // 34 OP_ENTER
-        &&op_leave,         // 35 OP_LEAVE
-        &&op_closure,       // 36 OP_CLOSURE
-        &&op_getglobal,     // 37 OP_GETGLOBAL
-        &&op_setglobal,     // 38 OP_SETGLOBAL
-        &&op_getupval,      // 39 OP_GETUPVAL
-        &&op_setupval,      // 40 OP_SETUPVAL
-        &&op_new,           // 41 OP_NEW
-        &&op_newdict,       // 42 OP_NEWDICT
-        &&op_newlist,       // 43 OP_NEWLIST
-        &&op_listappend,    // 44 OP_LISTAPPEND
-        &&op_getiter,       // 45 OP_GETITER
-        &&op_forloop,       // 46 OP_FORLOOP
-        &&op_indexget,      // 47 OP_INDEXGET
-        &&op_indexset,      // 48 OP_INDEXSET
-        &&op_slice,         // 49 OP_SLICE
-        &&op_memberget,     // 50 OP_MEMBERGET
-        &&op_memberset,     // 51 OP_MEMBERSET
-        &&op_invoke,        // 52 OP_INVOKE
-        &&op_super,         // 53 OP_SUPER
-        &&op_throw,         // 54 OP_THROW
-        &&op_try,           // 55 OP_TRY
-        &&op_endtry,        // 56 OP_ENDTRY
-        &&op_default,       // 57 OP_DEFAULT
-        &&op_kwargs,        // 58 OP_KWARGS
-        &&op_kcall,         // 59 OP_KCALL
-        &&op_coalesce,      // 60 OP_COALESCE
-        &&op_halt           // 61 OP_HALT
+        &&op_call,          // 33 OP_CALL
+        &&op_ret,           // 34 OP_RET
+        &&op_enter,         // 35 OP_ENTER
+        &&op_leave,         // 36 OP_LEAVE
+        &&op_closure,       // 37 OP_CLOSURE
+        &&op_getglobal,     // 38 OP_GETGLOBAL
+        &&op_setglobal,     // 39 OP_SETGLOBAL
+        &&op_getupval,      // 40 OP_GETUPVAL
+        &&op_setupval,      // 41 OP_SETUPVAL
+        &&op_new,           // 42 OP_NEW
+        &&op_newdict,       // 43 OP_NEWDICT
+        &&op_newlist,       // 44 OP_NEWLIST
+        &&op_listappend,    // 45 OP_LISTAPPEND
+        &&op_getiter,       // 46 OP_GETITER
+        &&op_forloop,       // 47 OP_FORLOOP
+        &&op_indexget,      // 48 OP_INDEXGET
+        &&op_indexset,      // 49 OP_INDEXSET
+        &&op_slice,         // 50 OP_SLICE
+        &&op_memberget,     // 51 OP_MEMBERGET
+        &&op_memberset,     // 52 OP_MEMBERSET
+        &&op_invoke,        // 53 OP_INVOKE
+        &&op_super,         // 54 OP_SUPER
+        &&op_throw,         // 55 OP_THROW
+        &&op_try,           // 56 OP_TRY
+        &&op_endtry,        // 57 OP_ENDTRY
+        &&op_default,       // 58 OP_DEFAULT
+        &&op_kwargs,        // 59 OP_KWARGS
+        &&op_kcall,         // 60 OP_KCALL
+        &&op_coalesce,      // 61 OP_COALESCE
+        &&op_memberget_safe,// 62 OP_MEMBERGET_SAFE
+        &&op_indexget_safe, // 63 OP_INDEXGET_SAFE
+        &&op_slice_safe,    // 64 OP_SLICE_SAFE
+        &&op_halt           // 65 OP_HALT
     };
 
     DECODE;
@@ -1260,29 +1263,92 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 47. OP_INDEXGET */
+    /* 48. OP_INDEXGET (strict — throws on missing or null obj) */
     op_indexget: {
         Value obj = REG(RB);
         Value key = REG(RC);
-        if (IS_OBJ(obj) && AS_OBJ(obj)) {
-            switch (AS_OBJ(obj)->type) {
-                case OBJ_LIST:
-                    SET_REG(RA, IS_INT(key) ? list_get((ObjList*)AS_OBJ(obj), AS_INT(key)) : make_null());
-                    break;
-                case OBJ_DICT:
-                    SET_REG(RA, dict_get((ObjDict*)AS_OBJ(obj), key));
-                    break;
-                case OBJ_STRING: {
-                    ObjString *s = (ObjString*)AS_OBJ(obj);
-                    if (IS_INT(key) && AS_INT(key) >= 0 && AS_INT(key) < s->length)
-                        SET_REG(RA, make_obj((Object*)new_string(&s->chars[AS_INT(key)], 1)));
-                    else
-                        SET_REG_PRIM(RA, make_null());
-                    break;
+        if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
+            release_value(_exc);
+            _exc = make_exception_instance(vm, "index access on null value");
+            goto op_throw;
+        }
+        switch (AS_OBJ(obj)->type) {
+            case OBJ_LIST: {
+                if (!IS_INT(key)) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "list index must be integer");
+                    goto op_throw;
                 }
-                default: SET_REG_PRIM(RA, make_null()); break;
+                int idx = (int)AS_INT(key);
+                ObjList *lst = (ObjList*)AS_OBJ(obj);
+                int len = lst->count;
+                if (idx < 0) idx += len;
+                if (idx < 0 || idx >= len) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "list index out of bounds");
+                    goto op_throw;
+                }
+                SET_REG(RA, lst->items ? lst->items[idx] : lst->inline_items[idx]);
+                break;
             }
-        } else SET_REG_PRIM(RA, make_null());
+            case OBJ_DICT: {
+                Value val = dict_get((ObjDict*)AS_OBJ(obj), key);
+                if (IS_NIL(val)) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "dict key not found");
+                    goto op_throw;
+                }
+                SET_REG(RA, val);
+                break;
+            }
+            case OBJ_STRING: {
+                ObjString *s = (ObjString*)AS_OBJ(obj);
+                if (!IS_INT(key)) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "string index must be integer");
+                    goto op_throw;
+                }
+                int idx = (int)AS_INT(key);
+                if (idx < 0) idx += s->length;
+                if (idx < 0 || idx >= s->length) {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "string index out of bounds");
+                    goto op_throw;
+                }
+                SET_REG(RA, make_obj((Object*)new_string(&s->chars[idx], 1)));
+                break;
+            }
+            default: {
+                release_value(_exc);
+                _exc = make_exception_instance(vm, "value is not indexable");
+                goto op_throw;
+            }
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 63. OP_INDEXGET_SAFE (safe — null on missing or null obj) */
+    op_indexget_safe: {
+        Value obj = REG(RB);
+        Value key = REG(RC);
+        if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
+        switch (AS_OBJ(obj)->type) {
+            case OBJ_LIST:
+                SET_REG(RA, IS_INT(key) ? list_get((ObjList*)AS_OBJ(obj), AS_INT(key)) : make_null());
+                break;
+            case OBJ_DICT:
+                SET_REG(RA, dict_get((ObjDict*)AS_OBJ(obj), key));
+                break;
+            case OBJ_STRING: {
+                ObjString *s = (ObjString*)AS_OBJ(obj);
+                if (IS_INT(key) && AS_INT(key) >= 0 && AS_INT(key) < s->length)
+                    SET_REG(RA, make_obj((Object*)new_string(&s->chars[AS_INT(key)], 1)));
+                else
+                    SET_REG_PRIM(RA, make_null());
+                break;
+            }
+            default: SET_REG_PRIM(RA, make_null()); break;
+        }
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 48. OP_INDEXSET */
@@ -1399,11 +1465,118 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 50. OP_MEMBERGET */
+    /* 64. OP_SLICE_SAFE (safe — null on null obj) */
+    op_slice_safe: {
+        Value obj = REG(RB);
+        Value start_val = REG(RB + 1);
+        Value stop_val  = REG(RB + 2);
+        Value step_val  = REG(RB + 3);
+        if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
+        if (IS_LIST(obj)) {
+            ObjList *lst = (ObjList*)AS_OBJ(obj);
+            int len = list_length(lst);
+            int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
+            if (step == 0) {
+                SET_REG(RA, make_obj((Object*)new_list(0)));
+            } else {
+                int start, stop;
+                if (IS_NIL(start_val)) {
+                    start = (step < 0) ? len - 1 : 0;
+                } else if (IS_INT(start_val)) {
+                    start = AS_INT(start_val);
+                    if (start < 0) start += len;
+                    if (start < 0) start = (step < 0) ? -1 : 0;
+                    if (start > len) start = len;
+                } else {
+                    start = (step < 0) ? len - 1 : 0;
+                }
+                if (IS_NIL(stop_val)) {
+                    stop = (step < 0) ? -1 : len;
+                } else if (IS_INT(stop_val)) {
+                    stop = AS_INT(stop_val);
+                    if (stop < 0) stop += len;
+                    if (stop < 0) stop = -1;
+                    if (stop > len) stop = len;
+                } else {
+                    stop = (step < 0) ? -1 : len;
+                }
+                ObjList *result = new_list(0);
+                if (step > 0) {
+                    for (int i = start; i < stop; i += step) {
+                        Value v = lst->items ? lst->items[i] : lst->inline_items[i];
+                        list_add(result, v);
+                        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
+                    }
+                } else {
+                    for (int i = start; i > stop; i += step) {
+                        Value v = lst->items ? lst->items[i] : lst->inline_items[i];
+                        list_add(result, v);
+                        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
+                    }
+                }
+                SET_REG(RA, make_obj((Object*)result));
+            }
+        } else if (IS_STRING(obj)) {
+            ObjString *s = (ObjString*)AS_OBJ(obj);
+            int len = s->length;
+            int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
+            if (step == 0) {
+                SET_REG(RA, make_obj((Object*)new_string("", 0)));
+            } else {
+                int start, stop;
+                if (IS_NIL(start_val)) {
+                    start = (step < 0) ? len - 1 : 0;
+                } else if (IS_INT(start_val)) {
+                    start = AS_INT(start_val);
+                    if (start < 0) start += len;
+                    if (start < 0) start = (step < 0) ? -1 : 0;
+                    if (start > len) start = len;
+                } else {
+                    start = (step < 0) ? len - 1 : 0;
+                }
+                if (IS_NIL(stop_val)) {
+                    stop = (step < 0) ? -1 : len;
+                } else if (IS_INT(stop_val)) {
+                    stop = AS_INT(stop_val);
+                    if (stop < 0) stop += len;
+                    if (stop < 0) stop = -1;
+                    if (stop > len) stop = len;
+                } else {
+                    stop = (step < 0) ? -1 : len;
+                }
+                int count = 0;
+                if (step > 0) {
+                    for (int i = start; i < stop; i += step) count++;
+                } else {
+                    for (int i = start; i > stop; i += step) count++;
+                }
+                char *buf = (char*)malloc(count + 1);
+                int j = 0;
+                if (step > 0) {
+                    for (int i = start; i < stop; i += step) buf[j++] = s->chars[i];
+                } else {
+                    for (int i = start; i > stop; i += step) buf[j++] = s->chars[i];
+                }
+                buf[j] = '\0';
+                ObjString *result = new_string(buf, count);
+                free(buf);
+                SET_REG(RA, make_obj((Object*)result));
+            }
+        } else {
+            SET_REG_PRIM(RA, make_null());
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 51. OP_MEMBERGET (strict — throws on missing) */
     op_memberget: {
         Value obj = REG(RB);
         ObjString *field = KSTROBJ(RC);
-        if (!IS_OBJ(obj) || !AS_OBJ(obj)) { REG(RA) = make_null(); DECODE; goto *op_labels[OP(instr)]; }
+        if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
+            release_value(_exc);
+            _exc = make_exception_instance(vm, "member access on null value");
+            goto op_throw;
+        }
         switch (AS_OBJ(obj)->type) {
             case OBJ_INSTANCE: {
                 ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
@@ -1421,22 +1594,120 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                         SET_REG(RA, inst->fields[fi]);
                         ic->inst = inst; ic->name = field; ic->index = fi;
                     } else {
-                        /* method lookup — create bound method */
                         int mi = -1;
                         if (inst->klass) {
                             for (int i = 0; i < inst->klass->method_count; i++) {
-                                if (strcmp(inst->klass->method_names[i], field->chars) == 0) {
-                                    mi = i; break;
-                                }
+                                if (strcmp(inst->klass->method_names[i], field->chars) == 0) { mi = i; break; }
                             }
                         }
                         if (mi >= 0) {
                             ObjBoundMethod *bm = new_bound_method(obj, inst->klass->methods[mi]);
                             SET_REG(RA, make_obj((Object*)bm));
                         } else {
-                            SET_REG_PRIM(RA, make_null());
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, "instance has no such field or method");
+                            goto op_throw;
                         }
                     }
+                }
+                break;
+            }
+            case OBJ_LIST: {
+                if (field->length == 6 && !memcmp(field->chars, "length", 6))
+                    SET_REG_PRIM(RA, make_int(list_length((ObjList*)AS_OBJ(obj))));
+                else {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "list has no such field");
+                    goto op_throw;
+                }
+                break;
+            }
+            case OBJ_DICT: {
+                ObjFunction *mfn = vm_dict_method_lookup(field->chars, field->length);
+                if (mfn) {
+                    ObjBoundMethod *bm = new_bound_method(obj, mfn);
+                    SET_REG(RA, make_obj((Object*)bm));
+                } else {
+                    Value val = dict_get((ObjDict*)AS_OBJ(obj), make_obj((Object*)field));
+                    if (IS_NIL(val)) {
+                        release_value(_exc);
+                        _exc = make_exception_instance(vm, "dict has no such key");
+                        goto op_throw;
+                    }
+                    SET_REG(RA, val);
+                }
+                break;
+            }
+            case OBJ_STRING: {
+                if (field->length == 6 && !memcmp(field->chars, "length", 6))
+                    SET_REG_PRIM(RA, make_int(((ObjString*)AS_OBJ(obj))->length));
+                else {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "string has no such field");
+                    goto op_throw;
+                }
+                break;
+            }
+            case OBJ_ENUM: {
+                ObjEnum *e = (ObjEnum*)AS_OBJ(obj);
+                int fi = -1;
+                for (int i = 0; i < e->count; i++) {
+                    if (strcmp(e->names[i], field->chars) == 0) { fi = i; break; }
+                }
+                if (fi >= 0) SET_REG_PRIM(RA, make_int(e->values[fi]));
+                else {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "enum has no such variant");
+                    goto op_throw;
+                }
+                break;
+            }
+            case OBJ_CLASS: {
+                ObjClass *cls = (ObjClass*)AS_OBJ(obj);
+                if (strcmp(field->chars, "name") == 0)
+                    SET_REG(RA, make_obj((Object*)new_string(cls->name, (int)strlen(cls->name))));
+                else if (strcmp(field->chars, "base") == 0)
+                    SET_REG(RA, cls->base ? make_obj((Object*)cls->base) : make_null());
+                else {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, "class has no such field");
+                    goto op_throw;
+                }
+                break;
+            }
+            default: {
+                release_value(_exc);
+                _exc = make_exception_instance(vm, "value has no fields");
+                goto op_throw;
+            }
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 62. OP_MEMBERGET_SAFE (safe — null on missing or null obj) */
+    op_memberget_safe: {
+        Value obj = REG(RB);
+        ObjString *field = KSTROBJ(RC);
+        if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
+        switch (AS_OBJ(obj)->type) {
+            case OBJ_INSTANCE: {
+                ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
+                int fi = -1;
+                for (int i = 0; i < inst->field_count; i++) {
+                    if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
+                }
+                if (fi >= 0) { SET_REG(RA, inst->fields[fi]); break; }
+                int mi = -1;
+                if (inst->klass) {
+                    for (int i = 0; i < inst->klass->method_count; i++) {
+                        if (strcmp(inst->klass->method_names[i], field->chars) == 0) { mi = i; break; }
+                    }
+                }
+                if (mi >= 0) {
+                    ObjBoundMethod *bm = new_bound_method(obj, inst->klass->methods[mi]);
+                    SET_REG(RA, make_obj((Object*)bm));
+                } else {
+                    SET_REG_PRIM(RA, make_null());
                 }
                 break;
             }
@@ -1464,13 +1735,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             }
             case OBJ_CLASS: {
                 ObjClass *cls = (ObjClass*)AS_OBJ(obj);
-                if (strcmp(field->chars, "name") == 0) {
+                if (strcmp(field->chars, "name") == 0)
                     SET_REG(RA, make_obj((Object*)new_string(cls->name, (int)strlen(cls->name))));
-                } else if (strcmp(field->chars, "base") == 0) {
+                else if (strcmp(field->chars, "base") == 0)
                     SET_REG(RA, cls->base ? make_obj((Object*)cls->base) : make_null());
-                } else {
-                    SET_REG_PRIM(RA, make_null());
-                }
+                else SET_REG_PRIM(RA, make_null());
                 break;
             }
             default: SET_REG_PRIM(RA, make_null()); break;

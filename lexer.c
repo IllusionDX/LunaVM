@@ -303,7 +303,15 @@ static Token *scan_operator(Lexer *lexer) {
             return make_token(lexer, TOK_SEMICOLON, start, 1);
         case '?':
             if (next == '?') { advance(lexer); return make_token(lexer, TOK_COALESCE, start, 2); }
-            if (next == '.') { advance(lexer); return make_token(lexer, TOK_QUESTION_DOT, start, 2); }
+            if (next == '.') {
+                advance(lexer);
+                /* Check for ?.[ (3-char token) */
+                if (peek(lexer) == '[') {
+                    advance(lexer);
+                    return make_token(lexer, TOK_QUESTION_LBRACKET, start, 3);
+                }
+                return make_token(lexer, TOK_QUESTION_DOT, start, 2);
+            }
             return make_token(lexer, TOK_ERROR, start, 1);
         default:
             return make_token(lexer, TOK_ERROR, start, 1);
@@ -589,6 +597,8 @@ const char *token_type_name(TokenType type) {
         case TOK_ARROW: return "ARROW";
         case TOK_LAMBDA: return "LAMBDA";
         case TOK_COALESCE: return "COALESCE";
+        case TOK_QUESTION_DOT: return "QUESTION_DOT";
+        case TOK_QUESTION_LBRACKET: return "QUESTION_LBRACKET";
         case TOK_AMPERSAND: return "AMPERSAND";
         case TOK_PIPE: return "PIPE";
         case TOK_CARET: return "CARET";

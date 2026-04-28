@@ -146,6 +146,11 @@ typedef enum {
     OP_KCALL,       /* ABC  : A = kcall B(pos_args=C, kwargs at B+C+1) */
     OP_COALESCE,    /* AsBx : if A != null then PC += sBx (skip RHS)     */
 
+    /* ---- Safe access (null on missing, no throw) ---- */
+    OP_MEMBERGET_SAFE, /* ABC  : A = B?.field (field = constants[C]). null if obj null or missing */
+    OP_INDEXGET_SAFE,  /* ABC  : A = B?.[C]. null if obj null or missing      */
+    OP_SLICE_SAFE,     /* ABC  : A = B?.[slice]. null if obj null            */
+
     OP_HALT,        /* ABC  : stop VM (A,B,C unused)                     */
 
     OP_COUNT        /* sentinel — total opcode count                       */

@@ -625,21 +625,17 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
 
     case EXPR_FIELD_ACCESS: {
         compile_expr_into(c, expr->data.field_access.obj, target);
-        int jnil = -1;
-        if (expr->data.field_access.optional) {
-            jnil = emit_jump(c, OP_JNIL, (uint8_t)target);
-        }
         int fk = chunk_add_string(c->chunk, expr->data.field_access.field);
+        OpCode get_op = expr->data.field_access.optional ? OP_MEMBERGET_SAFE : OP_MEMBERGET;
         if (fk > 255) {
-            /* Too many constants for inline C field — use LOADK + INDEXGET */
             int temp = alloc_reg(c);
             emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
-            emit_ABC(c, OP_INDEXGET, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
+            emit_ABC(c, expr->data.field_access.optional ? OP_INDEXGET_SAFE : OP_INDEXGET,
+                     (uint8_t)target, (uint8_t)target, (uint8_t)temp);
             free_reg(c);
         } else {
-            emit_ABC(c, OP_MEMBERGET, (uint8_t)target, (uint8_t)target, (uint8_t)fk);
+            emit_ABC(c, get_op, (uint8_t)target, (uint8_t)target, (uint8_t)fk);
         }
-        if (jnil >= 0) patch_jump(c, jnil);
         break;
     }
 
@@ -647,7 +643,8 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         compile_expr_into(c, expr->data.index_access.obj, target);
         int temp = alloc_reg(c);
         compile_expr_into(c, expr->data.index_access.index, temp);
-        emit_ABC(c, OP_INDEXGET, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
+        OpCode get_op = expr->data.index_access.optional ? OP_INDEXGET_SAFE : OP_INDEXGET;
+        emit_ABC(c, get_op, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
         free_reg(c);
         break;
     }
@@ -669,7 +666,8 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             compile_expr_into(c, expr->data.slice.step, step_reg);
         else
             emit_ABC(c, OP_LOADNULL, (uint8_t)step_reg, 0, 0);
-        emit_ABC(c, OP_SLICE, (uint8_t)target, (uint8_t)target, 0);
+        OpCode slice_op = expr->data.slice.optional ? OP_SLICE_SAFE : OP_SLICE;
+        emit_ABC(c, slice_op, (uint8_t)target, (uint8_t)target, 0);
         free_reg(c);
         free_reg(c);
         free_reg(c);

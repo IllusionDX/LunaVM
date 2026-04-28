@@ -741,7 +741,7 @@ void list_clear(ObjList *list) {
 }
 
 Value list_get(ObjList *list, int index) {
-    if (index < 0 || index >= list->count) { fprintf(stderr, "list: index out of bounds\n"); return make_null(); }
+    if (index < 0 || index >= list->count) return make_null();
     return list->items ? list->items[index] : list->inline_items[index];
 }
 
