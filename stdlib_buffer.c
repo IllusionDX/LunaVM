@@ -9,12 +9,6 @@
 #include "stdlib_buffer.h"
 #include "value.h"
 
-static void module_add_native(ObjModule *mod, const char *name, NativeFn fn) {
-    ObjFunction *f = new_native_function(name, fn);
-    ObjString *key = new_string(name, (int)strlen(name));
-    dict_set(mod->exports, make_obj((Object *)key), make_obj((Object *)f));
-}
-
 static Value buffer_new(VM *vm, Value *args, int n) {
     if (n > 1) {
         luna_throw(vm, vm->argument_error_class, "buffer.new() expects at most 1 argument");
@@ -47,11 +41,22 @@ static Value buffer_from_string(VM *vm, Value *args, int n) {
 }
 
 void vm_register_buffer_module(VM *vm) {
+    ObjClass *buffer_class = new_class("Buffer", NULL);
+    retain_obj((Object*)buffer_class);
+
+    ObjFunction *fn = new_native_function("new", buffer_new);
+    ObjString *key = new_string("new", 3);
+    dict_set(buffer_class->fields, make_obj((Object*)key), make_obj((Object*)fn));
+
+    fn = new_native_function("from_string", buffer_from_string);
+    key = new_string("from_string", 11);
+    dict_set(buffer_class->fields, make_obj((Object*)key), make_obj((Object*)fn));
+
     ObjModule *mod = new_module("buffer");
-    module_add_native(mod, "new", buffer_new);
-    module_add_native(mod, "from_string", buffer_from_string);
+    dict_set(mod->exports, make_obj((Object*)new_string("Buffer", 6)),
+             make_obj((Object*)buffer_class));
 
     Value mod_val = make_obj((Object *)mod);
-    ObjString *key = new_string("buffer", 6);
-    dict_set(vm->module_cache, make_obj((Object *)key), mod_val);
+    ObjString *mod_key = new_string("buffer", 6);
+    dict_set(vm->module_cache, make_obj((Object *)mod_key), mod_val);
 }

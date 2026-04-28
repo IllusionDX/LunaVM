@@ -336,7 +336,27 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.3.9-alpha` | Done | `os` stdlib: full system module — directory operations (`getcwd`, `chdir`, `listdir`, `mkdir`), file operations (`rename`, `remove`, `stat`), system info (`execute`, `getpid`, `hostname`, `username`, `tmpdir`, `args`, `exit`, `platform`), environment access (`getenv`, `setenv`), path utilities (`path_join` with `/` normalization, `sep`, `pathsep`). `random.int()` now accepts 0 args (returns raw int32). |
 
 | `0.3.10-alpha` | Done | `time` stdlib (`now`, `ticks_usec`, `ticks_msec`, `sleep`) and `os` argument mapping contract (`argv[0]` executable, `argv[1]` script, `argv[2+]` user args). `ObjBuffer` infrastructure for binary parsing with `read_byte`, `read_short`, `read_int`, `read_long` promoting to `OBJ_INT64`. `buffer` stdlib with `new()` / `from_string()`. `string` helpers: `from_byte()`, `byte_at()`, `to_buffer()`. Native exception propagation now unwinds through `try/except` correctly. Strict dict access clarified: `[]` throws on missing keys, `?.[]` returns `null`. Uncaught VM exceptions now return non-zero exit codes from the CLI, and negative tests use `.should_fail.luna`.
-| `0.3.11-alpha` | **Current** | Native vector and matrix types: `vec2()`, `vec3()`, `vec4()`, `mat4()` as builtin globals (no import needed). Vectors support GLSL-style element access (`.x`/`.y`/`.z`/`.w`), operators (`+`, `-`, `*`), and mutable methods (`.add()`, `.sub()`, `.mul()`, `.copy()`). Matrices are 4x4 column-major with GLSL operator semantics, mutable transform methods (`.translate()`, `.rotate_x/y/z()`, `.scale()`, `.invert()`, `.transpose()`), and immutable variants (`.inverted()`, `.transposed()`). 32-type NaN-boxing expansion enabled: OBJ_MATRIX (tag 16) is the first type using bit 63 as the 5th tag bit.
+| `0.3.11-alpha` | Done | Native vector and matrix types: `vec2()`, `vec3()`, `vec4()`, `mat4()` as builtin globals (no import needed). Vectors support GLSL-style element access (`.x`/`.y`/`.z`/`.w`), operators (`+`, `-`, `*`), and mutable methods (`.add()`, `.sub()`, `.mul()`, `.copy()`). Matrices are 4x4 column-major with GLSL operator semantics, mutable transform methods (`.translate()`, `.rotate_x/y/z()`, `.scale()`, `.invert()`, `.transpose()`), and immutable variants (`.inverted()`, `.transposed()`). 32-type NaN-boxing expansion enabled: OBJ_MATRIX (tag 16) is the first type using bit 63 as the 5th tag bit.
+| `0.3.12-alpha` | **Current** | Naming convention "The Wave" applied — core types (atoms) stay lowercase (`vec3`, `mat4`), library classes use PascalCase (`Random`, `Buffer`, `JSON`). `ObjClass` gains a `fields` dict for static members, enabling classes as namespaces with `OP_MEMBERGET`/`OP_INVOKE` dispatch. `random` now exports `Random` class (`Random.PCG()`, `Random.Xorshift()`), `buffer` exports `Buffer` class (`Buffer.new()`, `Buffer.from_string()`), `json` exports `JSON` class (`JSON.parse()`, `JSON.encode()`). `math`, `io`, `net`, `os`, `time`, `noise` remain as pure-function modules (lowercase).
+
+## The Wave Naming Convention
+
+Luna uses a visual hierarchy to distinguish core infrastructure from user-facing constructs:
+
+| Category | Format | Location | Example |
+|----------|--------|----------|---------|
+| **Core types (atoms)** | `lowercase` | Global builtins | `vec3`, `mat4`, `string`, `list` |
+| **Modules / namespaces** | `lowercase` | Via `import` | `import math`, `import random` |
+| **Library classes** | `PascalCase` | Exported from modules | `from random import Random` |
+| **Methods / variables** | `snake_case` | Members | `random.int()`, `obj.move_to()` |
+
+### Rationale
+
+- **Core types** are atoms of the VM dispatch — they feel like primitives, so they look like primitives. `vec3` in GLSL is lowercase; `std::vector` in C++ is lowercase.
+- **Library classes** are logical constructs the user instantiates. `Random()` is visually distinct from `vec3()`. It avoids name collisions: `var random = Random.int()` is valid.
+- **Import names stay lowercase** because they represent file paths, not types. The module is a namespace; the class inside it is PascalCase.
+
+This convention applies retroactively to `random` (→ exports `Random`), `buffer` (→ exports `Buffer`), and `json` (→ exports `JSON`). Modules that export only pure functions (`math`, `io`, `net`, `os`, `time`, `noise`) remain unchanged.
 
 ## Roadmap
 

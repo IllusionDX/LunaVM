@@ -489,16 +489,32 @@ static Value json_encode_native(VM *vm, Value *args, int n) {
 /* Module registration                                           */
 /* ============================================================ */
 
-static void module_add_native(ObjModule *mod, const char *name, NativeFn fn) {
-    ObjFunction *f = new_native_function(name, fn);
-    Value key = make_obj((Object*)new_string(name, (int)strlen(name)));
-    dict_set(mod->exports, key, make_obj((Object*)f));
-}
-
 void vm_register_json_module(VM *vm) {
     ObjModule *mod = new_module("json");
-    module_add_native(mod, "parse", json_parse_native);
-    module_add_native(mod, "encode", json_encode_native);
+
+    /* Create a JSON class that holds static members */
+    ObjClass *json_class = new_class("JSON", NULL);
+    retain_obj((Object*)json_class);
+
+    /* Add json_parse_native as JSON.parse */
+    {
+        ObjFunction *fn = new_native_function("parse", json_parse_native);
+        ObjString *key = new_string("parse", 5);
+        dict_set(json_class->fields, make_obj((Object*)key), make_obj((Object*)fn));
+    }
+
+    /* Add json_encode_native as JSON.encode */
+    {
+        ObjFunction *fn = new_native_function("encode", json_encode_native);
+        ObjString *key = new_string("encode", 6);
+        dict_set(json_class->fields, make_obj((Object*)key), make_obj((Object*)fn));
+    }
+
+    /* Export the JSON class on the module */
+    dict_set(mod->exports,
+             make_obj((Object*)new_string("JSON", 4)),
+             make_obj((Object*)json_class));
+
     dict_set(vm->module_cache,
              make_obj((Object*)new_string("json", 4)),
              make_obj((Object*)mod));

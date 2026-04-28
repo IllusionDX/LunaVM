@@ -231,6 +231,8 @@ ObjClass *new_class(const char *name, const char *base_name) {
     cls->method_names = NULL;
     cls->method_count = 0;
     cls->method_capacity = 0;
+    cls->fields = new_dict();
+    retain_obj((Object*)cls->fields);
     return cls;
 }
 
@@ -463,6 +465,9 @@ static void userdata_run_finalizer(ObjUserdata *ud) {
 /* Free container memory without releasing children.
  * Used by the GC sweep after children have already been released. */
 void free_object_container(Object *obj) {
+    /* WARNING: This function MUST NOT call release_obj on child objects.
+     * Children are released by free_object() (ARC path) or by the GC sweep
+     * phase 1 in mark_and_sweep(). This function only frees raw memory. */
     if (!obj) return;
 
     if (obj->prev) {
@@ -640,6 +645,8 @@ void free_object(Object *obj) {
             for (int i = 0; i < cls->method_count; i++) {
                 if (cls->methods[i]) release_obj((Object*)cls->methods[i]);
             }
+            if (cls->fields) release_obj((Object*)cls->fields);
+            cls->fields = NULL;
             break;
         }
         case OBJ_BOUND_METHOD: {

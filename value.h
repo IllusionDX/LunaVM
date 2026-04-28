@@ -281,6 +281,7 @@ typedef struct ObjClass {
     char               **method_names;
     int                  method_count;
     int                  method_capacity;
+    ObjDict            *fields;        /* static members (constructors, constants) */
 } ObjClass;
 
 /* Bound method — instance + method function, callable like a closure */

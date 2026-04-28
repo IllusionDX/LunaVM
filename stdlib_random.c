@@ -126,6 +126,16 @@ static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn
     cls->method_count++;
 }
 
+static void class_add_static(ObjClass *cls, const char *name, NativeFn fn) {
+    ObjFunction *f = new_native_function(name, fn);
+    retain_obj((Object*)f);
+    ObjString *key = new_string(name, (int)strlen(name));
+    retain_obj((Object*)key);
+    dict_set(cls->fields, make_obj((Object*)key), make_obj((Object*)f));
+    release_obj((Object*)key);
+    release_obj((Object*)f);
+}
+
 static ObjList *get_state_list(Value self) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     Value state_val = instance_get_field(inst, "_state");
@@ -363,25 +373,13 @@ void vm_register_random_module(VM *vm) {
     class_add_native_method(rng_class, "shuffle", rng_shuffle);
     class_add_native_method(rng_class, "_call",  rng_call);
 
+    class_add_static(rng_class, "PCG", random_PCG);
+    class_add_static(rng_class, "Xorshift", random_Xorshift);
+
     ObjModule *mod = new_module("random");
-
-    /* random.PCG(seed) constructor */
-    ObjFunction *pcg_ctor = new_native_function("PCG", random_PCG);
-    retain_obj((Object*)pcg_ctor);
-    ObjString *pcg_key = new_string("PCG", 3);
-    retain_obj((Object*)pcg_key);
-    dict_set(mod->exports, make_obj((Object*)pcg_key), make_obj((Object*)pcg_ctor));
-    release_obj((Object*)pcg_key);
-    release_obj((Object*)pcg_ctor);
-
-    /* random.Xorshift(seed) constructor */
-    ObjFunction *xs_ctor = new_native_function("Xorshift", random_Xorshift);
-    retain_obj((Object*)xs_ctor);
-    ObjString *xs_key = new_string("Xorshift", 8);
-    retain_obj((Object*)xs_key);
-    dict_set(mod->exports, make_obj((Object*)xs_key), make_obj((Object*)xs_ctor));
-    release_obj((Object*)xs_key);
-    release_obj((Object*)xs_ctor);
+    dict_set(mod->exports,
+             make_obj((Object*)new_string("Random", 6)),
+             make_obj((Object*)rng_class));
 
     /* Cache module */
     Value mod_val = make_obj((Object*)mod);

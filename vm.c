@@ -375,6 +375,7 @@ static void mark_object(Object *obj) {
             for (int i = 0; i < cls->method_count; i++) {
                 mark_object((Object*)cls->methods[i]);
             }
+            if (cls->fields) mark_object((Object*)cls->fields);
             break;
         }
         case OBJ_BOUND_METHOD: {
@@ -537,6 +538,8 @@ void mark_and_sweep(VM *vm) {
                 for (int i = 0; i < cls->method_count; i++) {
                     if (cls->methods[i]) release_obj((Object*)cls->methods[i]);
                 }
+                if (cls->fields) release_obj((Object*)cls->fields);
+                cls->fields = NULL;
                 cls->method_count = 0;
                 break;
             }

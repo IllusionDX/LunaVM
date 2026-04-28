@@ -1,6 +1,6 @@
-import random
+from random import Random
 
-var rng = random.PCG(12345)
+var rng = Random.PCG(12345)
 
 # int range
 var r1 = rng.int(1, 100)
@@ -23,12 +23,12 @@ var r3 = rng.int(1, 100)
 print(r3 == r1)
 
 # two independent RNGs with same seed produce same sequence
-var rng_a = random.PCG(42)
-var rng_b = random.PCG(42)
+var rng_a = Random.PCG(42)
+var rng_b = Random.PCG(42)
 print(rng_a.int(1, 100) == rng_b.int(1, 100))
 
 # Xorshift also works
-var xs = random.Xorshift(99)
+var xs = Random.Xorshift(99)
 var xs_val = xs.int(1, 10)
 print(xs_val >= 1 and xs_val <= 10)
 
@@ -43,9 +43,9 @@ var ch = rng.choice(letters)
 print(ch == "a" or ch == "b" or ch == "c")
 
 # Reproducibility: same seed gives same choice result
-var rng2 = random.PCG(777)
+var rng2 = Random.PCG(777)
 var c1 = rng2.choice([10, 20, 30])
-var rng3 = random.PCG(777)
+var rng3 = Random.PCG(777)
 var c2 = rng3.choice([10, 20, 30])
 print(c1 == c2)
 
@@ -55,11 +55,11 @@ rng.shuffle(deck)
 print(deck.length == 5)
 
 # Reproducibility: same seed gives same shuffle
-var rng4 = random.PCG(999)
+var rng4 = Random.PCG(999)
 var list1 = [10, 20, 30, 40]
 rng4.shuffle(list1)
 
-var rng5 = random.PCG(999)
+var rng5 = Random.PCG(999)
 var list2 = [10, 20, 30, 40]
 rng5.shuffle(list2)
 

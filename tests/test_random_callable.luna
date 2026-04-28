@@ -1,6 +1,6 @@
-import random
+from random import Random
 
-var rng = random.PCG(42)
+var rng = Random.PCG(42)
 var a = rng()
 var b = rng()
 var c = rng()

@@ -1077,11 +1077,22 @@
                     SET_REG(RA, make_obj((Object*)new_string(cls->name, (int)strlen(cls->name))));
                 else if (strcmp(field->chars, "base") == 0)
                     SET_REG(RA, cls->base ? make_obj((Object*)cls->base) : make_null());
-                else {
+                else if (cls->fields) {
+                    Value val = dict_get(cls->fields, make_obj((Object*)field));
+                    if (!IS_NIL(val)) {
+                        SET_REG(RA, val);
+                    } else {
+                        char buf[256];
+                        snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no field '%s'", cls->name, field->chars);
+                        release_value(_exc);
+                        _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
+                        goto op_throw;
+                    }
+                } else {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "AttributeError: class has no field '%s'", field->chars);
+                    snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no field '%s'", cls->name, field->chars);
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, vm->exception_class, buf);
+                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
                 break;
@@ -1294,6 +1305,81 @@
                         result = buffer_read_long(buf, buf->cursor);
                         if (!IS_NIL(result)) buf->cursor += 8;
                         handled = true;
+                    }
+                    break;
+                }
+                case OBJ_CLASS: {
+                    ObjClass *cls = (ObjClass*)AS_OBJ(obj);
+                    ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
+                    Value fn_val = cls->fields ? dict_get(cls->fields, make_obj((Object*)mname_obj)) : make_null();
+                    if (IS_FUNCTION(fn_val)) {
+                        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
+                        if (fn->is_native) {
+                            if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                        } else if (vm->frame_count < MAX_FRAMES) {
+                            CallFrame *caller = &FRAME;
+                            CallFrame *callee = &vm->frames[vm->frame_count];
+                            callee->chunk = fn->chunk;
+                            callee->ip = 0;
+                            callee->base = caller->base + obj_reg + 2;
+                            callee->ret_reg = ret_reg;
+                            callee->nargs = nargs;
+                            callee->kw_args = make_null();
+                            frame_set_refs(callee, NULL, fn);
+                            callee->saved_globals = NULL;
+                            int need = callee->base + fn->chunk->max_registers;
+                            if (need > vm->stack_cap) {
+                                vm->stack_cap = need < 64 ? 64 : need * 2;
+                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                            }
+                            for (int j = nargs; j < fn->chunk->max_registers; j++)
+                                vm->stack[callee->base + j] = make_null();
+                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            vm->frame_count++;
+                            CHUNK = callee->chunk;
+                            IP = 0;
+                            DECODE;
+                            goto *op_labels[OP(instr)];
+                        }
+                        handled = true;
+                    } else if (IS_CLOSURE(fn_val)) {
+                        ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
+                        ObjFunction *fn = cl->function;
+                        if (fn->is_native) {
+                            if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                        } else if (vm->frame_count < MAX_FRAMES) {
+                            CallFrame *caller = &FRAME;
+                            CallFrame *callee = &vm->frames[vm->frame_count];
+                            callee->chunk = fn->chunk;
+                            callee->ip = 0;
+                            callee->base = caller->base + obj_reg + 2;
+                            callee->ret_reg = ret_reg;
+                            callee->nargs = nargs;
+                            callee->kw_args = make_null();
+                            frame_set_refs(callee, cl, fn);
+                            callee->saved_globals = NULL;
+                            int need = callee->base + fn->chunk->max_registers;
+                            if (need > vm->stack_cap) {
+                                vm->stack_cap = need < 64 ? 64 : need * 2;
+                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                            }
+                            for (int j = nargs; j < fn->chunk->max_registers; j++)
+                                vm->stack[callee->base + j] = make_null();
+                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            vm->frame_count++;
+                            CHUNK = callee->chunk;
+                            IP = 0;
+                            DECODE;
+                            goto *op_labels[OP(instr)];
+                        }
+                        handled = true;
+                    }
+                    if (!handled) {
+                        char buf[256];
+                        snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no method '%s'", cls->name, mname_obj->chars);
+                        release_value(_exc);
+                        _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
+                        goto op_throw;
                     }
                     break;
                 }
