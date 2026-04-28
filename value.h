@@ -132,7 +132,8 @@ typedef enum {
     OBJ_CLOSURE,
     OBJ_ENUM,
     OBJ_CLASS,
-    OBJ_BOUND_METHOD
+    OBJ_BOUND_METHOD,
+    OBJ_MODULE
 } ObjType;
 
 /* ============================================================ */
@@ -185,6 +186,7 @@ static inline Value make_obj(void *ptr) {
 #define IS_ENUM(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_ENUM))
 #define IS_CLASS(v)    (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLASS))
 #define IS_BOUND_METHOD(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_BOUND_METHOD))
+#define IS_MODULE(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_MODULE))
 
 /* ============================================================ */
 /* Native function signature                                     */
@@ -254,6 +256,13 @@ typedef struct {
     Value               self;           /* the bound instance */
     struct ObjFunction *fn;             /* the method function */
 } ObjBoundMethod;
+
+/* Module — namespace holding exported values */
+typedef struct ObjModule {
+    Object    obj;
+    ObjString *name;      /* module name (e.g. "math") */
+    ObjDict   *exports;   /* dict of name -> value */
+} ObjModule;
 
 /* Class instance — fields as a parallel-array open dict */
 typedef struct ObjInstance {
@@ -340,6 +349,7 @@ ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);
 ObjEnum     *new_enum(const char *name, int count);
 ObjBoundMethod *new_bound_method(Value self, struct ObjFunction *fn);
+ObjModule     *new_module(const char *name);
 
 /* ============================================================ */
 /* Value predicates / utilities                                  */

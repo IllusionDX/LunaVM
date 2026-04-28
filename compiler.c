@@ -1479,11 +1479,26 @@ static void compile_decl(Compiler *c, Decl *decl) {
     case DECL_CLASS:    compile_class(c, decl);    break;
     case DECL_ENUM:     compile_enum(c, decl);     break;
     case DECL_IMPORT: {
-        /* V1: create an empty dict placeholder for the module */
-        int r = alloc_reg(c);
-        emit_ABC(c, OP_NEWDICT, (uint8_t)r, 0, 0);
-        int k = chunk_add_string(c->chunk, decl->data.import_decl.module_name);
-        emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
+        int mod_reg = alloc_reg(c);
+        int mod_k = chunk_add_string(c->chunk, decl->data.import_decl.module_name);
+        emit_ABx(c, OP_IMPORT, (uint8_t)mod_reg, (uint16_t)mod_k);
+
+        if (decl->data.import_decl.import_all) {
+            /* from X import * — store the module object itself */
+            emit_ABx(c, OP_SETGLOBAL, (uint8_t)mod_reg, (uint16_t)mod_k);
+        } else if (decl->data.import_decl.items && decl->data.import_decl.item_count > 0) {
+            /* from X import a, b */
+            for (int i = 0; i < decl->data.import_decl.item_count; i++) {
+                int item_reg = alloc_reg(c);
+                int item_k = chunk_add_string(c->chunk, decl->data.import_decl.items[i]);
+                emit_ABC(c, OP_MEMBERGET, (uint8_t)item_reg, (uint8_t)mod_reg, (uint8_t)item_k);
+                emit_ABx(c, OP_SETGLOBAL, (uint8_t)item_reg, (uint16_t)item_k);
+                free_reg(c);
+            }
+        } else {
+            /* import module */
+            emit_ABx(c, OP_SETGLOBAL, (uint8_t)mod_reg, (uint16_t)mod_k);
+        }
         free_reg(c);
         break;
     }
@@ -1730,7 +1745,7 @@ static void compile_enum(Compiler *c, Decl *decl) {
 /* Public API                                                   */
 /* ============================================================ */
 
-bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl) {
+bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl, bool is_module) {
     chunk_init(chunk, "<main>");
 
     Compiler c = {
@@ -1772,6 +1787,9 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl) {
     scope_exit(&c);
 
     chunk->max_registers = c.max_temp_base;
-    emit_ABC(&c, OP_HALT, 0, 0, 0);
+    if (is_module)
+        emit_ABC(&c, OP_RET, 0, 0, 0);
+    else
+        emit_ABC(&c, OP_HALT, 0, 0, 0);
     return true;
 }

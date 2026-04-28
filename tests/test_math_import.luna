@@ -1,0 +1,6 @@
+import math
+
+print(math.add(3, 5))
+print(math.multiply(4, 7))
+print(math.pi)
+print(math.author)

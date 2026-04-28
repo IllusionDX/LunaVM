@@ -99,7 +99,7 @@ static int execute_native_program(const char *source) {
 #endif
 
     Chunk chunk;
-    if (!compile_program(program, &chunk, &vm, false)) {
+    if (!compile_program(program, &chunk, &vm, false, false)) {
         fprintf(stderr, "Compiler error: Failed to compile program\n");
         chunk_free(&chunk);
         vm_free(&vm);
@@ -158,7 +158,7 @@ static int execute_repl_line(VM *vm, const char *source) {
     }
 
     Chunk chunk;
-    if (!compile_program(program, &chunk, vm, true)) {
+    if (!compile_program(program, &chunk, vm, true, false)) {
         fflush(stdout);
         fprintf(stderr, "Compiler error: Failed to compile program\n");
         chunk_free(&chunk);

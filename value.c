@@ -328,6 +328,17 @@ ObjEnum *new_enum(const char *name, int count) {
     return e;
 }
 
+ObjModule *new_module(const char *name) {
+    ObjModule *mod = malloc(sizeof(ObjModule));
+    if (!mod) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)mod, OBJ_MODULE, sizeof(ObjModule));
+    mod->name = new_string(name, (int)strlen(name));
+    retain_obj((Object*)mod->name);   /* ObjModule owns its name string */
+    mod->exports = new_dict();
+    retain_obj((Object*)mod->exports); /* ObjModule owns its exports dict */
+    return mod;
+}
+
 Value make_exception_instance(struct VM *vm, ObjClass *cls, const char *message) {
     if (!cls) cls = vm->exception_class;
     if (!cls) return make_null();
@@ -420,6 +431,9 @@ void free_object_container(Object *obj) {
         case OBJ_BOUND_METHOD: {
             free(obj); break;
         }
+        case OBJ_MODULE: {
+            free(obj); break;
+        }
         default: free(obj); break;
     }
 }
@@ -490,6 +504,12 @@ void free_object(Object *obj) {
             ObjBoundMethod *bm = (ObjBoundMethod *)obj;
             release_value(bm->self);
             if (bm->fn) release_obj((Object*)bm->fn);
+            break;
+        }
+        case OBJ_MODULE: {
+            ObjModule *mod = (ObjModule *)obj;
+            if (mod->name) release_obj((Object*)mod->name);
+            if (mod->exports) release_obj((Object*)mod->exports);
             break;
         }
         default: break;
@@ -626,6 +646,11 @@ char *value_to_string(Value v) {
                 ObjBoundMethod *bm = (ObjBoundMethod*)obj;
                 ObjFunction *f = bm->fn;
                 snprintf(buf, sizeof(buf), "<bound method %s>", f && f->name ? f->name : "?");
+                return strdup(buf);
+            }
+            case OBJ_MODULE: {
+                ObjModule *mod = (ObjModule*)obj;
+                snprintf(buf, sizeof(buf), "<module %s>", mod->name ? mod->name->chars : "?");
                 return strdup(buf);
             }
             default: return strdup("<object>");

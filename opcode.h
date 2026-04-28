@@ -154,6 +154,9 @@ typedef enum {
     OP_INDEXGET_SAFE,  /* ABC  : A = B?.[C]. null if obj null or missing      */
     OP_SLICE_SAFE,     /* ABC  : A = B?.[slice]. null if obj null            */
 
+    /* ---- Module import ---- */
+    OP_IMPORT,      /* ABx  : A = import(module=constants[Bx])              */
+
     OP_HALT,        /* ABC  : stop VM (A,B,C unused)                     */
 
     OP_COUNT        /* sentinel — total opcode count                       */

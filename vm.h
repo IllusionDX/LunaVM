@@ -29,6 +29,7 @@ typedef struct {
     int          nargs;      /* number of positional args passed */
     Value        kw_args;    /* kwargs dict or make_null() if none */
     struct ObjFunction *fn;  /* the function being executed (for param names) */
+    struct GlobalEntry **saved_globals; /* non-NULL for module-import frames */
 } CallFrame;
 
 /* ---- Global variable entry (chained hash table) ---- */
@@ -93,6 +94,9 @@ typedef struct VM {
     IC_MemberEntry member_ic[IC_CACHE_SIZE];
     IC_MemberEntry method_ic[IC_CACHE_SIZE];
     uint64_t       instr_count;
+
+    /* Module cache — maps module name string to ObjModule */
+    ObjDict *module_cache;
 
     /* Built-in Exception classes (fast access) */
     struct ObjClass *exception_class;

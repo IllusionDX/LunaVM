@@ -17,6 +17,10 @@
 #include "value.h"
 #include "chunk.h"
 #include "opcode.h"
+#include "lexer.h"
+#include "parser.h"
+#include "compiler.h"
+#include "module.h"
 
 /* Declared in vm_builtins.c */
 void vm_register_builtins(VM *vm);
@@ -499,6 +503,8 @@ void vm_init(VM *vm) {
     vm->attribute_error_class = vm_register_builtin_exception(vm, "AttributeError", vm->exception_class);
     vm->value_error_class    = vm_register_builtin_exception(vm, "ValueError", vm->exception_class);
     vm->runtime_error_class  = vm_register_builtin_exception(vm, "RuntimeError", vm->exception_class);
+
+    vm->module_cache = new_dict();
 }
 
 static void close_upvalues(VM *vm, int frame_depth);
@@ -520,6 +526,11 @@ void vm_free(VM *vm) {
             free(e->name); free(e); e = nx;
         }
         vm->globals[i] = NULL;
+    }
+
+    if (vm->module_cache) {
+        release_obj((Object*)vm->module_cache);
+        vm->module_cache = NULL;
     }
 
     close_upvalues(vm, 0);
@@ -559,6 +570,47 @@ void vm_free(VM *vm) {
     allocated_objects = 0;
     bytes_allocated = 0;
     gc_collecting = false;
+}
+
+/* ============================================================ */
+/* Module import helpers                                          */
+/* ============================================================ */
+
+static GlobalEntry **vm_globals_save(VM *vm) {
+    GlobalEntry **saved = malloc(sizeof(GlobalEntry *) * VM_GLOBAL_BUCKETS);
+    if (!saved) { fprintf(stderr, "OOM\n"); exit(1); }
+    memcpy(saved, vm->globals, sizeof(GlobalEntry *) * VM_GLOBAL_BUCKETS);
+    return saved;
+}
+
+static void vm_globals_restore(VM *vm, GlobalEntry **saved) {
+    for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
+        GlobalEntry *e = vm->globals[i];
+        while (e) {
+            GlobalEntry *next = e->next;
+            release_value(e->value);
+            free(e->name);
+            free(e);
+            e = next;
+        }
+    }
+    memcpy(vm->globals, saved, sizeof(GlobalEntry *) * VM_GLOBAL_BUCKETS);
+    free(saved);
+}
+
+static void vm_globals_fresh(VM *vm) {
+    memset(vm->globals, 0, sizeof(GlobalEntry *) * VM_GLOBAL_BUCKETS);
+}
+
+static ObjDict *vm_globals_to_dict(VM *vm) {
+    ObjDict *d = new_dict();
+    for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
+        for (GlobalEntry *e = vm->globals[i]; e; e = e->next) {
+            ObjString *key = new_string(e->name, (int)strlen(e->name));
+            dict_set(d, make_obj((Object*)key), e->value);
+        }
+    }
+    return d;
 }
 
 /* ============================================================ */
@@ -621,6 +673,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     frame->ret_reg = 0;
     frame->nargs = 0;
     frame->kw_args = make_null();
+    frame->saved_globals = NULL;
     int needed = frame->base + chunk->max_registers;
     if (needed > vm->stack_cap) {
         vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -718,7 +771,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_memberget_safe,// 63 OP_MEMBERGET_SAFE
         &&op_indexget_safe, // 64 OP_INDEXGET_SAFE
         &&op_slice_safe,    // 65 OP_SLICE_SAFE
-        &&op_halt           // 66 OP_HALT
+        &&op_import,        // 66 OP_IMPORT
+        &&op_halt           // 67 OP_HALT
     };
 
     DECODE;
@@ -948,6 +1002,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->nargs = nargs;
                 callee->kw_args = make_null();
                 callee->fn = fn;
+                callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -987,6 +1042,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->nargs = nargs;
                 callee->kw_args = make_null();
                 callee->fn = fn;
+                callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -1029,6 +1085,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->nargs = nargs;
                 callee->kw_args = make_null();
                 callee->fn = fn;
+                callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -1078,6 +1135,25 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         int old_base = callee->base;
         release_value(callee->kw_args);
         close_upvalues(vm, vm->frame_count);
+
+        /* Module import cleanup: capture exports before destroying globals */
+        if (callee->saved_globals) {
+            char *captured_name = callee->fn && callee->fn->name ? strdup(callee->fn->name) : strdup("<module>");
+            release_value(retval);
+            ObjDict *exports = vm_globals_to_dict(vm);
+            vm_globals_restore(vm, callee->saved_globals);
+            callee->saved_globals = NULL;
+            ObjModule *mod = new_module(captured_name);
+            release_obj((Object*)mod->exports);
+            mod->exports = exports;
+            retain_obj((Object*)exports);
+            Value module_val = make_obj((Object*)mod);
+            dict_set(vm->module_cache, make_obj((Object*)new_string(captured_name, (int)strlen(captured_name))), module_val);
+            retval = module_val;
+            if (IS_OBJ(retval)) retain_obj(AS_OBJ(retval));
+            free(captured_name);
+        }
+
         for (int i = 0; i < callee->chunk->max_registers; i++) SET_REG(i, make_null());
         
         vm_pop_try_frames(vm, vm->frame_count - 1);
@@ -1654,6 +1730,20 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 }
                 break;
             }
+            case OBJ_MODULE: {
+                ObjModule *mod = (ObjModule*)AS_OBJ(obj);
+                Value export_val = dict_get(mod->exports, make_obj((Object*)field));
+                if (!IS_NIL(export_val)) {
+                    SET_REG(RA, export_val);
+                } else {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "AttributeError: module '%s' has no attribute '%s'", mod->name->chars, field->chars);
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
+                    goto op_throw;
+                }
+                break;
+            }
             case OBJ_DICT: {
                 ObjFunction *mfn = vm_dict_method_lookup(field->chars, field->length);
                 if (mfn) {
@@ -1752,6 +1842,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 break;
             }
             case OBJ_LIST:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(list_length((ObjList*)AS_OBJ(obj))) : make_null()); break;
+            case OBJ_MODULE: {
+                ObjModule *mod = (ObjModule*)AS_OBJ(obj);
+                SET_REG_PRIM(RA, dict_get(mod->exports, make_obj((Object*)field)));
+                break;
+            }
             case OBJ_DICT: {
                 ObjFunction *mfn = vm_dict_method_lookup(field->chars, field->length);
                 if (mfn) {
@@ -1835,6 +1930,75 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 case OBJ_LIST: handled = vm_invoke_list(vm, (ObjList*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
                 case OBJ_DICT: handled = vm_invoke_dict(vm, (ObjDict*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
                 case OBJ_ENUM: handled = vm_invoke_enum(vm, (ObjEnum*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
+                case OBJ_MODULE: {
+                    ObjModule *mod = (ObjModule*)AS_OBJ(obj);
+                    Value fn_val = dict_get(mod->exports, make_obj((Object*)((ObjString*)AS_OBJ(method_val))));
+                    if (IS_FUNCTION(fn_val)) {
+                        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
+                        if (fn->is_native) {
+                            result = fn->native_fn(vm, scratch, nargs);
+                        } else if (vm->frame_count < MAX_FRAMES) {
+                            CallFrame *caller = &FRAME;
+                            CallFrame *callee = &vm->frames[vm->frame_count];
+                            callee->chunk = fn->chunk;
+                            callee->ip = 0;
+                            callee->base = caller->base + obj_reg + 2;
+                            callee->closure = NULL;
+                            callee->ret_reg = ret_reg;
+                            callee->nargs = nargs;
+                            callee->kw_args = make_null();
+                            callee->fn = fn;
+                            callee->saved_globals = NULL;
+                            int need = callee->base + fn->chunk->max_registers;
+                            if (need > vm->stack_cap) {
+                                vm->stack_cap = need < 64 ? 64 : need * 2;
+                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                            }
+                            for (int j = nargs; j < fn->chunk->max_registers; j++)
+                                vm->stack[callee->base + j] = make_null();
+                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            vm->frame_count++;
+                            CHUNK = callee->chunk;
+                            IP = 0;
+                            DECODE;
+                            goto *op_labels[OP(instr)];
+                        }
+                        handled = true;
+                    } else if (IS_CLOSURE(fn_val)) {
+                        ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
+                        ObjFunction *fn = cl->function;
+                        if (fn->is_native) {
+                            result = fn->native_fn(vm, scratch, nargs);
+                        } else if (vm->frame_count < MAX_FRAMES) {
+                            CallFrame *caller = &FRAME;
+                            CallFrame *callee = &vm->frames[vm->frame_count];
+                            callee->chunk = fn->chunk;
+                            callee->ip = 0;
+                            callee->base = caller->base + obj_reg + 2;
+                            callee->closure = cl;
+                            callee->ret_reg = ret_reg;
+                            callee->nargs = nargs;
+                            callee->kw_args = make_null();
+                            callee->fn = fn;
+                            callee->saved_globals = NULL;
+                            int need = callee->base + fn->chunk->max_registers;
+                            if (need > vm->stack_cap) {
+                                vm->stack_cap = need < 64 ? 64 : need * 2;
+                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                            }
+                            for (int j = nargs; j < fn->chunk->max_registers; j++)
+                                vm->stack[callee->base + j] = make_null();
+                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            vm->frame_count++;
+                            CHUNK = callee->chunk;
+                            IP = 0;
+                            DECODE;
+                            goto *op_labels[OP(instr)];
+                        }
+                        handled = true;
+                    }
+                    break;
+                }
                 case OBJ_INSTANCE: {
                     ObjInstance *obj_inst = (ObjInstance*)AS_OBJ(obj);
                     ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
@@ -1870,6 +2034,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                                     callee->nargs = nargs;
                                     callee->kw_args = make_null();
                                     callee->fn = m;
+                                    callee->saved_globals = NULL;
                                     int need = callee->base + m->chunk->max_registers;
                                     if (need > vm->stack_cap) {
                                         vm->stack_cap = need < 64 ? 64 : need * 2;
@@ -1946,6 +2111,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                             callee->nargs = nargs;
                             callee->kw_args = make_null();
                             callee->fn = m;
+                            callee->saved_globals = NULL;
                             int need = callee->base + m->chunk->max_registers;
                             if (need > vm->stack_cap) {
                                 vm->stack_cap = need < 64 ? 64 : need * 2;
@@ -2121,6 +2287,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->kw_args = kw_args_val;
                 retain_value(kw_args_val);
                 callee->fn = fn;
+                callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -2161,6 +2328,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->kw_args = kw_args_val;
                 retain_value(kw_args_val);
                 callee->fn = fn;
+                callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -2203,6 +2371,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->kw_args = kw_args_val;
                 retain_value(kw_args_val);
                 callee->fn = fn;
+                callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
                     vm->stack_cap = needed < 64 ? 64 : needed * 2;
@@ -2244,7 +2413,142 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         goto *op_labels[OP(instr)];
     }
 
-    /* 66. OP_HALT */
+    /* 66. OP_IMPORT */
+    op_import: {
+        uint8_t dst = RA;
+        Value mod_name_val = CONST(BX);
+        if (!IS_STRING(mod_name_val)) {
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, "import: module name must be a string");
+            goto op_throw;
+        }
+        const char *mod_name = ((ObjString*)AS_OBJ(mod_name_val))->chars;
+
+        Value cached = dict_get(vm->module_cache, mod_name_val);
+        if (!IS_NIL(cached) && IS_MODULE(cached)) {
+            SET_REG(dst, cached);
+            DECODE; goto *op_labels[OP(instr)];
+        }
+
+        char *filepath = module_resolve_path(mod_name);
+        if (!filepath) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "import: module '%s' not found", mod_name);
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
+            goto op_throw;
+        }
+
+        char *source = module_read_source(filepath);
+        free(filepath);
+        if (!source) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "import: cannot read module '%s'", mod_name);
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
+            goto op_throw;
+        }
+
+        Lexer *lexer = lexer_new(source);
+        TokenList *tokens = lexer_tokenize(lexer);
+        free(source);
+
+        bool had_lex_errors = false;
+        for (Token *t = tokens->head; t; t = t->next) {
+            if (t->type == TOK_ERROR) {
+                had_lex_errors = true;
+                fprintf(stderr, "Lexer error in '%s': %s\n", mod_name, t->value);
+            }
+        }
+
+        if (had_lex_errors) {
+            token_list_free(tokens);
+            lexer_free(lexer);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "import: lexer errors in '%s'", mod_name);
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
+            goto op_throw;
+        }
+
+        Parser *parser = parser_new(tokens);
+        Program *program = parser_parse(parser);
+
+        if (parser->had_error) {
+            parser_free(parser);
+            token_list_free(tokens);
+            lexer_free(lexer);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "import: parser errors in '%s'", mod_name);
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
+            goto op_throw;
+        }
+
+        /* Save current globals, create fresh table for module compilation+execution */
+        GlobalEntry **saved_globals = vm_globals_save(vm);
+        vm_globals_fresh(vm);
+
+        Chunk mod_chunk;
+        if (!compile_program(program, &mod_chunk, vm, false, true)) {
+            vm_globals_restore(vm, saved_globals);
+            parser_free(parser);
+            token_list_free(tokens);
+            lexer_free(lexer);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "import: compilation errors in '%s'", mod_name);
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
+            goto op_throw;
+        }
+
+        parser_free(parser);
+        token_list_free(tokens);
+        lexer_free(lexer);
+
+        /* Create ObjFunction wrapper for the module chunk */
+        ObjFunction *mod_fn = new_function(mod_name);
+        mod_fn->chunk = malloc(sizeof(Chunk));
+        *mod_fn->chunk = mod_chunk;
+        retain_obj((Object*)mod_fn);
+
+        /* Push function onto stack and set up call frame */
+        SET_REG(dst, make_obj((Object*)mod_fn));
+
+        if (vm->frame_count >= MAX_FRAMES) {
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
+            goto op_throw;
+        }
+
+        CallFrame *caller = &FRAME;
+        CallFrame *callee = &vm->frames[vm->frame_count];
+        callee->chunk         = mod_fn->chunk;
+        callee->ip            = 0;
+        callee->base          = caller->base + dst + 1; /* registers start after the fn slot */
+        callee->closure       = NULL;
+        callee->ret_reg       = dst;
+        callee->nargs         = 0;
+        callee->kw_args       = make_null();
+        callee->fn            = mod_fn;
+        callee->saved_globals = saved_globals;
+
+        int needed = callee->base + mod_fn->chunk->max_registers;
+        if (needed > vm->stack_cap) {
+            vm->stack_cap = needed < 64 ? 64 : needed * 2;
+            vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+        }
+        for (int i = 0; i < mod_fn->chunk->max_registers; i++)
+            vm->stack[callee->base + i] = make_null();
+        vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+        vm->frame_count++;
+        CHUNK = callee->chunk;
+        IP = 0;
+        DECODE;
+        goto *op_labels[OP(instr)];
+    }
+
+    /* 67. OP_HALT */
     op_halt:
         return VM_OK;
 

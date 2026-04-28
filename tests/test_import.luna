@@ -1,6 +1,22 @@
-# Test import statement (V1 placeholder)
+# Test real module import
 
 import math
 
-# math should exist as an empty dict global
+print("add 3+5:")
+print(math.add(3, 5))
+
+print("pi:")
+print(math.pi)
+
+print("author:")
+print(math.author)
+
+# Test from import
+from math import multiply, pi
+
+print("multiply 4*7:")
+print(multiply(4, 7))
+print("pi from global:")
+print(pi)
+
 print("import test done")
