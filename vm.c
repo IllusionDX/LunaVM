@@ -9,6 +9,8 @@
  *   regs[param_count..]     — locals / temporaries
  */
 
+#pragma GCC diagnostic ignored "-Wclobbered"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +22,7 @@
 #include "module.h"
 #include "opcode.h"
 #include "stdlib_math.h"
+#include "stdlib_random.h"
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -525,6 +528,7 @@ void vm_init(VM *vm) {
     vm->module_cache = new_dict();
     retain_obj((Object*)vm->module_cache);
     vm_register_math_module(vm);
+    vm_register_random_module(vm);
 }
 
 static void close_upvalues(VM *vm, int frame_depth);
@@ -716,31 +720,8 @@ static void path_dirname(const char *path, char *buf, size_t buf_size) {
 #define KSTR(n)     (((ObjString*)AS_OBJ(CONST(n)))->chars)
 #define KSTROBJ(n)  ((ObjString*)AS_OBJ(CONST(n)))
 
-VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
-    if (allocated_objects > 1000) {
-        mark_and_sweep(vm);
-    }
-    if (vm->frame_count >= MAX_FRAMES) {
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, "vm: frame overflow");
-        return VM_EXCEPTION;
-    }
-    CallFrame *frame = &vm->frames[vm->frame_count++];
-    frame->chunk = chunk;
-    frame->ip = 0;
-    frame->base = vm->stack_count;
-    frame->ret_reg = 0;
-    frame->nargs = 0;
-    frame->kw_args = make_null();
-    frame->closure = NULL;
-    frame->fn = NULL;
-    frame->saved_globals = NULL;
-    int needed = frame->base + chunk->max_registers;
-    if (needed > vm->stack_cap) {
-        vm->stack_cap = needed < 64 ? 64 : needed * 2;
-        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-    }
-    for (int i = 0; i < chunk->max_registers; i++) vm->stack[frame->base + i] = make_null();
-    vm->stack_count = needed;
+static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
+    (void)chunk;
 
     uint32_t instr;
     uint8_t  A, B, C;
@@ -748,14 +729,6 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     int      sBx;
     volatile Value _exc = make_null();
 
-    /* Native exception jump shield */
-    LunaJump jump;
-    jump.prev = vm->native_jump;
-    vm->native_jump = &jump;
-    if (setjmp(jump.env) != 0) {
-        _exc = vm->last_exception;
-        goto op_throw;
-    }
 
 #define DECODE \
     do { \
@@ -2088,7 +2061,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                             ObjFunction *m = k->methods[mi];
                             SET_REG(obj_reg + 1, obj); // Bind 'self' to first arg slot
                             if (m->is_native) {
-                                result = m->native_fn(vm, scratch, nargs);
+                                Value native_scratch[256];
+                                native_scratch[0] = obj;
+                                for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
+                                result = m->native_fn(vm, native_scratch, nargs + 1);
                             } else {
                                 if (vm->frame_count < MAX_FRAMES) {
                                     CallFrame *caller = &FRAME;
@@ -2246,7 +2222,6 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             vm->try_stack = tf->next;
             free(tf);
         }
-        vm->native_jump = jump.prev;
         return VM_EXCEPTION;
     }
 
@@ -2628,7 +2603,6 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         frame_release_refs(frame);
         vm->stack_count = 0;
         vm->frame_count = 0;
-        vm->native_jump = jump.prev;
         return VM_OK;
     }
 
@@ -2647,6 +2621,46 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
 #undef CONST
 #undef KSTR
 }
+VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
+    if (allocated_objects > 1000) {
+        mark_and_sweep(vm);
+    }
+    if (vm->frame_count >= MAX_FRAMES) {
+        vm->last_exception = make_exception_instance(vm, vm->exception_class, "vm: frame overflow");
+        return VM_EXCEPTION;
+    }
+    CallFrame *frame = &vm->frames[vm->frame_count++];
+    frame->chunk = chunk;
+    frame->ip = 0;
+    frame->base = vm->stack_count;
+    frame->ret_reg = 0;
+    frame->nargs = 0;
+    frame->kw_args = make_null();
+    frame->closure = NULL;
+    frame->fn = NULL;
+    frame->saved_globals = NULL;
+    int needed = frame->base + chunk->max_registers;
+    if (needed > vm->stack_cap) {
+        vm->stack_cap = needed < 64 ? 64 : needed * 2;
+        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+    }
+    for (int i = 0; i < chunk->max_registers; i++) vm->stack[frame->base + i] = make_null();
+    vm->stack_count = needed;
+
+    LunaJump jump;
+    jump.prev = vm->native_jump;
+    vm->native_jump = &jump;
+
+    VMResult result;
+    if (setjmp(jump.env) == 0) {
+        result = vm_execute_loop(vm, chunk);
+    } else {
+        result = VM_EXCEPTION;
+    }
+    vm->native_jump = jump.prev;
+    return result;
+}
+
 
 /* ============================================================ */
 /* Upvalue helpers                                              */
