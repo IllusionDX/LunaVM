@@ -379,7 +379,17 @@ static inline void retain_obj(Object *obj) {
 
 static inline void release_obj(Object *obj) {
     if (!obj) return;
-    if (--obj->refcount <= 0 && !gc_collecting) free_object(obj);
+    if (obj->refcount <= 0) {
+#ifndef NDEBUG
+        fprintf(stderr, "BUG: invalid release! obj=%p type=%d refcount=%d\n", (void*)obj, obj->type, obj->refcount);
+        abort();
+#else
+        return;
+#endif
+    }
+    if (--obj->refcount <= 0 && !gc_collecting) {
+        free_object(obj);
+    }
 }
 
 static inline void retain_value(Value v) {

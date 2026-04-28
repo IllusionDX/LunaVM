@@ -205,11 +205,8 @@ static void dict_transition_to_heap(ObjDict *d) {
         d->entry_count++;
     }
 
-    /* Release the old inline references — ownership has moved to heap entries. */
-    for (int i = 0; i < old_count; i++) {
-        release_value(old[i].key);
-        release_value(old[i].value);
-    }
+    /* Do NOT release the old inline references — the dict still owns them,
+     * they've just moved from the inline array to the heap array. */
 }
 
 ObjClass *new_class(const char *name, const char *base_name) {
@@ -441,7 +438,6 @@ void free_object_container(Object *obj) {
 /* ARC path: release children, then free container. */
 void free_object(Object *obj) {
     if (!obj) return;
-
     switch (obj->type) {
         case OBJ_LIST: {
             ObjList *l = (ObjList *)obj;
@@ -698,7 +694,6 @@ void list_add(ObjList *list, Value value) {
     if (list->count >= list->capacity) {
         int new_cap = list->capacity < 8 ? 8 : list->capacity * 2;
         if (list->items == NULL) {
-            /* Transition from inline to heap */
             Value *new_items = malloc(sizeof(Value) * new_cap);
             if (!new_items) { fprintf(stderr, "OOM\n"); exit(1); }
             memcpy(new_items, list->inline_items, list->count * sizeof(Value));

@@ -19,13 +19,14 @@ endif
 # Source files
 SOURCES = main.c value.c ast_free.c \
     lexer.c parser.c chunk.c vm.c vm_builtins.c compiler.c \
-    parse_expr.c parse_stmt.c parse_decl.c fstring.c module.c
+    parse_expr.c parse_stmt.c parse_decl.c fstring.c module.c \
+    stdlib_math.c
 
 OBJECTS = $(SOURCES:.c=.o)
 
 # Header files
 HEADERS = ast.h value.h lexer.h parser.h chunk.h vm.h opcode.h compiler.h \
-    parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h
+    parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h stdlib_math.h
 
 # Default target
 all: $(TARGET)

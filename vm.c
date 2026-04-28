@@ -16,7 +16,10 @@
 #include "vm.h"
 #include "value.h"
 #include "chunk.h"
+#include "compiler.h"
+#include "module.h"
 #include "opcode.h"
+#include "stdlib_math.h"
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -297,6 +300,12 @@ static void mark_object(Object *obj) {
             if (bm->fn) mark_object((Object*)bm->fn);
             break;
         }
+        case OBJ_MODULE: {
+            ObjModule *mod = (ObjModule *)obj;
+            if (mod->name) mark_object((Object*)mod->name);
+            if (mod->exports) mark_object((Object*)mod->exports);
+            break;
+        }
         default: break;
     }
 }
@@ -331,6 +340,14 @@ void mark_and_sweep(VM *vm) {
         uv = uv->next;
     }
     mark_value(vm->last_exception);
+    if (vm->module_cache) mark_object((Object*)vm->module_cache);
+    if (vm->exception_class) mark_object((Object*)vm->exception_class);
+    if (vm->type_error_class) mark_object((Object*)vm->type_error_class);
+    if (vm->key_error_class) mark_object((Object*)vm->key_error_class);
+    if (vm->index_error_class) mark_object((Object*)vm->index_error_class);
+    if (vm->attribute_error_class) mark_object((Object*)vm->attribute_error_class);
+    if (vm->value_error_class) mark_object((Object*)vm->value_error_class);
+    if (vm->runtime_error_class) mark_object((Object*)vm->runtime_error_class);
 
     // Invalidate inline caches — any cached object may have been collected.
     memset(vm->global_ic, 0, sizeof(vm->global_ic));
@@ -505,6 +522,8 @@ void vm_init(VM *vm) {
     vm->runtime_error_class  = vm_register_builtin_exception(vm, "RuntimeError", vm->exception_class);
 
     vm->module_cache = new_dict();
+    retain_obj((Object*)vm->module_cache);
+    vm_register_math_module(vm);
 }
 
 static void close_upvalues(VM *vm, int frame_depth);
@@ -613,6 +632,24 @@ static ObjDict *vm_globals_to_dict(VM *vm) {
     return d;
 }
 
+static void frame_set_refs(CallFrame *frame, ObjClosure *closure, ObjFunction *fn) {
+    frame->closure = closure;
+    frame->fn = fn;
+    if (closure) retain_obj((Object*)closure);
+    if (fn) retain_obj((Object*)fn);
+}
+
+static void frame_release_refs(CallFrame *frame) {
+    if (frame->closure) {
+        release_obj((Object*)frame->closure);
+        frame->closure = NULL;
+    }
+    if (frame->fn) {
+        release_obj((Object*)frame->fn);
+        frame->fn = NULL;
+    }
+}
+
 /* Extract directory component from a file path (modifies buf in-place).
  * Handles both '/' and '\\' separators.
  */
@@ -693,6 +730,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     frame->ret_reg = 0;
     frame->nargs = 0;
     frame->kw_args = make_null();
+    frame->closure = NULL;
+    frame->fn = NULL;
     frame->saved_globals = NULL;
     int needed = frame->base + chunk->max_registers;
     if (needed > vm->stack_cap) {
@@ -1017,11 +1056,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->chunk = fn->chunk;
                 callee->ip = 0;
                 callee->base = caller->base + fn_reg + 1;
-                callee->closure = NULL;
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = make_null();
-                callee->fn = fn;
+                frame_set_refs(callee, NULL, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -1057,11 +1095,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->chunk = fn->chunk;
                 callee->ip = 0;
                 callee->base = caller->base + fn_reg + 1;
-                callee->closure = cl;
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = make_null();
-                callee->fn = fn;
+                frame_set_refs(callee, cl, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -1100,11 +1137,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 /* Overwrite bound method slot with self; base points there so reg 0 = self */
                 SET_REG(fn_reg, bm->self);
                 callee->base = caller->base + fn_reg;
-                callee->closure = NULL;
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = make_null();
-                callee->fn = fn;
+                frame_set_refs(callee, NULL, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -1154,6 +1190,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         CallFrame *callee = &FRAME;
         int old_base = callee->base;
         release_value(callee->kw_args);
+        callee->kw_args = make_null();
         close_upvalues(vm, vm->frame_count);
 
         /* Module import cleanup: capture exports before destroying globals */
@@ -1183,6 +1220,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         IP = caller->ip;
         SET_REG(callee->ret_reg, retval);
         if (IS_OBJ(retval) && AS_OBJ(retval)) release_obj(AS_OBJ(retval));
+        frame_release_refs(callee);
         vm->stack_count = old_base;
         DECODE;
         goto *op_labels[OP(instr)];
@@ -1864,7 +1902,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             case OBJ_LIST:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(list_length((ObjList*)AS_OBJ(obj))) : make_null()); break;
             case OBJ_MODULE: {
                 ObjModule *mod = (ObjModule*)AS_OBJ(obj);
-                SET_REG_PRIM(RA, dict_get(mod->exports, make_obj((Object*)field)));
+                SET_REG(RA, dict_get(mod->exports, make_obj((Object*)field)));
                 break;
             }
             case OBJ_DICT: {
@@ -1963,11 +2001,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                             callee->chunk = fn->chunk;
                             callee->ip = 0;
                             callee->base = caller->base + obj_reg + 2;
-                            callee->closure = NULL;
                             callee->ret_reg = ret_reg;
                             callee->nargs = nargs;
                             callee->kw_args = make_null();
-                            callee->fn = fn;
+                            frame_set_refs(callee, NULL, fn);
                             callee->saved_globals = NULL;
                             int need = callee->base + fn->chunk->max_registers;
                             if (need > vm->stack_cap) {
@@ -1995,11 +2032,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                             callee->chunk = fn->chunk;
                             callee->ip = 0;
                             callee->base = caller->base + obj_reg + 2;
-                            callee->closure = cl;
                             callee->ret_reg = ret_reg;
                             callee->nargs = nargs;
                             callee->kw_args = make_null();
-                            callee->fn = fn;
+                            frame_set_refs(callee, cl, fn);
                             callee->saved_globals = NULL;
                             int need = callee->base + fn->chunk->max_registers;
                             if (need > vm->stack_cap) {
@@ -2053,7 +2089,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                                     callee->ret_reg = ret_reg;
                                     callee->nargs = nargs;
                                     callee->kw_args = make_null();
-                                    callee->fn = m;
+                                    frame_set_refs(callee, NULL, m);
                                     callee->saved_globals = NULL;
                                     int need = callee->base + m->chunk->max_registers;
                                     if (need > vm->stack_cap) {
@@ -2130,7 +2166,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                             callee->ret_reg = ret_reg;
                             callee->nargs = nargs;
                             callee->kw_args = make_null();
-                            callee->fn = m;
+                            frame_set_refs(callee, NULL, m);
                             callee->saved_globals = NULL;
                             int need = callee->base + m->chunk->max_registers;
                             if (need > vm->stack_cap) {
@@ -2178,6 +2214,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             if (tf->frame_depth <= vm->frame_count) {
                 /* unwind call frames */
                 while (vm->frame_count > tf->frame_depth) {
+                    CallFrame *unwound = &vm->frames[vm->frame_count - 1];
+                    release_value(unwound->kw_args);
+                    unwound->kw_args = make_null();
+                    frame_release_refs(unwound);
                     close_upvalues(vm, vm->frame_count);
                     vm->frame_count--;
                 }
@@ -2301,12 +2341,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->chunk = fn->chunk;
                 callee->ip = 0;
                 callee->base = caller->base + fn_reg + 1;
-                callee->closure = NULL;
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = kw_args_val;
                 retain_value(kw_args_val);
-                callee->fn = fn;
+                frame_set_refs(callee, NULL, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -2342,12 +2381,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->chunk = fn->chunk;
                 callee->ip = 0;
                 callee->base = caller->base + fn_reg + 1;
-                callee->closure = cl;
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = kw_args_val;
                 retain_value(kw_args_val);
-                callee->fn = fn;
+                frame_set_refs(callee, cl, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -2385,12 +2423,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 callee->ip = 0;
                 SET_REG(fn_reg, bm->self);
                 callee->base = caller->base + fn_reg;
-                callee->closure = NULL;
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = kw_args_val;
                 retain_value(kw_args_val);
-                callee->fn = fn;
+                frame_set_refs(callee, NULL, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -2534,7 +2571,6 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         mod_fn->chunk = malloc(sizeof(Chunk));
         *mod_fn->chunk = mod_chunk;
         mod_fn->chunk->source_path = filepath;
-        retain_obj((Object*)mod_fn);
 
         /* Push function onto stack and set up call frame */
         SET_REG(dst, make_obj((Object*)mod_fn));
@@ -2550,11 +2586,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         callee->chunk         = mod_fn->chunk;
         callee->ip            = 0;
         callee->base          = caller->base + dst + 1; /* registers start after the fn slot */
-        callee->closure       = NULL;
         callee->ret_reg       = dst;
         callee->nargs         = 0;
         callee->kw_args       = make_null();
-        callee->fn            = mod_fn;
+        frame_set_refs(callee, NULL, mod_fn);
         callee->saved_globals = saved_globals;
 
         int needed = callee->base + mod_fn->chunk->max_registers;
@@ -2573,8 +2608,17 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     }
 
     /* 67. OP_HALT */
-    op_halt:
+    op_halt: {
+        CallFrame *frame = &FRAME;
+        close_upvalues(vm, 0);
+        release_value(frame->kw_args);
+        frame->kw_args = make_null();
+        for (int i = 0; i < frame->chunk->max_registers; i++) SET_REG(i, make_null());
+        frame_release_refs(frame);
+        vm->stack_count = 0;
+        vm->frame_count = 0;
         return VM_OK;
+    }
 
     /* ============================================================ */
     

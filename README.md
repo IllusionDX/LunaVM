@@ -395,14 +395,17 @@ It can span multiple lines.
 var value = 42
 ```
 
-### Import (Placeholder)
+### Import / Modules
 
 ```luna
 import math
+print(math.sin(0))
+
+import helper
+print(helper.greet("World"))
 ```
 
-> `import` is parsed but not yet functional. Module resolution is planned for 0.3.x.
-> `from ... import` syntax is parsed but has no runtime support.
+Modules are loaded from the current file's directory or the working directory. Each module gets its own isolated global scope. The module cache prevents duplicate loads within a single VM lifetime.
 
 ### Error Handling
 
@@ -466,7 +469,7 @@ main()
 | **Scope** | Block scoped (`var` at module level = module scoped) |
 | **Pass by reference** | Use return-and-assign |
 | **Collections** | Lists (dynamic), Dicts |
-| **Module/import** | `import x` (parse-only placeholder). `from x import y` / `from x import *` parsed but not functional. |
+| **Module/import** | `import x` with module cache and global isolation. `from x import y` / `from x import *` parsed but not functional. |
 | **Error handling** | Exceptions |
 | **Semicolon insertion** | Auto-insert like Go |
 | **Loop control** | `break`, `continue` |
