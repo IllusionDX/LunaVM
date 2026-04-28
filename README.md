@@ -116,6 +116,9 @@ var key = "player_name"
 player_data[key] = "Hero"
 ```
 
+`[]` is strict and throws on missing keys.
+Use `?.[]` when you want safe lookup that returns `null`.
+
 ### Operators
 
 **Arithmetic:** `+`, `-`, `*`, `/`, `%` (modulo)
@@ -443,6 +446,19 @@ print(os.args())
 - `os.args()[0]` is the executable path
 - `os.args()[1]` is the script path
 - `os.args()[2+]` are the real script arguments
+
+#### `buffer`
+
+```luna
+import buffer
+
+var bytes = buffer.from_string("hello")
+print(bytes.read_long())
+```
+
+`buffer.new(capacity)` creates a mutable byte buffer.
+`buffer.from_string(text)` copies UTF-8 bytes from a string into a buffer.
+Buffers expose sequential readers such as `read_byte()`, `read_short()`, `read_int()`, and `read_long()`.
 
 ### Error Handling
 

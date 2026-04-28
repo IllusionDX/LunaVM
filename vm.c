@@ -1022,3 +1022,19 @@ void luna_throw(VM *vm, ObjClass *error_class, const char *format, ...) {
         abort();
     }
 }
+
+bool vm_call_native(VM *vm, NativeFn fn, Value *args, int arg_count, Value *out) {
+    LunaJump jump;
+    jump.prev = vm->native_jump;
+    vm->native_jump = &jump;
+
+    bool ok = true;
+    if (setjmp(jump.env) == 0) {
+        *out = fn(vm, args, arg_count);
+    } else {
+        ok = false;
+    }
+
+    vm->native_jump = jump.prev;
+    return ok;
+}

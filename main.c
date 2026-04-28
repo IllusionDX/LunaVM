@@ -124,6 +124,13 @@ static int execute_native_program(const char *source, const char *filepath, int 
         char *exc_str = value_to_string(vm.last_exception);
         fprintf(stderr, "%s\n", exc_str);
         free(exc_str);
+        chunk_free(&chunk);
+        vm_free(&vm);
+        free_program(program);
+        parser_free(parser);
+        token_list_free(tokens);
+        lexer_free(lexer);
+        return 1;
     }
 
     chunk_free(&chunk);
@@ -178,6 +185,12 @@ static int execute_repl_line(VM *vm, const char *source) {
         char *exc_str = value_to_string(vm->last_exception);
         fprintf(stderr, "%s\n", exc_str);
         free(exc_str);
+        chunk_free(&chunk);
+        free_program(program);
+        parser_free(parser);
+        token_list_free(tokens);
+        lexer_free(lexer);
+        return 1;
     }
 
     chunk_free(&chunk);

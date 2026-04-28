@@ -984,9 +984,23 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             compile_expr_into(c, expr->data.new_expr.arguments[i], target + 2 + i);
         }
         c->temp_base = saved_base;
-        int mk = chunk_add_string(c->chunk, "_init");
-        emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
-        emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
+        Value cls_val;
+        bool has_init = false;
+        if (vm_get_global(c->vm, expr->data.new_expr.class_name, &cls_val) && IS_CLASS(cls_val)) {
+            ObjClass *cls = (ObjClass*)AS_OBJ(cls_val);
+            for (int i = 0; i < cls->method_count; i++) {
+                if (cls->method_names[i] && strcmp(cls->method_names[i], "_init") == 0) {
+                    has_init = true;
+                    break;
+                }
+            }
+        }
+        /* `_init` is optional: only emit the call if the class defines it. */
+        if (has_init) {
+            int mk = chunk_add_string(c->chunk, "_init");
+            emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
+            emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
+        }
         break;
     }
 

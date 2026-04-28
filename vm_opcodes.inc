@@ -204,7 +204,8 @@
             if (fn->is_native) {
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = fn->native_fn(vm, scratch, nargs);
+                Value result;
+                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -243,7 +244,8 @@
             if (fn->is_native) {
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = fn->native_fn(vm, scratch, nargs);
+                Value result;
+                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -283,7 +285,8 @@
                 Value scratch[256];
                 scratch[0] = bm->self;
                 for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
-                Value result = fn->native_fn(vm, scratch, nargs + 1);
+                Value result;
+                if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -333,7 +336,8 @@
                     Value scratch[256];
                     scratch[0] = fn_val;
                     for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
-                    Value result = fn->native_fn(vm, scratch, nargs + 1);
+                    Value result;
+                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
                     SET_REG(ret_reg, result);
                     DECODE; goto *op_labels[OP(instr)];
                 } else {
@@ -1254,7 +1258,7 @@
                     if (IS_FUNCTION(fn_val)) {
                         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
                         if (fn->is_native) {
-                            result = fn->native_fn(vm, scratch, nargs);
+                            if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                         } else if (vm->frame_count < MAX_FRAMES) {
                             CallFrame *caller = &FRAME;
                             CallFrame *callee = &vm->frames[vm->frame_count];
@@ -1285,7 +1289,7 @@
                         ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
                         ObjFunction *fn = cl->function;
                         if (fn->is_native) {
-                            result = fn->native_fn(vm, scratch, nargs);
+                            if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                         } else if (vm->frame_count < MAX_FRAMES) {
                             CallFrame *caller = &FRAME;
                             CallFrame *callee = &vm->frames[vm->frame_count];
@@ -1341,7 +1345,7 @@
                                 Value native_scratch[256];
                                 native_scratch[0] = obj;
                                 for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
-                                result = m->native_fn(vm, native_scratch, nargs + 1);
+                                if (!vm_call_native(vm, m->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
                             } else {
                                 if (vm->frame_count < MAX_FRAMES) {
                                     CallFrame *caller = &FRAME;
@@ -1371,6 +1375,10 @@
                                     goto *op_labels[OP(instr)];
                                 }
                             }
+                            handled = true;
+                        } else if (strcmp(mname, "_init") == 0) {
+                            /* Constructors are optional: allow `new Class()` when no _init exists. */
+                            result = make_null();
                             handled = true;
                         }
                     }
@@ -1442,14 +1450,14 @@
             ObjClass *base = inst->klass->base;
             for (int i = 0; i < base->method_count; i++) {
                 ObjFunction *m = base->methods[i];
-                if (m && strcmp(base->method_names[i], mname) == 0) {
-                    SET_REG(self_reg + 1, self);
-                    if (m->is_native) {
-                        Value scratch[256];
-                        for (int j = 0; j < nargs; j++)
-                            scratch[j] = REG(ret_reg + 2 + j);
-                        result = m->native_fn(vm, scratch, nargs);
-                    } else {
+                    if (m && strcmp(base->method_names[i], mname) == 0) {
+                        SET_REG(self_reg + 1, self);
+                        if (m->is_native) {
+                            Value scratch[256];
+                            for (int j = 0; j < nargs; j++)
+                                scratch[j] = REG(ret_reg + 2 + j);
+                            if (!vm_call_native(vm, m->native_fn, scratch, nargs, &result)) goto op_throw;
+                        } else {
                         if (vm->frame_count < MAX_FRAMES) {
                             CallFrame *caller = &FRAME;
                             CallFrame *callee = &vm->frames[vm->frame_count];
@@ -1498,7 +1506,11 @@
     /* 54. OP_THROW */
     op_throw: {
         if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
-            _exc = REG(RA);
+            if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception)) {
+                _exc = vm->last_exception;
+            } else {
+                _exc = REG(RA);
+            }
         }
         vm->last_exception = _exc;
         /* unwind to the nearest catch */
@@ -1620,7 +1632,8 @@
             if (fn->is_native) {
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = fn->native_fn(vm, scratch, nargs);
+                Value result;
+                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -1660,7 +1673,8 @@
             if (fn->is_native) {
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = fn->native_fn(vm, scratch, nargs);
+                Value result;
+                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -1701,7 +1715,8 @@
                 Value scratch[256];
                 scratch[0] = bm->self;
                 for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
-                Value result = fn->native_fn(vm, scratch, nargs + 1);
+                Value result;
+                if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {

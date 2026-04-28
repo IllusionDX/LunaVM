@@ -377,8 +377,7 @@ bool vm_invoke_dict(VM *vm, ObjDict *dict, const char *method,
     Value scratch[256];
     scratch[0] = make_obj((Object*)dict);
     for (int i = 0; i < nargs; i++) scratch[i + 1] = args[i];
-    *result = fn->native_fn(vm, scratch, nargs + 1);
-    return true;
+    return vm_call_native(vm, fn->native_fn, scratch, nargs + 1, result);
 }
 
 bool vm_invoke_enum(VM *vm, ObjEnum *enm, const char *method,

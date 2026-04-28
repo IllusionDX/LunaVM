@@ -333,7 +333,10 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.3.6-alpha` | Done | `rng.shuffle(list)` instance method: Fisher-Yates in-place shuffle using seeded RNG. Fixed SOO list mode handling during shuffle (inline_items vs items). Reproducible shuffle across isolated generator instances. |
 | `0.3.7-alpha` | Done | VM refactor: split `vm.c` monolith into `vm.c` (core VM, 986 lines) + `vm_opcodes.inc` (opcode handlers, 1843 lines). Computed goto preserved via `#include` inside `vm_execute_loop`. `Makefile` updated with `vm_opcodes.inc` header dependency. No behavioral changes. |
 | `0.3.8-alpha` | Done | `noise` stdlib: Perlin, Simplex, Voronoi noise (2D/3D) with callable instances (`n(x, y)` / `n(x, y, z)`). `io` stdlib: file I/O with `OBJ_USERDATA` finalizers (`io.File`, `io.open`, `io.read_file`, `io.write_file`, `io.append_file`, `io.exists`, `io.remove`). String escape sequences in lexer (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`). |
-| `0.3.9-alpha` | **Current** | `os` stdlib: full system module — directory operations (`getcwd`, `chdir`, `listdir`, `mkdir`), file operations (`rename`, `remove`, `stat`), system info (`execute`, `getpid`, `hostname`, `username`, `tmpdir`, `args`, `exit`, `platform`), environment access (`getenv`, `setenv`), path utilities (`path_join` with `/` normalization, `sep`, `pathsep`). `random.int()` now accepts 0 args (returns raw int32). |
+| `0.3.9-alpha` | Done | `os` stdlib: full system module — directory operations (`getcwd`, `chdir`, `listdir`, `mkdir`), file operations (`rename`, `remove`, `stat`), system info (`execute`, `getpid`, `hostname`, `username`, `tmpdir`, `args`, `exit`, `platform`), environment access (`getenv`, `setenv`), path utilities (`path_join` with `/` normalization, `sep`, `pathsep`). `random.int()` now accepts 0 args (returns raw int32). |
+
+| `0.3.10-alpha` | Done | `time` stdlib (`now`, `ticks_usec`, `ticks_msec`, `sleep`) and `os` argument mapping contract (`argv[0]` executable, `argv[1]` script, `argv[2+]` user args). `ObjBuffer` infrastructure for binary parsing with `read_byte`, `read_short`, `read_int`, `read_long` promoting to `OBJ_INT64`. `buffer` stdlib with `new()` / `from_string()`. `string` helpers: `from_byte()`, `byte_at()`, `to_buffer()`. Native exception propagation now unwinds through `try/except` correctly. Strict dict access clarified: `[]` throws on missing keys, `?.[]` returns `null`. Uncaught VM exceptions now return non-zero exit codes from the CLI, and negative tests use `.should_fail.luna`.
+| `0.3.11-alpha` | **Current** | Documentation pass and test harness alignment: README updated for strict/safe dict access and `buffer` module usage. Regression suite now treats uncaught exception / missing import cases as expected failures. Version bumped after the `OBJ_INT64`, `ObjBuffer`, `time`, `os`, and exception-handling updates.
 
 ## Roadmap
 
@@ -656,3 +659,4 @@ Target: `0.3.x` after modules/imports land, since it touches the same compiler p
 
 - Sandboxed VM for user scripts
 - No raw memory access
+

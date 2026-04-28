@@ -20,6 +20,14 @@
 #include <stdint.h>
 #include <string.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define LUNA_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define LUNA_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define LUNA_LIKELY(x)   (x)
+#define LUNA_UNLIKELY(x) (x)
+#endif
+
 /* Forward declarations */
 typedef struct Object   Object;
 typedef struct ObjInt64 ObjInt64;
@@ -46,7 +54,21 @@ typedef uint64_t Value;
 #define TAG_INT      4  /* 0x100 */
 #define TAG_EMPTY    5  /* 0x101 (internal tombstone) */
 
-#define IS_DOUBLE(v) (((v) & 0x7ff8000000000000ULL) != 0x7ff8000000000000ULL)
+#define IS_DOUBLE(v) LUNA_LIKELY( \
+    (((v) & 0x7FF0000000000000ULL) != 0x7FF0000000000000ULL) || \
+    ((v) == 0x7FF800000000000AULL) || \
+    (((v) & 0x000FFFFFFFFFFFFFULL) == 0) \
+)
+/*
+ * IS_OBJ must stay signature-based, not just "!IS_DOUBLE".
+ *
+ * Reason:
+ * - NIL / TRUE / FALSE / INT / EMPTY are immediate sub-tags that live inside the
+ *   NaN-box payload and are not heap objects.
+ * - +Inf and -Inf are valid IEEE doubles and must remain doubles, not objects.
+ * - Using "!IS_DOUBLE" would incorrectly classify these immediates and special
+ *   numeric values as heap pointers, which breaks the VM and the GC.
+ */
 #define IS_OBJ(v)    (((v) & (QNAN_TAG | 7)) == QNAN_TAG)
 #define IS_NIL(v)    ((v) == (QNAN_TAG | TAG_NIL))
 #define IS_TRUE(v)   ((v) == (QNAN_TAG | TAG_TRUE))
@@ -69,7 +91,7 @@ typedef uint64_t Value;
 #define AS_INT(v)    ((int32_t)((v) >> 3))
 
 #define OBJ_SIGNATURE_MASK 0xFFFF800000000007ULL
-#define TYPE_SIGNATURE(t) (QNAN_TAG | (((uint64_t)(t) & 15) << 47))
+#define TYPE_SIGNATURE(t) (QNAN_TAG | (((uint64_t)(t) & 15) << 47) | ((((uint64_t)(t) >> 4) & 1ULL) << 63))
 
 static inline Value make_double(double d) {
     Value v;
@@ -167,8 +189,9 @@ typedef struct Object {
  *   4-bit (current) — bits 47-50       → 16 types.  Bit 47 reclaimed from QNAN_TAG
  *                     by changing it from 0x7FFC to 0x7FF8 (dropping bit 50 from
  *                     the signature).  `t & 15` encoded in contiguous bits 47-50.
- *   5-bit (future)  — bits 47-50 + 63  → 32 types.  Bit 63 becomes available as a
- *                     5th tag bit after NaN normalization (make_double sets bit 63=0).
+ *   5-bit (enabled) — bits 47-50 + 63  → 32 types.  Bit 63 is reserved as the high
+ *                     tag bit for type ids 16-31.  NaN normalization keeps bit 63=0
+ *                     for all non-object doubles.
  *
  * bit 63 must be 0 for all tagged values and normalized NaNs for 5-bit expansion.
  */
@@ -176,7 +199,7 @@ typedef struct Object {
 static inline Value make_obj(void *ptr) {
     Object *obj = (Object*)ptr;
     uint64_t t = (uint64_t)obj->type;
-    uint64_t type_tag = (t & 15) << 47;
+    uint64_t type_tag = ((t & 15) << 47) | ((t & 16) ? (1ULL << 63) : 0ULL);
     return QNAN_TAG | type_tag | (uint64_t)(uintptr_t)obj;
 }
 #define OBJ_VAL(obj) make_obj(obj)

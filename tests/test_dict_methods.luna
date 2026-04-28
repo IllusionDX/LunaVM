@@ -31,5 +31,5 @@ var rm = d3.remove
 print(rm("a"))
 print(d3)
 
-# 8. Non-existent field returns null (data lookup)
-print(d["not_a_key"])
+# 8. Non-existent key returns null only through safe access
+print(d?.["not_a_key"])
