@@ -33,6 +33,7 @@
 #include "stdlib_buffer.h"
 #include "stdlib_string.h"
 #include "stdlib_net.h"
+#include "stdlib_json.h"
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -560,6 +561,7 @@ void vm_init(VM *vm) {
     vm_register_buffer_module(vm);
     vm_register_string_module(vm);
     vm_register_net_module(vm);
+    vm_register_json_module(vm);
 }
 
 void vm_set_process_args(VM *vm, int argc, char **argv) {

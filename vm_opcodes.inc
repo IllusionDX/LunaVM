@@ -667,8 +667,8 @@
                 break;
             }
             case OBJ_DICT: {
-                Value val = dict_get((ObjDict*)AS_OBJ(obj), key);
-                if (IS_NIL(val)) {
+                ObjDict *d = (ObjDict*)AS_OBJ(obj);
+                if (!dict_has(d, key)) {
                     char *ks = value_to_string(key);
                     char buf[256];
                     snprintf(buf, sizeof(buf), "KeyError: %s not found in dict", ks);
@@ -677,7 +677,7 @@
                     _exc = make_exception_instance(vm, vm->key_error_class, buf);
                     goto op_throw;
                 }
-                SET_REG(RA, val);
+                SET_REG(RA, dict_get(d, key));
                 break;
             }
             case OBJ_STRING: {
