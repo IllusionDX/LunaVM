@@ -520,6 +520,7 @@ void vm_init(VM *vm) {
     vm->attribute_error_class = vm_register_builtin_exception(vm, "AttributeError", vm->exception_class);
     vm->value_error_class    = vm_register_builtin_exception(vm, "ValueError", vm->exception_class);
     vm->runtime_error_class  = vm_register_builtin_exception(vm, "RuntimeError", vm->exception_class);
+    vm->argument_error_class = vm_register_builtin_exception(vm, "ArgumentError", vm->exception_class);
 
     vm->module_cache = new_dict();
     retain_obj((Object*)vm->module_cache);
@@ -745,7 +746,16 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     uint8_t  A, B, C;
     uint16_t Bx;
     int      sBx;
-    Value    _exc = make_null();
+    volatile Value _exc = make_null();
+
+    /* Native exception jump shield */
+    LunaJump jump;
+    jump.prev = vm->native_jump;
+    vm->native_jump = &jump;
+    if (setjmp(jump.env) != 0) {
+        _exc = vm->last_exception;
+        goto op_throw;
+    }
 
 #define DECODE \
     do { \
@@ -2236,6 +2246,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             vm->try_stack = tf->next;
             free(tf);
         }
+        vm->native_jump = jump.prev;
         return VM_EXCEPTION;
     }
 
@@ -2617,6 +2628,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         frame_release_refs(frame);
         vm->stack_count = 0;
         vm->frame_count = 0;
+        vm->native_jump = jump.prev;
         return VM_OK;
     }
 
@@ -2721,4 +2733,24 @@ int vm_throw(VM *vm, Value exception) {
     fprintf(stderr, "Uncaught exception: %s\n", s);
     free(s);
     return 1;
+}
+
+/* Native exception throw — callable from C builtin functions.
+ * Uses longjmp to safely return to the VM bytecode loop,
+ * which then reuses the existing op_throw unwinding logic. */
+void luna_throw(VM *vm, ObjClass *error_class, const char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    char buf[256];
+    vsnprintf(buf, sizeof(buf), format, ap);
+    va_end(ap);
+
+    vm->last_exception = make_exception_instance(vm, error_class, buf);
+
+    if (vm->native_jump) {
+        longjmp(vm->native_jump->env, 1);
+    } else {
+        fprintf(stderr, "Fatal uncaught exception (no active VM frame): %s\n", buf);
+        abort();
+    }
 }

@@ -1,0 +1,18 @@
+import math
+
+try:
+    math.sqrt(-1)
+except ValueError as e:
+    print("caught ValueError")
+
+try:
+    math.sqrt("hello")
+except TypeError as e:
+    print("caught TypeError")
+
+try:
+    math.sqrt()
+except ArgumentError as e:
+    print("caught ArgumentError")
+
+print("clamp swap:", math.clamp(5, 10, 0))

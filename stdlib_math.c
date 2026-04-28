@@ -11,49 +11,153 @@
 #include "value.h"
 
 /* ============================================================ */
-/* Helper macros                                               */
+/* Validation helpers                                           */
 /* ============================================================ */
 
-#define MATH_UNARY(name, cfn)                                   \
-    static Value math_##name(VM *vm, Value *args, int n) {      \
-        (void)vm;                                               \
-        if (!n) return make_double(0.0);                       \
-        double v = value_to_double(args[0]);                    \
-        return make_double(cfn(v));                             \
-    }
+static inline bool is_num(Value v) { return IS_NUMBER(v); }
 
-#define MATH_BINARY(name, cfn)                                  \
-    static Value math_##name(VM *vm, Value *args, int n) {      \
-        (void)vm;                                               \
-        if (n < 2) return make_double(0.0);                     \
-        double a = value_to_double(args[0]);                    \
-        double b = value_to_double(args[1]);                    \
-        return make_double(cfn(a, b));                          \
+static inline void check_arity(VM *vm, int n, int expected, const char *name) {
+    if (n != expected) {
+        luna_throw(vm, vm->argument_error_class,
+            "%s() expects exactly %d argument(s), got %d", name, expected, n);
     }
+}
+
+static inline void check_arity_min(VM *vm, int n, int min, const char *name) {
+    if (n < min) {
+        luna_throw(vm, vm->argument_error_class,
+            "%s() expects at least %d argument(s), got %d", name, min, n);
+    }
+}
+
+static inline double to_double_checked(VM *vm, Value v, const char *fn, int arg_idx) {
+    if (!is_num(v)) {
+        luna_throw(vm, vm->type_error_class,
+            "%s() argument %d must be a number", fn, arg_idx);
+    }
+    return value_to_double(v);
+}
 
 /* ============================================================ */
 /* C99 wrappers                                                */
 /* ============================================================ */
 
-MATH_UNARY(sin,   sin)
-MATH_UNARY(cos,   cos)
-MATH_UNARY(tan,   tan)
-MATH_UNARY(acos,  acos)
-MATH_UNARY(asin,  asin)
-MATH_UNARY(sqrt,  sqrt)
-MATH_UNARY(log,   log)
-MATH_UNARY(exp,   exp)
-MATH_UNARY(floor, floor)
-MATH_UNARY(ceil,  ceil)
-MATH_UNARY(round, round)   /* C99 round() */
+static Value math_sin(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "sin");
+    double v = to_double_checked(vm, args[0], "sin", 1);
+    return make_double(sin(v));
+}
 
-MATH_BINARY(pow, pow)
-MATH_BINARY(atan2, atan2)
-MATH_BINARY(fmod, fmod)
+static Value math_cos(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "cos");
+    double v = to_double_checked(vm, args[0], "cos", 1);
+    return make_double(cos(v));
+}
+
+static Value math_tan(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "tan");
+    double v = to_double_checked(vm, args[0], "tan", 1);
+    return make_double(tan(v));
+}
+
+static Value math_acos(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "acos");
+    double v = to_double_checked(vm, args[0], "acos", 1);
+    if (v < -1.0 || v > 1.0) {
+        luna_throw(vm, vm->value_error_class,
+            "Math domain error: acos() argument must be in range [-1, 1]");
+    }
+    return make_double(acos(v));
+}
+
+static Value math_asin(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "asin");
+    double v = to_double_checked(vm, args[0], "asin", 1);
+    if (v < -1.0 || v > 1.0) {
+        luna_throw(vm, vm->value_error_class,
+            "Math domain error: asin() argument must be in range [-1, 1]");
+    }
+    return make_double(asin(v));
+}
+
+static Value math_sqrt(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "sqrt");
+    double v = to_double_checked(vm, args[0], "sqrt", 1);
+    if (v < 0.0) {
+        luna_throw(vm, vm->value_error_class,
+            "Math domain error: sqrt() of a negative number");
+    }
+    return make_double(sqrt(v));
+}
+
+static Value math_log(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "log");
+    double v = to_double_checked(vm, args[0], "log", 1);
+    if (v <= 0.0) {
+        luna_throw(vm, vm->value_error_class,
+            "Math domain error: log() argument must be positive");
+    }
+    return make_double(log(v));
+}
+
+static Value math_exp(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "exp");
+    double v = to_double_checked(vm, args[0], "exp", 1);
+    return make_double(exp(v));
+}
+
+static Value math_floor(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "floor");
+    double v = to_double_checked(vm, args[0], "floor", 1);
+    return make_double(floor(v));
+}
+
+static Value math_ceil(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "ceil");
+    double v = to_double_checked(vm, args[0], "ceil", 1);
+    return make_double(ceil(v));
+}
+
+static Value math_round(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "round");
+    double v = to_double_checked(vm, args[0], "round", 1);
+    return make_double(round(v));
+}
+
+static Value math_pow(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 2, "pow");
+    double base = to_double_checked(vm, args[0], "pow", 1);
+    double expv = to_double_checked(vm, args[1], "pow", 2);
+    if (base < 0.0 && expv != floor(expv)) {
+        luna_throw(vm, vm->value_error_class,
+            "Math domain error: pow() with negative base and non-integer exponent");
+    }
+    return make_double(pow(base, expv));
+}
+
+static Value math_atan2(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 2, "atan2");
+    double y = to_double_checked(vm, args[0], "atan2", 1);
+    double x = to_double_checked(vm, args[1], "atan2", 2);
+    return make_double(atan2(y, x));
+}
+
+static Value math_fmod(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 2, "mod");
+    double a = to_double_checked(vm, args[0], "mod", 1);
+    double b = to_double_checked(vm, args[1], "mod", 2);
+    if (b == 0.0) {
+        luna_throw(vm, vm->value_error_class,
+            "Math domain error: mod() by zero");
+    }
+    return make_double(fmod(a, b));
+}
 
 static Value math_abs(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (!n) return make_double(0.0);
+    check_arity(vm, n, 1, "abs");
+    if (!is_num(args[0])) {
+        luna_throw(vm, vm->type_error_class, "abs() requires a numeric argument");
+    }
     if (IS_INT(args[0])) {
         int v = AS_INT(args[0]);
         return make_int(v < 0 ? -v : v);
@@ -67,71 +171,91 @@ static Value math_abs(VM *vm, Value *args, int n) {
 /* ============================================================ */
 
 static Value math_clamp(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (n < 3) return make_double(0.0);
-    double v = value_to_double(args[0]);
-    double mn = value_to_double(args[1]);
-    double mx = value_to_double(args[2]);
+    check_arity(vm, n, 3, "clamp");
+    double v = to_double_checked(vm, args[0], "clamp", 1);
+    double mn = to_double_checked(vm, args[1], "clamp", 2);
+    double mx = to_double_checked(vm, args[2], "clamp", 3);
+    if (mn > mx) {
+        double t = mn; mn = mx; mx = t;
+    }
     if (v < mn) v = mn;
     if (v > mx) v = mx;
     return make_double(v);
 }
 
 static Value math_lerp(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (n < 3) return make_double(0.0);
-    double a = value_to_double(args[0]);
-    double b = value_to_double(args[1]);
-    double t = value_to_double(args[2]);
+    check_arity(vm, n, 3, "lerp");
+    double a = to_double_checked(vm, args[0], "lerp", 1);
+    double b = to_double_checked(vm, args[1], "lerp", 2);
+    double t = to_double_checked(vm, args[2], "lerp", 3);
     return make_double(a + (b - a) * t);
 }
 
 static Value math_sign(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (!n) return make_int(0);
-    double v = value_to_double(args[0]);
+    check_arity(vm, n, 1, "sign");
+    double v = to_double_checked(vm, args[0], "sign", 1);
     if (v > 0.0) return make_int(1);
     if (v < 0.0) return make_int(-1);
     return make_int(0);
 }
 
 static Value math_deg_to_rad(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (!n) return make_double(0.0);
-    double d = value_to_double(args[0]);
+    check_arity(vm, n, 1, "deg_to_rad");
+    double d = to_double_checked(vm, args[0], "deg_to_rad", 1);
     return make_double(d * (3.14159265358979323846 / 180.0));
 }
 
 static Value math_rad_to_deg(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (!n) return make_double(0.0);
-    double r = value_to_double(args[0]);
+    check_arity(vm, n, 1, "rad_to_deg");
+    double r = to_double_checked(vm, args[0], "rad_to_deg", 1);
     return make_double(r * (180.0 / 3.14159265358979323846));
 }
 
 /* ============================================================ */
-/* Random (simple)                                             */
+/* Random (Lua-style overloads)                                */
 /* ============================================================ */
 
 static Value math_random(VM *vm, Value *args, int n) {
-    (void)vm;
     if (n == 0) {
         return make_double((double)rand() / (double)RAND_MAX);
     }
     if (n == 1) {
+        if (!is_num(args[0])) {
+            luna_throw(vm, vm->type_error_class,
+                "random() argument must be a number");
+        }
         int mx = IS_INT(args[0]) ? AS_INT(args[0]) : (int)AS_DOUBLE(args[0]);
-        if (mx < 1) return make_int(0);
+        if (mx < 1) {
+            luna_throw(vm, vm->value_error_class,
+                "random() argument must be >= 1");
+        }
         return make_int(1 + rand() % mx);
     }
-    int mn = IS_INT(args[0]) ? AS_INT(args[0]) : (int)AS_DOUBLE(args[0]);
-    int mx = IS_INT(args[1]) ? AS_INT(args[1]) : (int)AS_DOUBLE(args[1]);
-    if (mn > mx) { int t = mn; mn = mx; mx = t; }
-    return make_int(mn + rand() % (mx - mn + 1));
+    if (n == 2) {
+        if (!is_num(args[0]) || !is_num(args[1])) {
+            luna_throw(vm, vm->type_error_class,
+                "random() arguments must be numbers");
+        }
+        int mn = IS_INT(args[0]) ? AS_INT(args[0]) : (int)AS_DOUBLE(args[0]);
+        int mx = IS_INT(args[1]) ? AS_INT(args[1]) : (int)AS_DOUBLE(args[1]);
+        if (mn > mx) { int t = mn; mn = mx; mx = t; }
+        return make_int(mn + rand() % (mx - mn + 1));
+    }
+    luna_throw(vm, vm->argument_error_class,
+        "random() expects 0 to 2 arguments, got %d", n);
+    return make_null(); /* unreachable */
 }
 
 static Value math_randomseed(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (n > 0) {
+    if (n > 1) {
+        luna_throw(vm, vm->argument_error_class,
+            "randomseed() expects 0 or 1 arguments, got %d", n);
+    }
+    if (n == 1) {
+        if (!is_num(args[0])) {
+            luna_throw(vm, vm->type_error_class,
+                "randomseed() argument must be a number");
+        }
         srand((unsigned int)value_to_double(args[0]));
     } else {
         srand((unsigned int)time(NULL));

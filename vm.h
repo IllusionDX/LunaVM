@@ -11,6 +11,8 @@
 #define LUNA_VM_H
 
 #include <stdbool.h>
+#include <setjmp.h>
+#include <stdarg.h>
 #include "chunk.h"
 #include "value.h"
 
@@ -18,6 +20,12 @@
 #define VM_MAX_FRAMES    256
 #define VM_MAX_REGISTERS 256
 #define MAX_FRAMES       VM_MAX_FRAMES
+
+/* ---- Native exception jump stack ---- */
+typedef struct LunaJump {
+    jmp_buf env;
+    struct LunaJump *prev;
+} LunaJump;
 
 /* ---- Call Frame ---- */
 typedef struct {
@@ -106,6 +114,10 @@ typedef struct VM {
     struct ObjClass *attribute_error_class;
     struct ObjClass *value_error_class;
     struct ObjClass *runtime_error_class;
+    struct ObjClass *argument_error_class;
+
+    /* Native exception jump stack (for longjmp from C builtins) */
+    LunaJump *native_jump;
 } VM;
 
 /* ---- Result codes ---- */
@@ -125,6 +137,9 @@ bool     vm_get_global_fast(VM *vm, ObjString *name, Value *out);
 GlobalEntry *vm_resolve_global(VM *vm, const char *name);
 
 VMResult vm_run_chunk(VM *vm, Chunk *chunk);
+
+/* Native exception throw — usable from C builtin functions */
+void luna_throw(VM *vm, struct ObjClass *error_class, const char *format, ...);
 
 /* Upvalue capture — declared here because vm.c defines it after vm_run_chunk */
 ObjUpvalue *capture_upvalue(VM *vm, int stack_idx);
