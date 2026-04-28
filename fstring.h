@@ -8,5 +8,6 @@
 #include "ast.h"
 
 Expr *desugar_fstring(const char *template);
+Expr *desugar_fstring_len(const char *template, int length);
 
 #endif /* LUNA_FSTRING_H */

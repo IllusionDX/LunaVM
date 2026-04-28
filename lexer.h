@@ -105,6 +105,7 @@ typedef enum {
 typedef struct Token {
     TokenType type;
     char *value;
+    int length;
     int line;
     int column;
     struct Token *next;

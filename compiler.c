@@ -218,6 +218,11 @@ static void emit_loadstring(Compiler *c, uint8_t dst, const char *s) {
     emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
 }
 
+static void emit_loadstring_len(Compiler *c, uint8_t dst, const char *s, int length) {
+    int k = chunk_add_string_len(c->chunk, s, length);
+    emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
+}
+
 static void emit_ret(Compiler *c, uint8_t reg) {
     emit_ABC(c, OP_RET, reg, 0, 0);
 }
@@ -351,7 +356,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_STRING: {
-        emit_loadstring(c, (uint8_t)target, expr->data.string.value);
+        emit_loadstring_len(c, (uint8_t)target, expr->data.string.value, expr->data.string.length);
         break;
     }
 

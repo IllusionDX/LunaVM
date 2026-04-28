@@ -22,6 +22,7 @@ static Expr *append_fstring_part(Expr *current, Expr *part) {
         if (part->kind != EXPR_STRING) {
             Expr *empty = make_expr(EXPR_STRING);
             empty->data.string.value = strdup("");
+            empty->data.string.length = 0;
             Expr *bin = make_expr(EXPR_BINARY);
             bin->data.binary.left = empty;
             bin->data.binary.operator = strdup("+");
@@ -65,8 +66,7 @@ static Expr *parse_sub_expression(const char *source) {
 
 /* ============== F-string desugaring ============== */
 
-Expr *desugar_fstring(const char *template) {
-    int len = (int)strlen(template);
+Expr *desugar_fstring_len(const char *template, int len) {
     int i = 0;
     Expr *result = NULL;
 
@@ -85,6 +85,7 @@ Expr *desugar_fstring(const char *template) {
             text->data.string.value = malloc(text_len + 1);
             memcpy(text->data.string.value, template + i, text_len);
             text->data.string.value[text_len] = '\0';
+            text->data.string.length = text_len;
             result = append_fstring_part(result, text);
         }
 
@@ -108,6 +109,7 @@ Expr *desugar_fstring(const char *template) {
             Expr *text = make_expr(EXPR_STRING);
             text->data.string.value = malloc(rest_len + 1);
             memcpy(text->data.string.value, template + brace_start, rest_len + 1);
+            text->data.string.length = rest_len;
             result = append_fstring_part(result, text);
             break;
         }
@@ -140,7 +142,12 @@ Expr *desugar_fstring(const char *template) {
     if (!result) {
         result = make_expr(EXPR_STRING);
         result->data.string.value = strdup("");
+        result->data.string.length = 0;
     }
 
     return result;
+}
+
+Expr *desugar_fstring(const char *template) {
+    return desugar_fstring_len(template, (int)strlen(template));
 }

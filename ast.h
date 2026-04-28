@@ -60,6 +60,7 @@ typedef struct Expr {
         } float_lit;
         struct {
             char *value;
+            int length;
         } string;
         struct {
             char value;

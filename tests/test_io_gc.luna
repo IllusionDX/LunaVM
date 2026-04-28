@@ -1,0 +1,64 @@
+import io
+
+var path = "tests/_io_gc_test.txt"
+
+# Test 1: Open, write, don't close, verify data is written
+var f = io.File(path, "w")
+f.write("gc test data")
+# f not closed explicitly - finalizer should close it on GC
+
+# Create some garbage to encourage GC
+var i = 0
+while i < 1000:
+    var _ = [i, i + 1, i + 2]
+    i = i + 1
+
+# After GC potentially ran, file should be closed and flushed
+# Read it back to verify data is there
+var content = io.read_file(path)
+print(content == "gc test data")
+
+# Test 2: Verify file can be removed (means handle is closed)
+print(io.remove(path))
+print(io.exists(path) == false)
+
+# Test 3: Multiple files opened and abandoned
+var p1 = "tests/_io_gc_1.txt"
+var p2 = "tests/_io_gc_2.txt"
+
+var f1 = io.File(p1, "w")
+f1.write("file1")
+
+var f2 = io.File(p2, "w")
+f2.write("file2")
+
+# Neither closed explicitly
+
+# Create garbage to potentially trigger GC
+var j = 0
+while j < 500:
+    var _ = {"key": j}
+    j = j + 1
+
+# Both should be readable
+var c1 = io.read_file(p1)
+var c2 = io.read_file(p2)
+print(c1 == "file1")
+print(c2 == "file2")
+
+io.remove(p1)
+io.remove(p2)
+
+# Test 4: Verify closed files can't be read/written
+var f3 = io.File(path, "w")
+f3.write("before close")
+f3.close()
+
+# Try to write after close - should error
+try:
+    f3.write("after close")
+    print(false) # Should not reach here
+except:
+    print(true) # Expected error
+
+io.remove(path)

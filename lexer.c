@@ -57,6 +57,7 @@ static Token *make_token(Lexer *lexer, TokenType type, const char *start, int le
     }
     strncpy(token->value, start, length);
     token->value[length] = '\0';
+    token->length = length;
     token->line = lexer->line;
     token->column = lexer->column - length;
     token->next = NULL;
@@ -261,9 +262,9 @@ static Token *scan_string(Lexer *lexer) {
     
     advance(lexer);
     
+    TokenType type = (quote == '"') ? TOK_STRING_LITERAL : TOK_CHAR_LITERAL;
     int raw_length = (int)(lexer->current - start - 2);
     int length = 0;
-    TokenType type = (quote == '"') ? TOK_STRING_LITERAL : TOK_CHAR_LITERAL;
     char *value = unescape_string_literal(start + 1, raw_length, &length);
     Token *tok = (Token *)malloc(sizeof(Token));
     if (!tok) {
@@ -272,6 +273,7 @@ static Token *scan_string(Lexer *lexer) {
     }
     tok->type = type;
     tok->value = value;
+    tok->length = length;
     tok->line = lexer->line;
     tok->column = lexer->column - (int)(lexer->current - start);
     tok->next = NULL;

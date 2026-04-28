@@ -114,15 +114,19 @@ int chunk_add_const(Chunk *chunk, Value value) {
 }
 
 int chunk_add_string(Chunk *chunk, const char *cstr) {
+    return chunk_add_string_len(chunk, cstr, (int)strlen(cstr));
+}
+
+int chunk_add_string_len(Chunk *chunk, const char *chars, int length) {
     /* De-duplicate: return existing index if already interned */
     for (int i = 0; i < chunk->const_count; i++) {
         Value v = chunk->constants[i];
         if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING) {
             ObjString *s = (ObjString *)AS_OBJ(v);
-            if (strcmp(s->chars, cstr) == 0) return i;
+            if (s->length == length && memcmp(s->chars, chars, (size_t)length) == 0) return i;
         }
     }
-    ObjString *obj = new_string(cstr, (int)strlen(cstr));
+    ObjString *obj = new_string(chars, length);
     int idx = chunk_add_const(chunk, make_obj((Object *)obj));
     return idx;
 }

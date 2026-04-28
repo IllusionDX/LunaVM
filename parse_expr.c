@@ -158,12 +158,19 @@ static Expr *parse_primary(Parser *parser) {
     case TOK_STRING_LITERAL: {
         advance(parser);
         Expr *expr = make_expr(EXPR_STRING);
-        expr->data.string.value = strdup(tok->value);
+        expr->data.string.length = tok->length;
+        expr->data.string.value = (char *)malloc((size_t)tok->length + 1);
+        if (!expr->data.string.value) {
+            fprintf(stderr, "Out of memory\n");
+            exit(1);
+        }
+        memcpy(expr->data.string.value, tok->value, (size_t)tok->length);
+        expr->data.string.value[tok->length] = '\0';
         return expr;
     }
     case TOK_FSTRING_LITERAL: {
         advance(parser);
-        Expr *expr = desugar_fstring(tok->value);
+        Expr *expr = desugar_fstring_len(tok->value, tok->length);
         if (!expr) {
             parser->had_error = 1;
             return make_expr(EXPR_NULL);

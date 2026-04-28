@@ -1,0 +1,38 @@
+# Test string escape sequences in lexer
+
+var s = "hello\nworld"
+print(s.length == 11)
+
+var s2 = "tab\there"
+print(s2.length == 8)
+
+var s3 = "backslash\\test"
+print(s3.length == 14)
+
+var s4 = "quote\"inside"
+print(s4.length == 12)
+
+var s5 = "carriage\rreturn"
+print(s5.length == 15)
+
+var s6 = "null\0char"
+print(s6.length == 9)
+
+# Multi-character string with multiple escapes
+var multi = "a\tb\nc\rd\\e\"f\0g"
+print(multi.length == 13)
+
+# Empty string
+var empty = ""
+print(empty.length == 0)
+
+# No escapes
+var plain = "plaintext"
+print(plain.length == 9)
+
+# Single char escapes
+var newline = "\n"
+print(newline.length == 1)
+
+var tab = "\t"
+print(tab.length == 1)
