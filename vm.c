@@ -23,6 +23,7 @@ void vm_register_builtins(VM *vm);
 bool vm_invoke_list(VM *vm, ObjList  *list, const char *method, Value *args, int nargs, Value *result);
 bool vm_invoke_dict(VM *vm, ObjDict  *dict, const char *method, Value *args, int nargs, Value *result);
 bool vm_invoke_enum(VM *vm, ObjEnum  *enm, const char *method, Value *args, int nargs, Value *result);
+ObjFunction *vm_dict_method_lookup(const char *name, int len);
 
 /* ============================================================ */
 /* Arithmetic helpers (inlined for dispatch loop)               */
@@ -982,8 +983,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             ObjFunction *fn = bm->fn;
             if (fn->is_native) {
                 Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = fn->native_fn(vm, scratch, nargs);
+                scratch[0] = bm->self;
+                for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
+                Value result = fn->native_fn(vm, scratch, nargs + 1);
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -1439,7 +1441,16 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 break;
             }
             case OBJ_LIST:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(list_length((ObjList*)AS_OBJ(obj))) : make_null()); break;
-            case OBJ_DICT:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(dict_length((ObjDict*)AS_OBJ(obj))) : make_null()); break;
+            case OBJ_DICT: {
+                ObjFunction *mfn = vm_dict_method_lookup(field->chars, field->length);
+                if (mfn) {
+                    ObjBoundMethod *bm = new_bound_method(obj, mfn);
+                    SET_REG(RA, make_obj((Object*)bm));
+                } else {
+                    SET_REG(RA, dict_get((ObjDict*)AS_OBJ(obj), make_obj((Object*)field)));
+                }
+                break;
+            }
             case OBJ_STRING:   SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(((ObjString*)AS_OBJ(obj))->length) : make_null()); break;
             case OBJ_ENUM: {
                 ObjEnum *e = (ObjEnum*)AS_OBJ(obj);
@@ -1841,8 +1852,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             ObjFunction *fn = bm->fn;
             if (fn->is_native) {
                 Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = fn->native_fn(vm, scratch, nargs);
+                scratch[0] = bm->self;
+                for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
+                Value result = fn->native_fn(vm, scratch, nargs + 1);
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {

@@ -249,21 +249,73 @@ static Value bn_isinf(VM *vm, Value *args, int n) {
     return make_bool(IS_INF(args[0]));
 }
 
-/* Debug helper: verify a double value is safe for the VM.
- * Call this in DEBUG builds when binding external C functions.
- * Asserts if the value looks like an object signature (potential crash). */
-#ifdef DEBUG
-#include <assert.h>
-static void ffi_verify_double(Value v) {
-    if ((v & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL) {
-        /* It's a NaN or Inf. Make sure it's not payload=0 (object signature). */
-        assert((v & 0x000fffffffffffffULL) != 0 &&
-               "FFI ERROR: Hardware NaN with payload=0 would collide with object signature!");
-    }
+/* ============================================================ */
+/* Dict method native functions — args[0] = dict (self)         */
+/* ============================================================ */
+
+static Value dict_method_keys(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 1 || !IS_DICT(args[0])) return make_null();
+    return dict_keys((ObjDict*)AS_OBJ(args[0]));
 }
-#else
-#define ffi_verify_double(v) ((void)0)
-#endif
+
+static Value dict_method_has(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_DICT(args[0])) return make_null();
+    return make_bool(dict_has((ObjDict*)AS_OBJ(args[0]), args[1]));
+}
+
+static Value dict_method_remove(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_DICT(args[0])) return make_null();
+    return dict_remove((ObjDict*)AS_OBJ(args[0]), args[1]);
+}
+
+static Value dict_method_values(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 1 || !IS_DICT(args[0])) return make_null();
+    return dict_values((ObjDict*)AS_OBJ(args[0]));
+}
+
+static Value dict_method_clear(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 1 || !IS_DICT(args[0])) return make_null();
+    dict_clear((ObjDict*)AS_OBJ(args[0]));
+    return make_null();
+}
+
+static Value dict_method_length(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 1 || !IS_DICT(args[0])) return make_null();
+    return make_int(dict_length((ObjDict*)AS_OBJ(args[0])));
+}
+
+/* Lookup table mapping method name -> pre-created ObjFunction */
+typedef struct {
+    const char  *name;
+    int          len;
+    ObjFunction *fn;
+} DictMethodEntry;
+
+static DictMethodEntry dict_method_table[] = {
+    {"keys",   4, NULL},
+    {"has",    3, NULL},
+    {"remove", 6, NULL},
+    {"values", 6, NULL},
+    {"clear",  5, NULL},
+    {"length", 6, NULL},
+};
+#define DICT_METHOD_COUNT (sizeof(dict_method_table) / sizeof(dict_method_table[0]))
+
+ObjFunction *vm_dict_method_lookup(const char *name, int len) {
+    for (int i = 0; i < (int)DICT_METHOD_COUNT; i++) {
+        if (dict_method_table[i].len == len &&
+            memcmp(dict_method_table[i].name, name, len) == 0) {
+            return dict_method_table[i].fn;
+        }
+    }
+    return NULL;
+}
 
 void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);
@@ -279,6 +331,14 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "gc", bn_gc);
     vm_define_native(vm, "isnan", bn_isnan);
     vm_define_native(vm, "isinf", bn_isinf);
+
+    /* Pre-create dict method native function objects (live for process lifetime) */
+    dict_method_table[0].fn = new_native_function("dict.keys",   dict_method_keys);
+    dict_method_table[1].fn = new_native_function("dict.has",    dict_method_has);
+    dict_method_table[2].fn = new_native_function("dict.remove", dict_method_remove);
+    dict_method_table[3].fn = new_native_function("dict.values", dict_method_values);
+    dict_method_table[4].fn = new_native_function("dict.clear",  dict_method_clear);
+    dict_method_table[5].fn = new_native_function("dict.length", dict_method_length);
 }
 
 /* ============================================================ */
@@ -299,14 +359,13 @@ bool vm_invoke_list(VM *vm, ObjList *list, const char *method,
 
 bool vm_invoke_dict(VM *vm, ObjDict *dict, const char *method,
                     Value *args, int nargs, Value *result) {
-    (void)vm;
-    if (!strcmp(method,"has")    && nargs>=1) { *result=make_bool(dict_has(dict,args[0]));   return true; }
-    if (!strcmp(method,"remove") && nargs>=1) { *result=dict_remove(dict,args[0]);           return true; }
-    if (!strcmp(method,"keys"))              { *result=dict_keys(dict);                      return true; }
-    if (!strcmp(method,"values"))            { *result=dict_values(dict);                    return true; }
-    if (!strcmp(method,"clear"))             { dict_clear(dict); *result=make_null();         return true; }
-    if (!strcmp(method,"length"))            { *result=make_int(dict_length(dict));           return true; }
-    return false;
+    ObjFunction *fn = vm_dict_method_lookup(method, (int)strlen(method));
+    if (!fn) return false;
+    Value scratch[256];
+    scratch[0] = make_obj((Object*)dict);
+    for (int i = 0; i < nargs; i++) scratch[i + 1] = args[i];
+    *result = fn->native_fn(vm, scratch, nargs + 1);
+    return true;
 }
 
 bool vm_invoke_enum(VM *vm, ObjEnum *enm, const char *method,

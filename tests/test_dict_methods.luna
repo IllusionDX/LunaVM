@@ -1,0 +1,35 @@
+# Test: dict method-priority dot access (Godot-style)
+var d = {"a": 1, "b": 2, "c": 3, "length": "data_value"}
+
+# 1. dict.keys via bound method
+var ks = d.keys
+print(ks())
+print(type(ks))
+
+# 2. dict.has via bound method
+print(d.has("a"))
+print(d.has("z"))
+
+# 3. dict.values via bound method
+print(d.values())
+
+# 4. dict.length via bound method (method shadows data key)
+print(d.length)
+
+# 5. dict["length"] still accesses data key
+print(d["length"])
+
+# 6. dict.clear via bound method
+var d2 = {"x": 10}
+var cl = d2.clear
+print(cl())
+print(d2)
+
+# 7. dict.remove via bound method
+var d3 = {"a": 1, "b": 2}
+var rm = d3.remove
+print(rm("a"))
+print(d3)
+
+# 8. Non-existent field returns null (data lookup)
+print(d["not_a_key"])
