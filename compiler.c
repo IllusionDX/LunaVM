@@ -344,7 +344,12 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
 
     case EXPR_INTEGER: {
         int64_t v = atoll(expr->data.integer.value);
-        emit_loadi(c, (uint8_t)target, (int32_t)v);
+        if (v >= INT32_MIN && v <= INT32_MAX) {
+            emit_loadi(c, (uint8_t)target, (int32_t)v);
+        } else {
+            int k = chunk_add_const(c->chunk, make_int64(v));
+            emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+        }
         break;
     }
 

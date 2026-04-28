@@ -7,6 +7,7 @@
  *
  *   Pointer (Obj*):  QNAN | ptr          (ptr is 8-byte aligned => low 3 bits = 000)
  *   int32_t:         QNAN | TAG_INT | (i << 3)
+ *   int64_t:         heap ObjInt64 (OBJ_INT64)
  *   true:            QNAN | TAG_TRUE
  *   false:           QNAN | TAG_FALSE
  *   nil:             QNAN | TAG_NIL
@@ -21,6 +22,7 @@
 
 /* Forward declarations */
 typedef struct Object   Object;
+typedef struct ObjInt64 ObjInt64;
 struct Chunk;   /* defined in chunk.h — avoid circular include */
 struct VM;      /* defined in vm.h */
 
@@ -51,7 +53,8 @@ typedef uint64_t Value;
 #define IS_FALSE(v)  ((v) == (QNAN_TAG | TAG_FALSE))
 #define IS_BOOL(v)   (IS_TRUE(v) || IS_FALSE(v))
 #define IS_INT(v)    (((v) & (QNAN_TAG | 7)) == (QNAN_TAG | TAG_INT))
-#define IS_NUMBER(v) (IS_DOUBLE(v) || IS_INT(v))
+#define IS_INT64(v)  (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(13))
+#define IS_NUMBER(v) (IS_DOUBLE(v) || IS_INT(v) || IS_INT64(v))
 
 #define IS_INF(v)    (((v) & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && ((v) & 0x000fffffffffffffULL) == 0)
 #define IS_POS_INF(v) ((v) == 0x7ff0000000000000ULL)
@@ -64,6 +67,9 @@ typedef uint64_t Value;
 #define AS_OBJ(v)    ((Object*)(uintptr_t)((v) & 0x00007fffffffffffULL))
 #define AS_BOOL(v)   IS_TRUE(v)
 #define AS_INT(v)    ((int32_t)((v) >> 3))
+
+#define OBJ_SIGNATURE_MASK 0xFFFF800000000007ULL
+#define TYPE_SIGNATURE(t) (QNAN_TAG | (((uint64_t)(t) & 15) << 47))
 
 static inline Value make_double(double d) {
     Value v;
@@ -90,12 +96,8 @@ static inline double AS_DOUBLE(Value v) {
     return d;
 }
 
-static inline double as_double(Value v) {
-    return IS_DOUBLE(v) ? AS_DOUBLE(v) : (double)AS_INT(v);
-}
-static inline int64_t as_int64(Value v) {
-    return IS_INT(v) ? (int64_t)AS_INT(v) : (int64_t)AS_DOUBLE(v);
-}
+static inline double as_double(Value v);
+static inline int64_t as_int64(Value v);
 
 /* FFI Boundary Sanitization: ALL external C doubles MUST pass through make_double().
  * Hardware NaNs have random payloads that could collide with object type signatures.
@@ -134,7 +136,8 @@ typedef enum {
     OBJ_CLASS,
     OBJ_BOUND_METHOD,
     OBJ_MODULE,
-    OBJ_BUFFER,
+    OBJ_BUFFER = 12,
+    OBJ_INT64 = 13,
     OBJ_USERDATA
 } ObjType;
 
@@ -177,9 +180,6 @@ static inline Value make_obj(void *ptr) {
     return QNAN_TAG | type_tag | (uint64_t)(uintptr_t)obj;
 }
 #define OBJ_VAL(obj) make_obj(obj)
-
-#define OBJ_SIGNATURE_MASK 0xFFFF800000000007ULL
-#define TYPE_SIGNATURE(t) (QNAN_TAG | (((uint64_t)(t) & 15) << 47))
 
 #define IS_STRING(v)   (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_STRING))
 #define IS_LIST(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_LIST))
@@ -276,7 +276,25 @@ typedef struct ObjBuffer {
     uint8_t *data;
     size_t  size;
     size_t  capacity;
+    size_t  cursor;
 } ObjBuffer;
+
+/* Int64 â€” heap boxed 64-bit integer */
+typedef struct ObjInt64 {
+    Object   obj;
+    uint64_t value;
+} ObjInt64;
+
+static inline double as_double(Value v) {
+    if (IS_DOUBLE(v)) return AS_DOUBLE(v);
+    if (IS_INT64(v)) return (double)((int64_t)((ObjInt64*)AS_OBJ(v))->value);
+    return (double)AS_INT(v);
+}
+static inline int64_t as_int64(Value v) {
+    if (IS_INT(v)) return (int64_t)AS_INT(v);
+    if (IS_INT64(v)) return (int64_t)((ObjInt64*)AS_OBJ(v))->value;
+    return (int64_t)AS_DOUBLE(v);
+}
 
 typedef void (*UserdataFinalizer)(void *data);
 
@@ -376,6 +394,12 @@ ObjClosure  *new_closure(ObjFunction *function);
 ObjEnum     *new_enum(const char *name, int count);
 ObjBoundMethod *new_bound_method(Value self, struct ObjFunction *fn);
 ObjModule     *new_module(const char *name);
+ObjInt64      *new_int64(int64_t value);
+static inline Value make_int64(int64_t value) { return make_obj((Object*)new_int64(value)); }
+Value          buffer_read_byte(const ObjBuffer *buf, size_t offset);
+Value          buffer_read_short(const ObjBuffer *buf, size_t offset);
+Value          buffer_read_int(const ObjBuffer *buf, size_t offset);
+Value          buffer_read_long(const ObjBuffer *buf, size_t offset);
 ObjBuffer     *new_buffer(size_t capacity);
 void           buffer_reserve(ObjBuffer *buf, size_t capacity);
 void           buffer_resize(ObjBuffer *buf, size_t size);
@@ -434,6 +458,7 @@ static inline void release_value(Value v) {
 
 static inline double value_to_double(Value v) {
     if (IS_INT(v)) return (double)AS_INT(v);
+    if (IS_INT64(v)) return (double)((int64_t)((ObjInt64*)AS_OBJ(v))->value);
     return AS_DOUBLE(v);
 }
 
@@ -486,3 +511,4 @@ uint32_t hash_value(Value value);
 void runtime_error(const char *fmt, ...);
 
 #endif /* LUNA_VALUE_H */
+

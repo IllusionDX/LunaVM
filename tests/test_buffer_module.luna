@@ -1,0 +1,7 @@
+import buffer
+
+var buf = buffer.from_string("abcdefghABCDEFGH")
+
+print(type(buf.read_long()) == "int64")
+print(type(buf.read_long()) == "int64")
+print(buf.read_long() == null)

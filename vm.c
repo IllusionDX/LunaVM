@@ -30,6 +30,8 @@
 #include "stdlib_io.h"
 #include "stdlib_time.h"
 #include "stdlib_os.h"
+#include "stdlib_buffer.h"
+#include "stdlib_string.h"
 #include "stdlib_net.h"
 #include "lexer.h"
 #include "parser.h"
@@ -49,18 +51,28 @@ ObjFunction *vm_dict_method_lookup(const char *name, int len);
 
 static inline double to_f64(Value v) {
     if (IS_INT(v)) return (double)AS_INT(v);
+    if (IS_INT64(v)) return (double)((int64_t)((ObjInt64*)AS_OBJ(v))->value);
     if (IS_DOUBLE(v)) return AS_DOUBLE(v);
     return 0.0;
 }
 static inline int64_t to_i64(Value v) {
     if (IS_INT(v)) return (int64_t)AS_INT(v);
+    if (IS_INT64(v)) return (int64_t)((ObjInt64*)AS_OBJ(v))->value;
     if (IS_DOUBLE(v)) return (int64_t)AS_DOUBLE(v);
     return 0;
 }
 static inline bool is_num(Value v) {
     return IS_NUMBER(v);
 }
-static inline bool is_int_type(Value v) { return IS_INT(v); }
+static inline bool is_int_type(Value v) { return IS_INT(v) || IS_INT64(v); }
+
+static inline bool fits_int32(int64_t v) {
+    return v >= INT32_MIN && v <= INT32_MAX;
+}
+
+static inline Value make_int_result(int64_t v) {
+    return fits_int32(v) ? make_int((int32_t)v) : make_int64(v);
+}
 
 static inline Value do_arith(Value L, Value R, OpCode op) {
     /* String concat for ADD */
@@ -145,20 +157,20 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
     }
     if (!is_num(L) || !is_num(R)) return make_null();
     /* Integer path */
-    if (IS_INT(L) && IS_INT(R)) {
-        int64_t li = AS_INT(L);
-        int64_t ri = AS_INT(R);
+    if (is_int_type(L) && is_int_type(R)) {
+        int64_t li = to_i64(L);
+        int64_t ri = to_i64(R);
         switch (op) {
-            case OP_ADD: return make_int(li + ri);
-            case OP_SUB: return make_int(li - ri);
-            case OP_MUL: return make_int(li * ri);
+            case OP_ADD: return make_int_result(li + ri);
+            case OP_SUB: return make_int_result(li - ri);
+            case OP_MUL: return make_int_result(li * ri);
             case OP_DIV: {
                 if (!ri) return make_null();
-                return make_int(li / ri);
+                return make_int_result(li / ri);
             }
             case OP_MOD: {
                 if (!ri) return make_null();
-                return make_int(li % ri);
+                return make_int_result(li % ri);
             }
             default: return make_null();
         }
@@ -187,8 +199,8 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
 }
 static inline Value do_cmp(Value L, Value R, OpCode op) {
     /* Integer fast path: avoid float conversion for int vs int */
-    if (IS_INT(L) && IS_INT(R)) {
-        int32_t a = AS_INT(L), b = AS_INT(R);
+    if (is_int_type(L) && is_int_type(R)) {
+        int64_t a = to_i64(L), b = to_i64(R);
         switch (op) {
             case OP_LT: return make_bool(a <  b);
             case OP_LE: return make_bool(a <= b);
@@ -319,6 +331,7 @@ static void mark_object(Object *obj) {
             break;
         }
         case OBJ_BUFFER: break;
+        case OBJ_INT64: break;
         default: break;
     }
 }
@@ -544,6 +557,8 @@ void vm_init(VM *vm) {
     vm_register_io_module(vm);
     vm_register_time_module(vm);
     vm_register_os_module(vm);
+    vm_register_buffer_module(vm);
+    vm_register_string_module(vm);
     vm_register_net_module(vm);
 }
 

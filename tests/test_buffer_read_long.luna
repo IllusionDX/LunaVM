@@ -1,0 +1,7 @@
+var buf = "abcdefghABCDEFGH".to_buffer()
+var a = buf.read_long()
+var b = buf.read_long()
+
+print(type(a) == "int64")
+print(type(b) == "int64")
+print(a != b)

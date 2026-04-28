@@ -1,0 +1,7 @@
+import string
+
+print('A' == 65)
+print(string.from_byte(65) == "A")
+print("ABC".byte_at(1) == 66)
+print(type(2147483648) == "int64")
+print(2147483648 + 1 == 2147483649)

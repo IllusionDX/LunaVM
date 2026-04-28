@@ -42,8 +42,8 @@
     op_add: {
         Value _L = RKB;
         Value _R = RKC;
-        if (IS_INT(_L) && IS_INT(_R)) {
-            SET_REG_PRIM(RA, make_int(AS_INT(_L) + AS_INT(_R)));
+        if (is_int_type(_L) && is_int_type(_R)) {
+            SET_REG_PRIM(RA, make_int_result(to_i64(_L) + to_i64(_R)));
         } else {
             SET_REG(RA, do_arith(_L, _R, OP_ADD));
         }
@@ -51,17 +51,17 @@
     }
 
     /* 8.  OP_SUB */
-    op_sub: { Value _L=RKB,_R=RKC; if(IS_INT(_L)&&IS_INT(_R)){SET_REG_PRIM(RA,make_int(AS_INT(_L)-AS_INT(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
+    op_sub: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG_PRIM(RA,make_int_result(to_i64(_L)-to_i64(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
     /* 9.  OP_MUL */
-    op_mul: { Value _L=RKB,_R=RKC; if(IS_INT(_L)&&IS_INT(_R)){SET_REG_PRIM(RA,make_int(AS_INT(_L)*AS_INT(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_MUL));} DECODE; goto *op_labels[OP(instr)]; }
+    op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG_PRIM(RA,make_int_result(to_i64(_L)*to_i64(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_MUL));} DECODE; goto *op_labels[OP(instr)]; }
 
     /* 10. OP_DIV */
     op_div: {
         Value _L = RKB, _R = RKC;
-        if (IS_INT(_L) && IS_INT(_R)) {
-            int64_t ri = AS_INT(_R);
+        if (is_int_type(_L) && is_int_type(_R)) {
+            int64_t ri = to_i64(_R);
             if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->exception_class, "vm: div/0"); goto op_throw; }
-            SET_REG_PRIM(RA, make_int(AS_INT(_L) / ri));
+            SET_REG_PRIM(RA, make_int_result(to_i64(_L) / ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
             if (r == 0.0) {
@@ -81,10 +81,10 @@
     /* 11. OP_MOD */
     op_mod: {
         Value _L = RKB, _R = RKC;
-        if (IS_INT(_L) && IS_INT(_R)) {
-            int64_t ri = AS_INT(_R);
+        if (is_int_type(_L) && is_int_type(_R)) {
+            int64_t ri = to_i64(_R);
             if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->exception_class, "vm: mod/0"); goto op_throw; }
-            SET_REG_PRIM(RA, make_int(AS_INT(_L) % ri));
+            SET_REG_PRIM(RA, make_int_result(to_i64(_L) % ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
             if (r == 0.0) {
@@ -101,30 +101,30 @@
     /* 12. OP_NEG */
     op_neg: {
         Value v = REG(RB);
-        if (IS_INT(v))    { SET_REG_PRIM(RA, make_int(-AS_INT(v)));     DECODE; goto *op_labels[OP(instr)]; }
+        if (is_int_type(v)) { SET_REG_PRIM(RA, make_int_result(-to_i64(v))); DECODE; goto *op_labels[OP(instr)]; }
         if (IS_DOUBLE(v)) { SET_REG_PRIM(RA, make_double(-AS_DOUBLE(v))); DECODE; goto *op_labels[OP(instr)]; }
         SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 13. OP_BAND */
-    op_band: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) & to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_band: SET_REG_PRIM(RA, make_int_result(to_i64(REG(RB)) & to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
     /* 14. OP_BOR */
-    op_bor:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) | to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_bor:  SET_REG_PRIM(RA, make_int_result(to_i64(REG(RB)) | to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
     /* 15. OP_BXOR */
-    op_bxor: SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) ^ to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_bxor: SET_REG_PRIM(RA, make_int_result(to_i64(REG(RB)) ^ to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
     /* 16. OP_BNOT */
-    op_bnot: SET_REG_PRIM(RA, make_int(~to_i64(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
+    op_bnot: SET_REG_PRIM(RA, make_int_result(~to_i64(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
     /* 17. OP_SHL */
-    op_shl:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) << to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
+    op_shl:  SET_REG_PRIM(RA, make_int_result(to_i64(REG(RB)) << to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
     /* 18. OP_SHR */
-    op_shr:  SET_REG_PRIM(RA, make_int(to_i64(REG(RB)) >> to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
+    op_shr:  SET_REG_PRIM(RA, make_int_result(to_i64(REG(RB)) >> to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
 
     /* ---- Integer-immediate arithmetic (ABC: A = A op (int8_t)B) ---- */
     /* 19. OP_ADDI */
     op_addi: {
         Value v = REG(RA);
-        if (IS_INT(v))         REG(RA) = make_int(AS_INT(v) + (int8_t)B);
+        if (is_int_type(v))    REG(RA) = make_int_result(to_i64(v) + (int8_t)B);
         else if (IS_DOUBLE(v)) REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)B);
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -132,7 +132,7 @@
     /* 20. OP_SUBI */
     op_subi: {
         Value v = REG(RA);
-        if (IS_INT(v))         REG(RA) = make_int(AS_INT(v) - (int8_t)B);
+        if (is_int_type(v))    REG(RA) = make_int_result(to_i64(v) - (int8_t)B);
         else if (IS_DOUBLE(v)) REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)B);
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -143,13 +143,13 @@
     /* 22. OP_NE */
     op_ne: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_NE)); DECODE; goto *op_labels[OP(instr)];
     /* 23. OP_LT */
-    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)< AS_INT(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
+    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)< to_i64(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 24. OP_LE */
-    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)<=AS_INT(_R)):do_cmp(_L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
+    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)<=to_i64(_R)):do_cmp(_L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
     /* 25. OP_GT */
-    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)> AS_INT(_R)):do_cmp(_L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
+    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)> to_i64(_R)):do_cmp(_L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 26. OP_GE */
-    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,IS_INT(_L)&&IS_INT(_R)?make_bool(AS_INT(_L)>=AS_INT(_R)):do_cmp(_L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
+    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)>=to_i64(_R)):do_cmp(_L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
     /* 27. OP_IN */
     op_in: {
         Value needle = RKB;
@@ -1040,9 +1040,9 @@
                 break;
             }
             case OBJ_STRING: {
-                if (field->length == 6 && !memcmp(field->chars, "length", 6))
+                if (field->length == 6 && !memcmp(field->chars, "length", 6)) {
                     SET_REG_PRIM(RA, make_int(((ObjString*)AS_OBJ(obj))->length));
-                else {
+                } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "AttributeError: string has no field '%s'", field->chars);
                     release_value(_exc);
@@ -1207,6 +1207,47 @@
                 case OBJ_LIST: handled = vm_invoke_list(vm, (ObjList*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
                 case OBJ_DICT: handled = vm_invoke_dict(vm, (ObjDict*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
                 case OBJ_ENUM: handled = vm_invoke_enum(vm, (ObjEnum*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
+                case OBJ_BUFFER: {
+                    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(obj);
+                    if (!strcmp(mname, "read_byte")) {
+                        if (nargs != 0) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->argument_error_class, "buffer.read_byte() expects no arguments");
+                            goto op_throw;
+                        }
+                        result = buffer_read_byte(buf, buf->cursor);
+                        if (!IS_NIL(result)) buf->cursor += 1;
+                        handled = true;
+                    } else if (!strcmp(mname, "read_short")) {
+                        if (nargs != 0) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->argument_error_class, "buffer.read_short() expects no arguments");
+                            goto op_throw;
+                        }
+                        result = buffer_read_short(buf, buf->cursor);
+                        if (!IS_NIL(result)) buf->cursor += 2;
+                        handled = true;
+                    } else if (!strcmp(mname, "read_int")) {
+                        if (nargs != 0) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->argument_error_class, "buffer.read_int() expects no arguments");
+                            goto op_throw;
+                        }
+                        result = buffer_read_int(buf, buf->cursor);
+                        if (!IS_NIL(result)) buf->cursor += 4;
+                        handled = true;
+                    } else if (!strcmp(mname, "read_long")) {
+                        if (nargs != 0) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->argument_error_class, "buffer.read_long() expects no arguments");
+                            goto op_throw;
+                        }
+                        result = buffer_read_long(buf, buf->cursor);
+                        if (!IS_NIL(result)) buf->cursor += 8;
+                        handled = true;
+                    }
+                    break;
+                }
                 case OBJ_MODULE: {
                     ObjModule *mod = (ObjModule*)AS_OBJ(obj);
                     Value fn_val = dict_get(mod->exports, make_obj((Object*)((ObjString*)AS_OBJ(method_val))));
@@ -1332,6 +1373,36 @@
                             }
                             handled = true;
                         }
+                    }
+                    break;
+                }
+                case OBJ_STRING: {
+                    if (!strcmp(mname, "to_buffer")) {
+                        if (nargs != 0) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->argument_error_class, "string.to_buffer() takes no arguments");
+                            goto op_throw;
+                        }
+                        ObjString *str = (ObjString*)AS_OBJ(obj);
+                        ObjBuffer *buf = new_buffer((size_t)str->length);
+                        buffer_append_data(buf, (const uint8_t*)str->chars, (size_t)str->length);
+                        result = make_obj((Object*)buf);
+                        handled = true;
+                    } else if (strcmp(mname, "byte_at") == 0) {
+                        if (nargs < 1 || (!IS_INT(scratch[0]) && !IS_INT64(scratch[0]))) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "string.byte_at() expects an integer index");
+                            goto op_throw;
+                        }
+                        ObjString *str = (ObjString*)AS_OBJ(obj);
+                        int64_t idx64 = as_int64(scratch[0]);
+                        if (idx64 < 0 || idx64 >= str->length) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->index_error_class, "string.byte_at() index out of range");
+                            goto op_throw;
+                        }
+                        result = make_int((uint8_t)str->chars[idx64]);
+                        handled = true;
                     }
                     break;
                 }

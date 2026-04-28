@@ -21,14 +21,14 @@ endif
 SOURCES = main.c value.c ast_free.c \
     lexer.c parser.c chunk.c vm.c vm_builtins.c compiler.c \
     parse_expr.c parse_stmt.c parse_decl.c fstring.c module.c \
-    stdlib_math.c stdlib_random.c stdlib_noise.c stdlib_io.c stdlib_time.c stdlib_os.c stdlib_net.c
+    stdlib_math.c stdlib_random.c stdlib_noise.c stdlib_io.c stdlib_time.c stdlib_os.c stdlib_buffer.c stdlib_string.c stdlib_net.c
 
 OBJECTS = $(SOURCES:.c=.o)
 
 # Header files
 HEADERS = ast.h value.h lexer.h parser.h chunk.h vm.h opcode.h compiler.h \
     parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h stdlib_math.h stdlib_random.h \
-    stdlib_noise.h stdlib_io.h stdlib_time.h stdlib_os.h stdlib_net.h \
+    stdlib_noise.h stdlib_io.h stdlib_time.h stdlib_os.h stdlib_buffer.h stdlib_string.h stdlib_net.h \
     vm_opcodes.inc
 
 # Default target

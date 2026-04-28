@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <inttypes.h>
 #include <math.h>
 #include "value.h"
 #include "chunk.h"
@@ -25,6 +26,10 @@ uint32_t hash_value(Value v) {
     if (IS_INT(v)) {
         int32_t i = AS_INT(v);
         return (uint32_t)(i ^ (i >> 16));
+    }
+    if (IS_INT64(v)) {
+        uint64_t x = ((ObjInt64*)AS_OBJ(v))->value;
+        return (uint32_t)(x ^ (x >> 32));
     }
     if (IS_DOUBLE(v)) {
         uint64_t u;
@@ -361,9 +366,18 @@ ObjBuffer *new_buffer(size_t capacity) {
     init_object((Object*)buf, OBJ_BUFFER, sizeof(ObjBuffer) + capacity);
     buf->size = 0;
     buf->capacity = capacity;
+    buf->cursor = 0;
     buf->data = capacity ? malloc(capacity) : NULL;
     if (capacity && !buf->data) { fprintf(stderr, "OOM\n"); exit(1); }
     return buf;
+}
+
+ObjInt64 *new_int64(int64_t value) {
+    ObjInt64 *obj = malloc(sizeof(ObjInt64));
+    if (!obj) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)obj, OBJ_INT64, sizeof(ObjInt64));
+    obj->value = (uint64_t)value;
+    return obj;
 }
 
 void buffer_reserve(ObjBuffer *buf, size_t capacity) {
@@ -388,6 +402,7 @@ void buffer_resize(ObjBuffer *buf, size_t size) {
     if (!buf) return;
     buffer_reserve(buf, size);
     buf->size = size;
+    if (buf->cursor > buf->size) buf->cursor = buf->size;
 }
 
 void buffer_append_byte(ObjBuffer *buf, uint8_t byte) {
@@ -523,6 +538,10 @@ void free_object_container(Object *obj) {
             free(buf);
             break;
         }
+        case OBJ_INT64: {
+            free(obj);
+            break;
+        }
         case OBJ_USERDATA: {
             ObjUserdata *ud = (ObjUserdata*)obj;
             userdata_run_finalizer(ud);
@@ -608,6 +627,7 @@ void free_object(Object *obj) {
             break;
         }
         case OBJ_BUFFER: break;
+        case OBJ_INT64: break;
         case OBJ_USERDATA: break;
         default: break;
     }
@@ -626,6 +646,7 @@ bool is_truthy(Value v) {
     if (IS_NIL(v)) return false;
     if (IS_BOOL(v)) return AS_BOOL(v);
     if (IS_INT(v)) return AS_INT(v) != 0;
+    if (IS_INT64(v)) return ((ObjInt64*)AS_OBJ(v))->value != 0;
     if (IS_DOUBLE(v)) return AS_DOUBLE(v) != 0.0;
     if (IS_OBJ(v)) return AS_OBJ(v) != NULL;
     return false;
@@ -633,7 +654,7 @@ bool is_truthy(Value v) {
 
 bool values_equal(Value a, Value b) {
     if (a == b) return true;
-    if ((IS_DOUBLE(a) || IS_INT(a)) && (IS_DOUBLE(b) || IS_INT(b))) {
+    if ((IS_DOUBLE(a) || IS_INT(a) || IS_INT64(a)) && (IS_DOUBLE(b) || IS_INT(b) || IS_INT64(b))) {
         return as_double(a) == as_double(b);
     }
     return false;
@@ -644,6 +665,7 @@ char *value_to_string(Value v) {
     if (IS_NIL(v)) return strdup("null");
     if (IS_BOOL(v)) return strdup(AS_BOOL(v) ? "true" : "false");
     if (IS_INT(v)) { snprintf(buf, sizeof(buf), "%d", AS_INT(v)); return strdup(buf); }
+    if (IS_INT64(v)) { snprintf(buf, sizeof(buf), "%" PRId64, (int64_t)((ObjInt64*)AS_OBJ(v))->value); return strdup(buf); }
     if (IS_DOUBLE(v)) { snprintf(buf, sizeof(buf), "%g", AS_DOUBLE(v)); return strdup(buf); }
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
@@ -755,6 +777,11 @@ char *value_to_string(Value v) {
                 snprintf(buf, sizeof(buf), "<buffer %zu bytes>", bufv->size);
                 return strdup(buf);
             }
+            case OBJ_INT64: {
+                ObjInt64 *i64 = (ObjInt64*)obj;
+                snprintf(buf, sizeof(buf), "<int64 %" PRId64 ">", (int64_t)i64->value);
+                return strdup(buf);
+            }
             case OBJ_USERDATA: {
                 ObjUserdata *ud = (ObjUserdata*)obj;
                 snprintf(buf, sizeof(buf), "<userdata %s>", ud->tag ? ud->tag : "?");
@@ -795,6 +822,36 @@ void instance_set_field(ObjInstance *inst, const char *name, Value value) {
     inst->field_names[inst->field_count] = strdup(name);
     inst->fields     [inst->field_count] = value;
     inst->field_count++;
+}
+
+Value buffer_read_byte(const ObjBuffer *buf, size_t offset) {
+    if (!buf || !buf->data || offset + 1 > buf->size) return make_null();
+    return make_int((int32_t)buf->data[offset]);
+}
+
+Value buffer_read_short(const ObjBuffer *buf, size_t offset) {
+    if (!buf || !buf->data || offset + 2 > buf->size) return make_null();
+    uint16_t raw = (uint16_t)buf->data[offset]
+                 | ((uint16_t)buf->data[offset + 1] << 8);
+    return make_int((int32_t)raw);
+}
+
+Value buffer_read_int(const ObjBuffer *buf, size_t offset) {
+    if (!buf || !buf->data || offset + 4 > buf->size) return make_null();
+    uint32_t raw = (uint32_t)buf->data[offset]
+                 | ((uint32_t)buf->data[offset + 1] << 8)
+                 | ((uint32_t)buf->data[offset + 2] << 16)
+                 | ((uint32_t)buf->data[offset + 3] << 24);
+    return make_int((int32_t)raw);
+}
+
+Value buffer_read_long(const ObjBuffer *buf, size_t offset) {
+    if (!buf || !buf->data || offset + 8 > buf->size) return make_null();
+    uint64_t raw = 0;
+    for (size_t i = 0; i < 8; i++) {
+        raw |= ((uint64_t)buf->data[offset + i]) << (i * 8);
+    }
+    return make_int64((int64_t)raw);
 }
 
 /* ============================================================ */

@@ -1,0 +1,3 @@
+var s = "abc"
+
+print(s.length == 3)

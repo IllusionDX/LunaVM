@@ -162,6 +162,10 @@ static Value math_abs(VM *vm, Value *args, int n) {
         int v = AS_INT(args[0]);
         return make_int(v < 0 ? -v : v);
     }
+    if (IS_INT64(args[0])) {
+        int64_t v = as_int64(args[0]);
+        return make_int64(v < 0 ? -v : v);
+    }
     double v = AS_DOUBLE(args[0]);
     return make_double(v < 0.0 ? -v : v);
 }
@@ -224,7 +228,7 @@ static Value math_random(VM *vm, Value *args, int n) {
             luna_throw(vm, vm->type_error_class,
                 "random() argument must be a number");
         }
-        int mx = IS_INT(args[0]) ? AS_INT(args[0]) : (int)AS_DOUBLE(args[0]);
+        int mx = IS_INT(args[0]) ? AS_INT(args[0]) : (int)as_int64(args[0]);
         if (mx < 1) {
             luna_throw(vm, vm->value_error_class,
                 "random() argument must be >= 1");
@@ -236,8 +240,8 @@ static Value math_random(VM *vm, Value *args, int n) {
             luna_throw(vm, vm->type_error_class,
                 "random() arguments must be numbers");
         }
-        int mn = IS_INT(args[0]) ? AS_INT(args[0]) : (int)AS_DOUBLE(args[0]);
-        int mx = IS_INT(args[1]) ? AS_INT(args[1]) : (int)AS_DOUBLE(args[1]);
+        int mn = IS_INT(args[0]) ? AS_INT(args[0]) : (int)as_int64(args[0]);
+        int mx = IS_INT(args[1]) ? AS_INT(args[1]) : (int)as_int64(args[1]);
         if (mn > mx) { int t = mn; mn = mx; mx = t; }
         return make_int(mn + rand() % (mx - mn + 1));
     }
