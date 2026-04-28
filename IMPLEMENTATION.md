@@ -332,13 +332,14 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.3.5-alpha` | Done | Polymorphic RNG system: single `Random` class serves multiple algorithms via tag in `_state[0]`. `random.PCG(seed)` and `random.Xorshift(seed)` constructors. Algorithm-specific `step` functions with shared dispatch. `rng.choice(seq)` as instance method using seeded RNG (not C `rand()`). Removed type guards from callable dispatch. |
 | `0.3.6-alpha` | Done | `rng.shuffle(list)` instance method: Fisher-Yates in-place shuffle using seeded RNG. Fixed SOO list mode handling during shuffle (inline_items vs items). Reproducible shuffle across isolated generator instances. |
 | `0.3.7-alpha` | Done | VM refactor: split `vm.c` monolith into `vm.c` (core VM, 986 lines) + `vm_opcodes.inc` (opcode handlers, 1843 lines). Computed goto preserved via `#include` inside `vm_execute_loop`. `Makefile` updated with `vm_opcodes.inc` header dependency. No behavioral changes. |
-| `0.3.8-alpha` | **Current** | `noise` stdlib: Perlin, Simplex, Voronoi noise (2D/3D) with callable instances (`n(x, y)` / `n(x, y, z)`). `io` stdlib: file I/O with `OBJ_USERDATA` finalizers (`io.File`, `io.open`, `io.read_file`, `io.write_file`, `io.append_file`, `io.exists`, `io.remove`). String escape sequences in lexer (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`). |
+| `0.3.8-alpha` | Done | `noise` stdlib: Perlin, Simplex, Voronoi noise (2D/3D) with callable instances (`n(x, y)` / `n(x, y, z)`). `io` stdlib: file I/O with `OBJ_USERDATA` finalizers (`io.File`, `io.open`, `io.read_file`, `io.write_file`, `io.append_file`, `io.exists`, `io.remove`). String escape sequences in lexer (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`). |
+| `0.3.9-alpha` | **Current** | `os` stdlib: full system module — directory operations (`getcwd`, `chdir`, `listdir`, `mkdir`), file operations (`rename`, `remove`, `stat`), system info (`execute`, `getpid`, `hostname`, `username`, `tmpdir`, `args`, `exit`, `platform`), environment access (`getenv`, `setenv`), path utilities (`path_join` with `/` normalization, `sep`, `pathsep`). `random.int()` now accepts 0 args (returns raw int32). |
 
 ## Roadmap
 
 | Version | Milestone |
 |---------|-----------|
-| `0.3.x` | Better error messages with line/column context and suggestions. Standard library expansion (strings, io, os). |
+| `0.3.x` | Better error messages with line/column context and suggestions. Standard library expansion (strings — done, io — done, os — done, time — done, noise — done). |
 | `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
 | `0.5.x` | Debugger / profiler. |
 | `0.6.x` | Coroutines / async (`await`, `async def`). |
