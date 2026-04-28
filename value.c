@@ -36,6 +36,8 @@ uint32_t hash_value(Value v) {
         if (!obj) return 0;
         if (obj->type == OBJ_STRING)
             return ((ObjString *)obj)->hash;
+        if (obj->type == OBJ_USERDATA)
+            return (uint32_t)(uintptr_t)((ObjUserdata*)obj)->data;
         return (uint32_t)(uintptr_t)obj;
     }
     return 0;
@@ -112,6 +114,7 @@ int allocated_objects = 0;
 size_t bytes_allocated = 0;
 size_t next_gc_threshold = 64 * 1024 * 1024;
 bool gc_collecting = false;
+Object *userdata_objects = NULL;
 
 static void init_object(Object *obj, ObjType type, size_t size) {
     obj->type = type;
@@ -121,6 +124,8 @@ static void init_object(Object *obj, ObjType type, size_t size) {
     bytes_allocated += size;
     obj->next = all_objects;
     obj->prev = NULL;
+    obj->finalizer_next = NULL;
+    obj->finalizer_prev = NULL;
     if (all_objects) all_objects->prev = obj;
     all_objects = obj;
     allocated_objects++;
@@ -278,6 +283,20 @@ ObjFunction *new_native_function(const char *name, NativeFn fn) {
     return f;
 }
 
+ObjUserdata *new_userdata_tagged(const char *tag, void *data, UserdataFinalizer finalizer) {
+    ObjUserdata *ud = malloc(sizeof(ObjUserdata));
+    if (!ud) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)ud, OBJ_USERDATA, sizeof(ObjUserdata));
+    ud->tag = strdup(tag ? tag : "userdata");
+    ud->data = data;
+    ud->finalizer = finalizer;
+    ud->finalized = false;
+    ud->obj.finalizer_next = userdata_objects;
+    if (userdata_objects) userdata_objects->finalizer_prev = (Object*)ud;
+    userdata_objects = (Object*)ud;
+    return ud;
+}
+
 ObjUpvalue *new_upvalue(int stack_index) {
     ObjUpvalue *uv = malloc(sizeof(ObjUpvalue));
     if (!uv) { fprintf(stderr, "OOM\n"); exit(1); }
@@ -348,6 +367,15 @@ Value make_exception_instance(struct VM *vm, ObjClass *cls, const char *message)
 /* ARC memory management                                         */
 /* ============================================================ */
 
+static void userdata_run_finalizer(ObjUserdata *ud) {
+    if (!ud || ud->finalized) return;
+    ud->finalized = true;
+    if (ud->finalizer && ud->data) {
+        ud->finalizer(ud->data);
+    }
+    ud->data = NULL;
+}
+
 
 /* Free container memory without releasing children.
  * Used by the GC sweep after children have already been released. */
@@ -362,6 +390,16 @@ void free_object_container(Object *obj) {
     if (obj->next) {
         obj->next->prev = obj->prev;
     }
+    if (obj->finalizer_prev) {
+        obj->finalizer_prev->finalizer_next = obj->finalizer_next;
+    } else if (userdata_objects == obj) {
+        userdata_objects = obj->finalizer_next;
+    }
+    if (obj->finalizer_next) {
+        obj->finalizer_next->finalizer_prev = obj->finalizer_prev;
+    }
+    obj->finalizer_next = NULL;
+    obj->finalizer_prev = NULL;
     allocated_objects--;
     bytes_allocated -= obj->size;
 
@@ -430,6 +468,13 @@ void free_object_container(Object *obj) {
         }
         case OBJ_MODULE: {
             free(obj); break;
+        }
+        case OBJ_USERDATA: {
+            ObjUserdata *ud = (ObjUserdata*)obj;
+            userdata_run_finalizer(ud);
+            free(ud->tag);
+            free(ud);
+            break;
         }
         default: free(obj); break;
     }
@@ -508,6 +553,7 @@ void free_object(Object *obj) {
             if (mod->exports) release_obj((Object*)mod->exports);
             break;
         }
+        case OBJ_USERDATA: break;
         default: break;
     }
 
@@ -647,6 +693,11 @@ char *value_to_string(Value v) {
             case OBJ_MODULE: {
                 ObjModule *mod = (ObjModule*)obj;
                 snprintf(buf, sizeof(buf), "<module %s>", mod->name ? mod->name->chars : "?");
+                return strdup(buf);
+            }
+            case OBJ_USERDATA: {
+                ObjUserdata *ud = (ObjUserdata*)obj;
+                snprintf(buf, sizeof(buf), "<userdata %s>", ud->tag ? ud->tag : "?");
                 return strdup(buf);
             }
             default: return strdup("<object>");

@@ -24,6 +24,7 @@
 #include "stdlib_math.h"
 #include "stdlib_random.h"
 #include "stdlib_noise.h"
+#include "stdlib_io.h"
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
@@ -217,6 +218,7 @@ static inline Value do_cmp(Value L, Value R, OpCode op) {
 /* ============================================================ */
 
 extern Object *all_objects;
+extern Object *userdata_objects;
 extern int allocated_objects;
 
 static void mark_object(Object *obj);
@@ -531,6 +533,7 @@ void vm_init(VM *vm) {
     vm_register_math_module(vm);
     vm_register_random_module(vm);
     vm_register_noise_module(vm);
+    vm_register_io_module(vm);
 }
 
 static void close_upvalues(VM *vm, int frame_depth);

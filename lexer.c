@@ -64,6 +64,41 @@ static Token *make_token(Lexer *lexer, TokenType type, const char *start, int le
     return token;
 }
 
+static char decode_escape(char c) {
+    switch (c) {
+        case 'n': return '\n';
+        case 'r': return '\r';
+        case 't': return '\t';
+        case '\\': return '\\';
+        case '"': return '"';
+        case '\'': return '\'';
+        case '0': return '\0';
+        default: return c;
+    }
+}
+
+static char *unescape_string_literal(const char *start, int raw_length, int *out_length) {
+    char *buf = (char *)malloc((size_t)raw_length + 1);
+    if (!buf) {
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
+
+    int j = 0;
+    for (int i = 0; i < raw_length; i++) {
+        char c = start[i];
+        if (c == '\\' && i + 1 < raw_length) {
+            buf[j++] = decode_escape(start[++i]);
+        } else {
+            buf[j++] = c;
+        }
+    }
+
+    buf[j] = '\0';
+    if (out_length) *out_length = j;
+    return buf;
+}
+
 static void skip_whitespace(Lexer *lexer) {
     while (true) {
         char c = peek(lexer);
@@ -226,9 +261,21 @@ static Token *scan_string(Lexer *lexer) {
     
     advance(lexer);
     
-    int length = (int)(lexer->current - start);
+    int raw_length = (int)(lexer->current - start - 2);
+    int length = 0;
     TokenType type = (quote == '"') ? TOK_STRING_LITERAL : TOK_CHAR_LITERAL;
-    return make_token(lexer, type, start + 1, length - 2);
+    char *value = unescape_string_literal(start + 1, raw_length, &length);
+    Token *tok = (Token *)malloc(sizeof(Token));
+    if (!tok) {
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
+    tok->type = type;
+    tok->value = value;
+    tok->line = lexer->line;
+    tok->column = lexer->column - (int)(lexer->current - start);
+    tok->next = NULL;
+    return tok;
 }
 
 static Token *scan_fstring(Lexer *lexer) {

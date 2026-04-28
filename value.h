@@ -133,7 +133,8 @@ typedef enum {
     OBJ_ENUM,
     OBJ_CLASS,
     OBJ_BOUND_METHOD,
-    OBJ_MODULE
+    OBJ_MODULE,
+    OBJ_USERDATA
 } ObjType;
 
 /* ============================================================ */
@@ -147,6 +148,8 @@ typedef struct Object {
     size_t         size;
     struct Object *next;    /* intrusive GC linked list */
     struct Object *prev;    /* doubly linked for O(1) removal */
+    struct Object *finalizer_next; /* intrusive userdata finalizer list */
+    struct Object *finalizer_prev;
 } Object;
 
 /* ============================================================ */
@@ -187,6 +190,7 @@ static inline Value make_obj(void *ptr) {
 #define IS_CLASS(v)    (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_CLASS))
 #define IS_BOUND_METHOD(v) (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_BOUND_METHOD))
 #define IS_MODULE(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_MODULE))
+#define IS_USERDATA(v)     (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_USERDATA))
 
 /* ============================================================ */
 /* Native function signature                                     */
@@ -263,6 +267,16 @@ typedef struct ObjModule {
     ObjString *name;      /* module name (e.g. "math") */
     ObjDict   *exports;   /* dict of name -> value */
 } ObjModule;
+
+typedef void (*UserdataFinalizer)(void *data);
+
+typedef struct ObjUserdata {
+    Object           obj;
+    char            *tag;
+    void            *data;
+    UserdataFinalizer finalizer;
+    bool             finalized;
+} ObjUserdata;
 
 /* Class instance — fields as a parallel-array open dict */
 typedef struct ObjInstance {
@@ -344,6 +358,8 @@ ObjInstance *new_instance(struct ObjClass *klass, int field_capacity);
 ObjClass    *new_class(const char *name, const char *base_name);
 ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
+ObjUserdata *new_userdata_tagged(const char *tag, void *data, UserdataFinalizer finalizer);
+#define new_userdata(data, finalizer) new_userdata_tagged("userdata", (data), (finalizer))
 Value make_exception_instance(struct VM *vm, struct ObjClass *cls, const char *message);
 ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);
@@ -365,6 +381,7 @@ char *value_to_string(Value v);     /* caller must free() */
 /* ============================================================ */
 
 extern Object *all_objects;
+extern Object *userdata_objects;
 extern int allocated_objects;
 extern size_t bytes_allocated;
 extern size_t next_gc_threshold;

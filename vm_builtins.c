@@ -202,6 +202,7 @@ static Value bn_type(VM *vm, Value *args, int n) {
                 case OBJ_CLOSURE:    t = "closure";    break;
                 case OBJ_ENUM:       t = "enum";       break;
                 case OBJ_CLASS:      t = "class";      break;
+                case OBJ_USERDATA:   t = "userdata";   break;
                 default:             t = "object";     break;
             }
         }
