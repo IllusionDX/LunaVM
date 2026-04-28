@@ -72,6 +72,8 @@ static ObjList *get_state_list(Value self) {
 
 static Value pcg_int(VM *vm, Value *args, int n) {
     if (n < 3) luna_throw(vm, vm->argument_error_class, "PCG.int() requires 2 arguments: min, max");
+    if (!IS_NUMBER(args[1])) luna_throw(vm, vm->type_error_class, "PCG.int(): min must be numeric");
+    if (!IS_NUMBER(args[2])) luna_throw(vm, vm->type_error_class, "PCG.int(): max must be numeric");
 
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list) luna_throw(vm, vm->runtime_error_class, "PCG instance corrupted: missing _state");
@@ -87,6 +89,10 @@ static Value pcg_int(VM *vm, Value *args, int n) {
     if (min > max) { int t = min; min = max; max = t; }
 
     uint32_t range = (uint32_t)(max - min + 1);
+    if (range == 0) {
+        /* Full uint32_t range — modulo would divide by zero */
+        return make_int((int32_t)raw);
+    }
     int result = min + (int)(raw % range);
     return make_int(result);
 }
@@ -103,12 +109,15 @@ static Value pcg_float(VM *vm, Value *args, int n) {
     write_u64(state_list, 0, state);
     write_u64(state_list, 2, inc);
 
-    double normalized = (double)raw / (double)UINT32_MAX;
+    /* [0.0, 1.0) — never returns exactly 1.0 */
+    double normalized = (double)raw / ((double)UINT32_MAX + 1.0);
 
     if (n == 1) {
         return make_double(normalized);
     }
     if (n >= 3) {
+        if (!IS_NUMBER(args[1])) luna_throw(vm, vm->type_error_class, "PCG.float(): min must be numeric");
+        if (!IS_NUMBER(args[2])) luna_throw(vm, vm->type_error_class, "PCG.float(): max must be numeric");
         double min = value_to_double(args[1]);
         double max = value_to_double(args[2]);
         return make_double(min + normalized * (max - min));
@@ -120,6 +129,7 @@ static Value pcg_float(VM *vm, Value *args, int n) {
 
 static Value pcg_seed(VM *vm, Value *args, int n) {
     if (n < 2) luna_throw(vm, vm->argument_error_class, "PCG.seed() requires 1 argument");
+    if (!IS_NUMBER(args[1])) luna_throw(vm, vm->type_error_class, "PCG.seed(): seed must be numeric");
 
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list) luna_throw(vm, vm->runtime_error_class, "PCG instance corrupted: missing _state");
@@ -145,6 +155,7 @@ static Value random_PCG(VM *vm, Value *args, int n) {
     (void)vm;
     uint64_t seed = 0;
     if (n >= 1) {
+        if (!IS_NUMBER(args[0])) luna_throw(vm, vm->type_error_class, "PCG(): seed must be numeric");
         seed = (uint64_t)AS_INT(args[0]);
     } else {
         seed = (uint64_t)time(NULL);
@@ -190,9 +201,14 @@ void vm_register_random_module(VM *vm) {
 
     /* random.PCG(seed) constructor */
     ObjFunction *ctor = new_native_function("PCG", random_PCG);
+    retain_obj((Object*)ctor);
+    ObjString *pcg_key = new_string("PCG", 3);
+    retain_obj((Object*)pcg_key);
     dict_set(mod->exports,
-             make_obj((Object*)new_string("PCG", 3)),
+             make_obj((Object*)pcg_key),
              make_obj((Object*)ctor));
+    release_obj((Object*)pcg_key);
+    release_obj((Object*)ctor);
 
     /* Cache module */
     Value mod_val = make_obj((Object*)mod);
