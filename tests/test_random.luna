@@ -26,3 +26,18 @@ print(r3 == r1)
 var rng_a = random.PCG(42)
 var rng_b = random.PCG(42)
 print(rng_a.int(1, 100) == rng_b.int(1, 100))
+
+# Xorshift also works
+var xs = random.Xorshift(99)
+var xs_val = xs.int(1, 10)
+print(xs_val >= 1 and xs_val <= 10)
+
+# random.choice on list
+var items = ["apple", "banana", "cherry"]
+var picked = random.choice(items)
+print(picked == "apple" or picked == "banana" or picked == "cherry")
+
+# random.choice on string
+var letters = "abc"
+var ch = random.choice(letters)
+print(ch == "a" or ch == "b" or ch == "c")

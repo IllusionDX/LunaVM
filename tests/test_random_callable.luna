@@ -5,7 +5,20 @@ var a = rng()
 var b = rng()
 var c = rng()
 
-print(a >= 0.0 and a < 1.0)
-print(b >= 0.0 and b < 1.0)
-print(c >= 0.0 and c < 1.0)
+# float [0.0, 1.0] inclusive
+print(a >= 0.0 and a <= 1.0)
+print(b >= 0.0 and b <= 1.0)
+print(c >= 0.0 and c <= 1.0)
 print(a != b or a != c)
+
+# contextual: int range
+var i1 = rng(1, 10)
+print(i1 >= 1 and i1 <= 10)
+
+# contextual: float range
+var f1 = rng(1.0, 5.5)
+print(f1 >= 1.0 and f1 <= 5.5)
+
+# contextual: mixed promotes to float
+var f2 = rng(1, 5.5)
+print(f2 >= 1.0 and f2 <= 5.5)
