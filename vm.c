@@ -156,6 +156,30 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         }
         if (str && times < 0) return make_obj((Object*)new_string("", 0));
     }
+    /* Vector operations */
+    if (IS_VECTOR(L) && IS_VECTOR(R)) {
+        ObjVector *lv = (ObjVector*)AS_OBJ(L);
+        ObjVector *rv = (ObjVector*)AS_OBJ(R);
+        float rx, ry, rz, rw;
+        switch (op) {
+            case OP_ADD: rx = lv->data[0] + rv->data[0]; ry = lv->data[1] + rv->data[1]; rz = lv->data[2] + rv->data[2]; rw = lv->data[3] + rv->data[3]; break;
+            case OP_SUB: rx = lv->data[0] - rv->data[0]; ry = lv->data[1] - rv->data[1]; rz = lv->data[2] - rv->data[2]; rw = lv->data[3] - rv->data[3]; break;
+            case OP_MUL: rx = lv->data[0] * rv->data[0]; ry = lv->data[1] * rv->data[1]; rz = lv->data[2] * rv->data[2]; rw = lv->data[3] * rv->data[3]; break;
+            default: return make_null();
+        }
+        return make_obj((Object*)new_vector(rx, ry, rz, rw));
+    }
+    if (IS_VECTOR(L) && is_num(R)) {
+        ObjVector *lv = (ObjVector*)AS_OBJ(L);
+        float s = (float)value_to_double(R);
+        float rx, ry, rz, rw;
+        switch (op) {
+            case OP_MUL: rx = lv->data[0] * s; ry = lv->data[1] * s; rz = lv->data[2] * s; rw = lv->data[3] * s; break;
+            case OP_DIV: rx = lv->data[0] / s; ry = lv->data[1] / s; rz = lv->data[2] / s; rw = lv->data[3] / s; break;
+            default: return make_null();
+        }
+        return make_obj((Object*)new_vector(rx, ry, rz, rw));
+    }
     if (!is_num(L) || !is_num(R)) return make_null();
     /* Integer path */
     if (is_int_type(L) && is_int_type(R)) {

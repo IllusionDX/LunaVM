@@ -1,0 +1,62 @@
+# Test native vector type (built-in vec2/vec3/vec4)
+
+var a = vec2(1.0, 2.0)
+var b = vec2(3.0, 4.0)
+
+# Component access
+print(a.x == 1.0)
+print(a.y == 2.0)
+
+# Immutable operators
+var c = a + b
+print(c.x == 4.0)
+print(c.y == 6.0)
+
+var d = b - a
+print(d.x == 2.0)
+print(d.y == 2.0)
+
+var e = a * 2.0
+print(e.x == 2.0)
+print(e.y == 4.0)
+
+# Mutable methods
+a.add(b)
+print(a.x == 4.0)
+print(a.y == 6.0)
+
+a.sub(vec2(1.0, 1.0))
+print(a.x == 3.0)
+print(a.y == 5.0)
+
+a.mul(2.0)
+print(a.x == 6.0)
+print(a.y == 10.0)
+
+# add with scalar
+var f = vec2(1.0, 1.0)
+f.add(vec2(2.0, 3.0), 0.5)
+print(f.x == 2.0)
+print(f.y == 2.5)
+
+# copy
+var g = f.copy()
+print(g.x == 2.0)
+print(g.y == 2.5)
+g.x = 99.0
+print(f.x == 2.0)  # original unchanged
+
+# vec3
+var v3 = vec3(1.0, 2.0, 3.0)
+print(v3.x == 1.0)
+print(v3.y == 2.0)
+print(v3.z == 3.0)
+print(v3.w == 0.0)
+
+# vec4
+var v4 = vec4(1.0, 2.0, 3.0, 4.0)
+print(v4.w == 4.0)
+
+# Member set
+v4.x = 10.0
+print(v4.x == 10.0)

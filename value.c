@@ -380,6 +380,17 @@ ObjInt64 *new_int64(int64_t value) {
     return obj;
 }
 
+ObjVector *new_vector(float x, float y, float z, float w) {
+    ObjVector *obj = malloc(sizeof(ObjVector));
+    if (!obj) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)obj, OBJ_VECTOR, sizeof(ObjVector));
+    obj->data[0] = x;
+    obj->data[1] = y;
+    obj->data[2] = z;
+    obj->data[3] = w;
+    return obj;
+}
+
 void buffer_reserve(ObjBuffer *buf, size_t capacity) {
     if (!buf) return;
     if (capacity <= buf->capacity) return;
@@ -549,6 +560,10 @@ void free_object_container(Object *obj) {
             free(ud);
             break;
         }
+        case OBJ_VECTOR: {
+            free(obj);
+            break;
+        }
         default: free(obj); break;
     }
 }
@@ -629,6 +644,7 @@ void free_object(Object *obj) {
         case OBJ_BUFFER: break;
         case OBJ_INT64: break;
         case OBJ_USERDATA: break;
+        case OBJ_VECTOR: break;
         default: break;
     }
 
@@ -785,6 +801,12 @@ char *value_to_string(Value v) {
             case OBJ_USERDATA: {
                 ObjUserdata *ud = (ObjUserdata*)obj;
                 snprintf(buf, sizeof(buf), "<userdata %s>", ud->tag ? ud->tag : "?");
+                return strdup(buf);
+            }
+            case OBJ_VECTOR: {
+                ObjVector *vec = (ObjVector*)obj;
+                snprintf(buf, sizeof(buf), "vec4(%.6g, %.6g, %.6g, %.6g)",
+                         vec->data[0], vec->data[1], vec->data[2], vec->data[3]);
                 return strdup(buf);
             }
             default: return strdup("<object>");

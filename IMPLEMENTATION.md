@@ -446,7 +446,7 @@ Luna uses a unified 64-bit `Value` type (NaN-boxing) where all non-double values
 |------|---------|
 | 0-2 | Sub-tags: `NIL`(1), `TRUE`(2), `FALSE`(3), `INT`(4), `EMPTY`(5) |
 | 3-46 | Pointer payload (44 bits = 16 TB addressable) |
-| 47-50 | **4-bit object type tag** (16 slots: 14 used, 2 free) |
+| 47-50 | **4-bit object type tag** (16 slots: 15 used, 1 free in 16-slot range) |
 | 51 | Quiet-NaN bit (must stay 1) |
 | 52-62 | Exponent (all 1s for NaN) |
 | 63 | Sign bit (NOT free — IEEE 754 NaNs can have bit 63 = 0 or 1; using it for tagging requires normalizing all hardware NaNs)
@@ -458,7 +458,7 @@ Luna uses a unified 64-bit `Value` type (NaN-boxing) where all non-double values
 - Object types — 4-bit tag in bits 47-50.
 
 *Future: Granular numeric types (post-1.0, FFI only)*
-The 4-bit type tag gives 16 slots. Already used: 14 object types, 2 free. Expanding to 32 slots would require using bit 63, which is NOT free — IEEE 754 NaNs can have bit 63 = 0 or 1, so using it for tagging requires normalizing every hardware NaN (a sweeping change). We are not doing this until we genuinely exhaust the 2 remaining object tags.
+The 4-bit type tag gives 16 slots in the zero-sign range. Already used: 15 object types, 1 free in the 16-slot range. 32-type expansion via bit 63 is enabled: bit 63 acts as the 5th tag bit for types 16-31, giving 17 slots remaining in the full 32-type space (types 16-31).
 
 If granular types are ever needed (e.g. FFI with C libraries expecting `uint16_t*` or `float32` buffers), they will be implemented as boxed heap objects:
 - `OBJ_INTEGER` with an internal `IntegerKind` (`I8`, `I16`, `I32`, `I64`, `U8`, `U16`, `U32`, `U64`, `BIG`)
@@ -477,7 +477,7 @@ Lua and LuaJIT expose only one numeric type to the user: `number` (double). Luna
 |------|---------|
 | 0-2 | Sub-tags: `NIL`(1), `TRUE`(2), `FALSE`(3), `INT`(4), `EMPTY`(5) |
 | 3-46 | Pointer payload (44 bits = 16 TB addressable) |
-| 47-50 | **4-bit object type tag** (16 slots: 14 used, 2 free) |
+| 47-50 | **4-bit object type tag** (16 slots: 15 used, 1 free in 16-slot range) |
 | 51 | Quiet-NaN bit (=1 for all tagged values) |
 | 52-62 | Exponent (all 1s for NaN) |
 | 63 | Sign bit (=0 for all tagged values and normalized NaNs) |

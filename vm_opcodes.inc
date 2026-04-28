@@ -51,9 +51,9 @@
     }
 
     /* 8.  OP_SUB */
-    op_sub: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG_PRIM(RA,make_int_result(to_i64(_L)-to_i64(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
+    op_sub: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG_PRIM(RA,make_int_result(to_i64(_L)-to_i64(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
     /* 9.  OP_MUL */
-    op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG_PRIM(RA,make_int_result(to_i64(_L)*to_i64(_R)));}else{SET_REG_PRIM(RA,do_arith(_L,_R,OP_MUL));} DECODE; goto *op_labels[OP(instr)]; }
+    op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG_PRIM(RA,make_int_result(to_i64(_L)*to_i64(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_MUL));} DECODE; goto *op_labels[OP(instr)]; }
 
     /* 10. OP_DIV */
     op_div: {
@@ -1086,6 +1086,32 @@
                 }
                 break;
             }
+            case OBJ_VECTOR: {
+                ObjVector *vec = (ObjVector*)AS_OBJ(obj);
+                if (field->length == 1) {
+                    char c = field->chars[0];
+                    float v = 0.0f;
+                    if (c == 'x') v = vec->data[0];
+                    else if (c == 'y') v = vec->data[1];
+                    else if (c == 'z') v = vec->data[2];
+                    else if (c == 'w') v = vec->data[3];
+                    else {
+                        char buf[256];
+                        snprintf(buf, sizeof(buf), "AttributeError: vector has no field '%s'", field->chars);
+                        release_value(_exc);
+                        _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
+                        goto op_throw;
+                    }
+                    SET_REG_PRIM(RA, make_double((double)v));
+                } else {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "AttributeError: vector has no field '%s'", field->chars);
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
+                    goto op_throw;
+                }
+                break;
+            }
             default: {
                 release_value(_exc);
                 _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: value has no fields");
@@ -1185,6 +1211,25 @@
                 } else {
                     instance_set_field(inst, field->chars, REG(RB));
                 }
+            }
+        } else if (IS_VECTOR(obj)) {
+            ObjVector *vec = (ObjVector*)AS_OBJ(obj);
+            float v = (float)value_to_double(REG(RB));
+            if (field->length == 1) {
+                char c = field->chars[0];
+                if (c == 'x') vec->data[0] = v;
+                else if (c == 'y') vec->data[1] = v;
+                else if (c == 'z') vec->data[2] = v;
+                else if (c == 'w') vec->data[3] = v;
+                else {
+                    release_value(_exc);
+                    _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: vector has no field");
+                    goto op_throw;
+                }
+            } else {
+                release_value(_exc);
+                _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: vector has no field");
+                goto op_throw;
             }
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1410,6 +1455,67 @@
                             goto op_throw;
                         }
                         result = make_int((uint8_t)str->chars[idx64]);
+                        handled = true;
+                    }
+                    break;
+                }
+                case OBJ_VECTOR: {
+                    ObjVector *vec = (ObjVector*)AS_OBJ(obj);
+                    if (!strcmp(mname, "add")) {
+                        if (nargs < 1 || !IS_VECTOR(scratch[0])) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "vector.add() expects a vector argument");
+                            goto op_throw;
+                        }
+                        ObjVector *other = (ObjVector*)AS_OBJ(scratch[0]);
+                        float s = 1.0f;
+                        if (nargs >= 2) {
+                            if (!IS_NUMBER(scratch[1])) {
+                                release_value(_exc);
+                                _exc = make_exception_instance(vm, vm->type_error_class, "vector.add() scalar must be numeric");
+                                goto op_throw;
+                            }
+                            s = (float)value_to_double(scratch[1]);
+                        }
+                        vec->data[0] += other->data[0] * s;
+                        vec->data[1] += other->data[1] * s;
+                        vec->data[2] += other->data[2] * s;
+                        vec->data[3] += other->data[3] * s;
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "sub")) {
+                        if (nargs < 1 || !IS_VECTOR(scratch[0])) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "vector.sub() expects a vector argument");
+                            goto op_throw;
+                        }
+                        ObjVector *other = (ObjVector*)AS_OBJ(scratch[0]);
+                        vec->data[0] -= other->data[0];
+                        vec->data[1] -= other->data[1];
+                        vec->data[2] -= other->data[2];
+                        vec->data[3] -= other->data[3];
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "mul")) {
+                        if (nargs < 1 || !IS_NUMBER(scratch[0])) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->type_error_class, "vector.mul() expects a numeric argument");
+                            goto op_throw;
+                        }
+                        float s = (float)value_to_double(scratch[0]);
+                        vec->data[0] *= s;
+                        vec->data[1] *= s;
+                        vec->data[2] *= s;
+                        vec->data[3] *= s;
+                        result = obj;
+                        handled = true;
+                    } else if (!strcmp(mname, "copy")) {
+                        if (nargs != 0) {
+                            release_value(_exc);
+                            _exc = make_exception_instance(vm, vm->argument_error_class, "vector.copy() takes no arguments");
+                            goto op_throw;
+                        }
+                        result = make_obj((Object*)new_vector(vec->data[0], vec->data[1], vec->data[2], vec->data[3]));
                         handled = true;
                     }
                     break;

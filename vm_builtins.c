@@ -263,6 +263,49 @@ static Value bn_isinf(VM *vm, Value *args, int n) {
 }
 
 /* ============================================================ */
+/* Vector constructors — global vec2, vec3, vec4                */
+/* ============================================================ */
+
+static Value bn_vec2(VM *vm, Value *args, int n) {
+    if (n != 2) {
+        luna_throw(vm, vm->argument_error_class, "vec2() expects exactly 2 arguments (x, y)");
+    }
+    if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1])) {
+        luna_throw(vm, vm->type_error_class, "vec2() arguments must be numeric");
+    }
+    float x = (float)value_to_double(args[0]);
+    float y = (float)value_to_double(args[1]);
+    return make_obj((Object*)new_vector(x, y, 0.0f, 0.0f));
+}
+
+static Value bn_vec3(VM *vm, Value *args, int n) {
+    if (n != 3) {
+        luna_throw(vm, vm->argument_error_class, "vec3() expects exactly 3 arguments (x, y, z)");
+    }
+    if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1]) || !IS_NUMBER(args[2])) {
+        luna_throw(vm, vm->type_error_class, "vec3() arguments must be numeric");
+    }
+    float x = (float)value_to_double(args[0]);
+    float y = (float)value_to_double(args[1]);
+    float z = (float)value_to_double(args[2]);
+    return make_obj((Object*)new_vector(x, y, z, 0.0f));
+}
+
+static Value bn_vec4(VM *vm, Value *args, int n) {
+    if (n != 4) {
+        luna_throw(vm, vm->argument_error_class, "vec4() expects exactly 4 arguments (x, y, z, w)");
+    }
+    if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1]) || !IS_NUMBER(args[2]) || !IS_NUMBER(args[3])) {
+        luna_throw(vm, vm->type_error_class, "vec4() arguments must be numeric");
+    }
+    float x = (float)value_to_double(args[0]);
+    float y = (float)value_to_double(args[1]);
+    float z = (float)value_to_double(args[2]);
+    float w = (float)value_to_double(args[3]);
+    return make_obj((Object*)new_vector(x, y, z, w));
+}
+
+/* ============================================================ */
 /* Dict method native functions — args[0] = dict (self)         */
 /* ============================================================ */
 
@@ -344,6 +387,9 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "gc", bn_gc);
     vm_define_native(vm, "isnan", bn_isnan);
     vm_define_native(vm, "isinf", bn_isinf);
+    vm_define_native(vm, "vec2",  bn_vec2);
+    vm_define_native(vm, "vec3",  bn_vec3);
+    vm_define_native(vm, "vec4",  bn_vec4);
 
     /* Pre-create dict method native function objects (live for process lifetime) */
     dict_method_table[0].fn = new_native_function("dict.keys",   dict_method_keys);
