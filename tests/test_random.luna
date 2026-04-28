@@ -32,12 +32,19 @@ var xs = random.Xorshift(99)
 var xs_val = xs.int(1, 10)
 print(xs_val >= 1 and xs_val <= 10)
 
-# random.choice on list
+# rng.choice on list (uses seeded RNG, not C rand())
 var items = ["apple", "banana", "cherry"]
-var picked = random.choice(items)
+var picked = rng.choice(items)
 print(picked == "apple" or picked == "banana" or picked == "cherry")
 
-# random.choice on string
+# rng.choice on string
 var letters = "abc"
-var ch = random.choice(letters)
+var ch = rng.choice(letters)
 print(ch == "a" or ch == "b" or ch == "c")
+
+# Reproducibility: same seed gives same choice result
+var rng2 = random.PCG(777)
+var c1 = rng2.choice([10, 20, 30])
+var rng3 = random.PCG(777)
+var c2 = rng3.choice([10, 20, 30])
+print(c1 == c2)

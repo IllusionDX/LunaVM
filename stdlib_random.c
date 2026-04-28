@@ -277,31 +277,36 @@ static Value random_Xorshift(VM *vm, Value *args, int n) {
 }
 
 /* ============================================================ */
-/* random.choice(seq)                                            */
+/* rng.choice(seq)                                               */
 /* ============================================================ */
 
-static Value random_choice(VM *vm, Value *args, int n) {
-    if (n < 1) luna_throw(vm, vm->argument_error_class, "random.choice() requires 1 argument");
+static Value rng_choice(VM *vm, Value *args, int n) {
+    if (n < 2) luna_throw(vm, vm->argument_error_class, "choice() requires a sequence argument");
 
-    Value seq = args[0];
-    if (!IS_OBJ(seq)) luna_throw(vm, vm->type_error_class, "random.choice(): argument must be a list or string");
+    ObjList *state_list = get_state_list(args[0]);
+    if (!state_list) luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
+
+    Value seq = args[1];
+    if (!IS_OBJ(seq)) luna_throw(vm, vm->type_error_class, "choice(): argument must be a list or string");
 
     Object *obj = AS_OBJ(seq);
     if (obj->type == OBJ_LIST) {
         ObjList *list = (ObjList*)obj;
         int len = list_length(list);
-        if (len == 0) luna_throw(vm, vm->value_error_class, "random.choice(): list is empty");
-        int idx = rand() % len;
+        if (len == 0) luna_throw(vm, vm->value_error_class, "choice(): list is empty");
+        uint32_t raw = rng_step(state_list);
+        int idx = (int)(raw % (uint32_t)len);
         return list_get(list, idx);
     }
     if (obj->type == OBJ_STRING) {
         ObjString *str = (ObjString*)obj;
-        if (str->length == 0) luna_throw(vm, vm->value_error_class, "random.choice(): string is empty");
-        int idx = rand() % str->length;
+        if (str->length == 0) luna_throw(vm, vm->value_error_class, "choice(): string is empty");
+        uint32_t raw = rng_step(state_list);
+        int idx = (int)(raw % (uint32_t)str->length);
         return make_obj((Object*)new_string(&str->chars[idx], 1));
     }
 
-    luna_throw(vm, vm->type_error_class, "random.choice(): argument must be a list or string");
+    luna_throw(vm, vm->type_error_class, "choice(): argument must be a list or string");
     return make_null(); /* unreachable */
 }
 
@@ -316,6 +321,7 @@ void vm_register_random_module(VM *vm) {
     class_add_native_method(rng_class, "int",    rng_int);
     class_add_native_method(rng_class, "float",  rng_float);
     class_add_native_method(rng_class, "seed",   rng_seed);
+    class_add_native_method(rng_class, "choice", rng_choice);
     class_add_native_method(rng_class, "_call",  rng_call);
 
     ObjModule *mod = new_module("random");
@@ -337,15 +343,6 @@ void vm_register_random_module(VM *vm) {
     dict_set(mod->exports, make_obj((Object*)xs_key), make_obj((Object*)xs_ctor));
     release_obj((Object*)xs_key);
     release_obj((Object*)xs_ctor);
-
-    /* random.choice(seq) */
-    ObjFunction *choice_fn = new_native_function("choice", random_choice);
-    retain_obj((Object*)choice_fn);
-    ObjString *choice_key = new_string("choice", 6);
-    retain_obj((Object*)choice_key);
-    dict_set(mod->exports, make_obj((Object*)choice_key), make_obj((Object*)choice_fn));
-    release_obj((Object*)choice_key);
-    release_obj((Object*)choice_fn);
 
     /* Cache module */
     Value mod_val = make_obj((Object*)mod);
