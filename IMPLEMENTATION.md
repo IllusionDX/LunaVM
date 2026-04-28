@@ -339,7 +339,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 
 | Version | Milestone |
 |---------|-----------|
-| `0.3.x` | Better error messages with line/column context and suggestions. Standard library expansion (strings — done, io — done, os — done, time — done, noise — done). |
+| `0.3.x` | Better error messages with line/column context and suggestions. Standard library expansion (io — done, os — done, time — done, noise — done, strings — pending). |
 | `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
 | `0.5.x` | Debugger / profiler. |
 | `0.6.x` | Coroutines / async (`await`, `async def`). |
