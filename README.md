@@ -401,7 +401,7 @@ var value = 42
 import math
 ```
 
-> `import` is parsed but not yet functional. Module resolution is planned for 0.3.0.
+> `import` is parsed but not yet functional. Module resolution is planned for a future release.
 > `from ... import` syntax is parsed but has no runtime support.
 
 ### Error Handling
@@ -409,13 +409,15 @@ import math
 ```luna
 try:
     var result = divide(10, 0)
-catch e:
+except as e:
     print("Error: " + e)
 
 try:
     risky()
-catch e:
-    print("Error: " + e)
+except ValueError:
+    print("Value error caught")
+except as e:
+    print("Other error: " + e)
 finally:
     cleanup()
 ```
