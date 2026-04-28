@@ -1391,7 +1391,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
     case STMT_TRY: {
         int exc_reg = alloc_reg(c);
         int try_idx = -1;
-        int skip_catch = -1;
+        int skip_dispatch = -1;
 
         if (stmt->data.try_stmt.catch_count > 0) {
             try_idx = emit_jump(c, OP_TRY, (uint8_t)exc_reg);
@@ -1404,21 +1404,52 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
 
         if (stmt->data.try_stmt.catch_count > 0) {
             emit_ABC(c, OP_ENDTRY, 0, 0, 0);
-            skip_catch = emit_jump(c, OP_JMP, 0);
+            skip_dispatch = emit_jump(c, OP_JMP, 0);
             patch_jump(c, try_idx);
 
-            CatchClause *cc = &stmt->data.try_stmt.catch_clauses[0];
-            if (cc->variable) {
-                int r = alloc_reg(c);
-                add_local(c, cc->variable, r);
-                emit_move(c, (uint8_t)r, (uint8_t)exc_reg);
-            }
-            scope_enter(c);
-            for (int i = 0; i < cc->body_count; i++)
-                compile_stmt(c, cc->body[i]);
-            scope_exit(c);
+            int *end_jumps = malloc(sizeof(int) * stmt->data.try_stmt.catch_count);
+            int end_count = 0;
 
-            patch_jump(c, skip_catch);
+            for (int ci = 0; ci < stmt->data.try_stmt.catch_count; ci++) {
+                CatchClause *cc = &stmt->data.try_stmt.catch_clauses[ci];
+                int next_clause = -1;
+
+                if (cc->type_name) {
+                    int cls_reg = alloc_reg(c);
+                    int const_idx = chunk_add_const(c->chunk, make_obj((Object*)new_string(cc->type_name, (int)strlen(cc->type_name))));
+                    chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)cls_reg, (uint16_t)const_idx);
+                    int bool_reg = alloc_reg(c);
+                    emit_ABC(c, OP_ISINSTANCE, (uint8_t)bool_reg, (uint8_t)exc_reg, (uint8_t)cls_reg);
+                    next_clause = emit_jump(c, OP_JZ, (uint8_t)bool_reg);
+                    free_reg(c);
+                    free_reg(c);
+                }
+
+                if (cc->variable) {
+                    int r = alloc_reg(c);
+                    add_local(c, cc->variable, r);
+                    emit_move(c, (uint8_t)r, (uint8_t)exc_reg);
+                }
+                scope_enter(c);
+                for (int i = 0; i < cc->body_count; i++)
+                    compile_stmt(c, cc->body[i]);
+                scope_exit(c);
+
+                end_jumps[end_count++] = emit_jump(c, OP_JMP, 0);
+
+                if (next_clause >= 0) {
+                    patch_jump(c, next_clause);
+                }
+            }
+
+            /* No handler matched — rethrow */
+            emit_ABC(c, OP_THROW, (uint8_t)exc_reg, 0, 0);
+
+            for (int i = 0; i < end_count; i++)
+                patch_jump(c, end_jumps[i]);
+            free(end_jumps);
+
+            patch_jump(c, skip_dispatch);
         }
 
         if (stmt->data.try_stmt.finally_count > 0) {

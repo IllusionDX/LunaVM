@@ -1,0 +1,48 @@
+# Test typed except clauses
+
+try:
+    [1, 2][10]
+except IndexError as e:
+    print("index error:")
+    print(e)
+
+# Should not catch wrong type
+try:
+    [1, 2][10]
+except KeyError as e:
+    print("wrong type caught")
+except IndexError:
+    print("right type caught")
+
+# Bare except catches anything
+try:
+    throw("generic")
+except:
+    print("bare except caught")
+
+# Re-throw when no match
+try:
+    try:
+        throw("no handler")
+    except KeyError as e:
+        print("key")
+except as e:
+    print("fallback caught:")
+    print(e)
+
+# AttributeError on object
+try:
+    var o = {}
+    o.nonexistent
+except KeyError as e:
+    print("key error:")
+    print(e)
+
+# Base Exception catches subclasses
+try:
+    [1][5]
+except Exception as e:
+    print("base caught subclass:")
+    print(e)
+
+print("done")

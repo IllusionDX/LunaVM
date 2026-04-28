@@ -176,6 +176,7 @@ typedef struct SwitchCase {
 } SwitchCase;
 
 typedef struct CatchClause {
+    char *type_name;  /* NULL for bare except */
     char *variable;
     Stmt **body;
     int body_count;

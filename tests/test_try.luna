@@ -1,21 +1,21 @@
-# Test try/catch/throw with nested exceptions
+# Test try/except/throw with nested exceptions
 
 try:
     throw("error")
-catch e:
+except as e:
     print("caught:")
     print(e)
 
-print("after try/catch")
+print("after try/except")
 
-# Nested try/catch
+# Nested try/except
 try:
     try:
         throw("inner")
-    catch inner:
+    except as inner:
         print("inner caught:")
         print(inner)
         throw("rethrown")
-catch outer:
+except as outer:
     print("outer caught:")
     print(outer)

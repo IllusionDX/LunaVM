@@ -328,11 +328,10 @@ ObjEnum *new_enum(const char *name, int count) {
     return e;
 }
 
-Value make_exception_instance(struct VM *vm, const char *message) {
-    if (!vm->exception_class) {
-        return make_null();
-    }
-    ObjInstance *inst = new_instance(vm->exception_class, 4);
+Value make_exception_instance(struct VM *vm, ObjClass *cls, const char *message) {
+    if (!cls) cls = vm->exception_class;
+    if (!cls) return make_null();
+    ObjInstance *inst = new_instance(cls, 4);
     instance_set_field(inst, "message", make_obj((Object*)new_string(message, strlen(message))));
     return make_obj((Object*)inst);
 }
@@ -539,9 +538,17 @@ char *value_to_string(Value v) {
                 snprintf(buf, sizeof(buf), "<%s %s>", f->is_native ? "native fn" : "fn", f->name ? f->name : "?");
                 return strdup(buf);
             }
-            case OBJ_INSTANCE:
-                snprintf(buf, sizeof(buf), "<instance of %s>", ((ObjInstance*)obj)->class_name);
-                return strdup(buf);
+            case OBJ_INSTANCE: {
+                ObjInstance *inst = (ObjInstance*)obj;
+                Value msgv = instance_get_field(inst, "message");
+                if (IS_STRING(msgv)) {
+                    snprintf(buf, sizeof(buf), "<%s>", ((ObjString*)AS_OBJ(msgv))->chars);
+                    return strdup(buf);
+                } else {
+                    snprintf(buf, sizeof(buf), "<instance of %s>", inst->class_name);
+                    return strdup(buf);
+                }
+            }
             case OBJ_LIST: {
                 ObjList *l = (ObjList *)obj;
                 int cap = 32; char *out = malloc(cap); int pos = 0;

@@ -460,26 +460,45 @@ void mark_and_sweep(VM *vm) {
 /* VM init / free                                                */
 /* ============================================================ */
 
+static ObjClass *vm_register_builtin_exception(VM *vm, const char *name, ObjClass *base) {
+    ObjClass *cls = new_class(name, NULL);
+    if (base) {
+        cls->base = base;
+        retain_obj((Object*)base);
+        /* Copy prototype fields from base */
+        if (base->prototype) {
+            ObjInstance *bp = base->prototype;
+            cls->prototype = new_instance(cls, bp->field_capacity > 4 ? bp->field_capacity : 4);
+            for (int i = 0; i < bp->field_count; i++) {
+                instance_set_field(cls->prototype, bp->field_names[i], bp->fields[i]);
+            }
+        }
+    } else {
+        cls->prototype = new_instance(cls, 4);
+        instance_set_field(cls->prototype, "message", make_null());
+        instance_set_field(cls->prototype, "stack_trace", make_null());
+        instance_set_field(cls->prototype, "file", make_null());
+        instance_set_field(cls->prototype, "line", make_int(0));
+    }
+    retain_obj((Object*)cls->prototype);
+    Value cls_val = make_obj((Object*)cls);
+    retain_obj((Object*)cls);
+    vm_set_global(vm, name, cls_val, false);
+    return cls;
+}
+
 void vm_init(VM *vm) {
     memset(vm, 0, sizeof(VM));
     vm_register_builtins(vm);
 
-    /* Register built-in Exception class */
-    {
-        ObjClass *exc_cls = new_class("Exception", NULL);
-        /* Create prototype instance with default fields */
-        ObjInstance *proto = new_instance(exc_cls, 4);
-        instance_set_field(proto, "message", make_null());
-        instance_set_field(proto, "stack_trace", make_null());
-        instance_set_field(proto, "file", make_null());
-        instance_set_field(proto, "line", make_int(0));
-        exc_cls->prototype = proto;
-        retain_obj((Object*)proto);
-        Value exc_val = make_obj((Object*)exc_cls);
-        retain_obj((Object*)exc_cls);
-        vm_set_global(vm, "Exception", exc_val, false);
-        vm->exception_class = exc_cls;
-    }
+    /* Register built-in Exception hierarchy */
+    vm->exception_class      = vm_register_builtin_exception(vm, "Exception", NULL);
+    vm->type_error_class     = vm_register_builtin_exception(vm, "TypeError", vm->exception_class);
+    vm->key_error_class      = vm_register_builtin_exception(vm, "KeyError", vm->exception_class);
+    vm->index_error_class    = vm_register_builtin_exception(vm, "IndexError", vm->exception_class);
+    vm->attribute_error_class = vm_register_builtin_exception(vm, "AttributeError", vm->exception_class);
+    vm->value_error_class    = vm_register_builtin_exception(vm, "ValueError", vm->exception_class);
+    vm->runtime_error_class  = vm_register_builtin_exception(vm, "RuntimeError", vm->exception_class);
 }
 
 static void close_upvalues(VM *vm, int frame_depth);
@@ -592,7 +611,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         mark_and_sweep(vm);
     }
     if (vm->frame_count >= MAX_FRAMES) {
-        vm->last_exception = make_exception_instance(vm, "vm: frame overflow");
+        vm->last_exception = make_exception_instance(vm, vm->exception_class, "vm: frame overflow");
         return VM_EXCEPTION;
     }
     CallFrame *frame = &vm->frames[vm->frame_count++];
@@ -691,14 +710,15 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         &&op_throw,         // 55 OP_THROW
         &&op_try,           // 56 OP_TRY
         &&op_endtry,        // 57 OP_ENDTRY
-        &&op_default,       // 58 OP_DEFAULT
-        &&op_kwargs,        // 59 OP_KWARGS
-        &&op_kcall,         // 60 OP_KCALL
-        &&op_coalesce,      // 61 OP_COALESCE
-        &&op_memberget_safe,// 62 OP_MEMBERGET_SAFE
-        &&op_indexget_safe, // 63 OP_INDEXGET_SAFE
-        &&op_slice_safe,    // 64 OP_SLICE_SAFE
-        &&op_halt           // 65 OP_HALT
+        &&op_isinstance,    // 58 OP_ISINSTANCE
+        &&op_default,       // 59 OP_DEFAULT
+        &&op_kwargs,        // 60 OP_KWARGS
+        &&op_kcall,         // 61 OP_KCALL
+        &&op_coalesce,      // 62 OP_COALESCE
+        &&op_memberget_safe,// 63 OP_MEMBERGET_SAFE
+        &&op_indexget_safe, // 64 OP_INDEXGET_SAFE
+        &&op_slice_safe,    // 65 OP_SLICE_SAFE
+        &&op_halt           // 66 OP_HALT
     };
 
     DECODE;
@@ -765,7 +785,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value _L = RKB, _R = RKC;
         if (IS_INT(_L) && IS_INT(_R)) {
             int64_t ri = AS_INT(_R);
-            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, "vm: div/0"); goto op_throw; }
+            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->exception_class, "vm: div/0"); goto op_throw; }
             SET_REG_PRIM(RA, make_int(AS_INT(_L) / ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
@@ -788,7 +808,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value _L = RKB, _R = RKC;
         if (IS_INT(_L) && IS_INT(_R)) {
             int64_t ri = AS_INT(_R);
-            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, "vm: mod/0"); goto op_throw; }
+            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->exception_class, "vm: mod/0"); goto op_throw; }
             SET_REG_PRIM(RA, make_int(AS_INT(_L) % ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
@@ -915,7 +935,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -954,7 +974,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -994,7 +1014,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -1034,7 +1054,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             }
             free(s);
             release_value(_exc);
-            _exc = make_exception_instance(vm, buf);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1089,7 +1109,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value fn_val = CONST(k);
         if (!IS_FUNCTION(fn_val)) {
             release_value(_exc);
-            _exc = make_exception_instance(vm, "vm: CLOSURE needs function constant");
+            _exc = make_exception_instance(vm, vm->exception_class, "vm: CLOSURE needs function constant");
             goto op_throw;
         }
         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
@@ -1166,7 +1186,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value cls_val;
         if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
             release_value(_exc);
-            _exc = make_exception_instance(vm, "vm: class not found for new");
+            _exc = make_exception_instance(vm, vm->exception_class, "vm: class not found for new");
             goto op_throw;
         }
         ObjClass *cls = (ObjClass*)AS_OBJ(cls_val);
@@ -1186,7 +1206,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             list_add((ObjList*)AS_OBJ(lst), val);
         } else {
             release_value(_exc);
-            _exc = make_exception_instance(vm, "vm: listappend on non-list");
+            _exc = make_exception_instance(vm, vm->exception_class, "vm: listappend on non-list");
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1248,12 +1268,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 }
                 default:
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "vm: object is not iterable");
+                    _exc = make_exception_instance(vm, vm->exception_class, "vm: object is not iterable");
                     goto op_throw;
             }
         } else {
             release_value(_exc);
-            _exc = make_exception_instance(vm, "vm: non-object is not iterable");
+            _exc = make_exception_instance(vm, vm->exception_class, "vm: non-object is not iterable");
             goto op_throw;
         }
 
@@ -1269,14 +1289,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         Value key = REG(RC);
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
             release_value(_exc);
-            _exc = make_exception_instance(vm, "index access on null value");
+                _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: cannot index null value");
             goto op_throw;
         }
         switch (AS_OBJ(obj)->type) {
             case OBJ_LIST: {
                 if (!IS_INT(key)) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "list index must be integer");
+                    _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: list index must be integer");
                     goto op_throw;
                 }
                 int idx = (int)AS_INT(key);
@@ -1284,8 +1304,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 int len = lst->count;
                 if (idx < 0) idx += len;
                 if (idx < 0 || idx >= len) {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "IndexError: list index out of bounds (index: %d, size: %d)", idx, len);
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "list index out of bounds");
+                    _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
                 SET_REG(RA, lst->items ? lst->items[idx] : lst->inline_items[idx]);
@@ -1294,8 +1316,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             case OBJ_DICT: {
                 Value val = dict_get((ObjDict*)AS_OBJ(obj), key);
                 if (IS_NIL(val)) {
+                    char *ks = value_to_string(key);
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "KeyError: %s not found in dict", ks);
+                    free(ks);
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "dict key not found");
+                    _exc = make_exception_instance(vm, vm->key_error_class, buf);
                     goto op_throw;
                 }
                 SET_REG(RA, val);
@@ -1305,14 +1331,16 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 ObjString *s = (ObjString*)AS_OBJ(obj);
                 if (!IS_INT(key)) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "string index must be integer");
+                    _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: string index must be integer");
                     goto op_throw;
                 }
                 int idx = (int)AS_INT(key);
                 if (idx < 0) idx += s->length;
                 if (idx < 0 || idx >= s->length) {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "IndexError: string index out of bounds (index: %d, length: %d)", idx, s->length);
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "string index out of bounds");
+                    _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
                 SET_REG(RA, make_obj((Object*)new_string(&s->chars[idx], 1)));
@@ -1320,14 +1348,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             }
             default: {
                 release_value(_exc);
-                _exc = make_exception_instance(vm, "value is not indexable");
+                _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: value is not indexable");
                 goto op_throw;
             }
         }
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 63. OP_INDEXGET_SAFE (safe — null on missing or null obj) */
+    /* 64. OP_INDEXGET_SAFE (safe — null on missing or null obj) */
     op_indexget_safe: {
         Value obj = REG(RB);
         Value key = REG(RC);
@@ -1465,7 +1493,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 64. OP_SLICE_SAFE (safe — null on null obj) */
+    /* 65. OP_SLICE_SAFE (safe — null on null obj) */
     op_slice_safe: {
         Value obj = REG(RB);
         Value start_val = REG(RB + 1);
@@ -1574,7 +1602,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         ObjString *field = KSTROBJ(RC);
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
             release_value(_exc);
-            _exc = make_exception_instance(vm, "member access on null value");
+                _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: cannot access member of null value");
             goto op_throw;
         }
         switch (AS_OBJ(obj)->type) {
@@ -1605,7 +1633,9 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                             SET_REG(RA, make_obj((Object*)bm));
                         } else {
                             release_value(_exc);
-                            _exc = make_exception_instance(vm, "instance has no such field or method");
+                            char buf[256];
+                            snprintf(buf, sizeof(buf), "AttributeError: instance has no field or method '%s'", field->chars);
+                            _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                             goto op_throw;
                         }
                     }
@@ -1616,8 +1646,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 if (field->length == 6 && !memcmp(field->chars, "length", 6))
                     SET_REG_PRIM(RA, make_int(list_length((ObjList*)AS_OBJ(obj))));
                 else {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "AttributeError: list has no field '%s'", field->chars);
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "list has no such field");
+                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
                 break;
@@ -1630,8 +1662,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 } else {
                     Value val = dict_get((ObjDict*)AS_OBJ(obj), make_obj((Object*)field));
                     if (IS_NIL(val)) {
+                        char buf[256];
+                        snprintf(buf, sizeof(buf), "KeyError: '%s' not found in dict", field->chars);
                         release_value(_exc);
-                        _exc = make_exception_instance(vm, "dict has no such key");
+                        _exc = make_exception_instance(vm, vm->key_error_class, buf);
                         goto op_throw;
                     }
                     SET_REG(RA, val);
@@ -1642,8 +1676,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 if (field->length == 6 && !memcmp(field->chars, "length", 6))
                     SET_REG_PRIM(RA, make_int(((ObjString*)AS_OBJ(obj))->length));
                 else {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "AttributeError: string has no field '%s'", field->chars);
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "string has no such field");
+                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
                 break;
@@ -1656,8 +1692,10 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 }
                 if (fi >= 0) SET_REG_PRIM(RA, make_int(e->values[fi]));
                 else {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "AttributeError: enum has no variant '%s'", field->chars);
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "enum has no such variant");
+                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
                 break;
@@ -1669,22 +1707,24 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
                 else if (strcmp(field->chars, "base") == 0)
                     SET_REG(RA, cls->base ? make_obj((Object*)cls->base) : make_null());
                 else {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "AttributeError: class has no field '%s'", field->chars);
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "class has no such field");
+                    _exc = make_exception_instance(vm, vm->exception_class, buf);
                     goto op_throw;
                 }
                 break;
             }
             default: {
                 release_value(_exc);
-                _exc = make_exception_instance(vm, "value has no fields");
+                _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: value has no fields");
                 goto op_throw;
             }
         }
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 62. OP_MEMBERGET_SAFE (safe — null on missing or null obj) */
+    /* 63. OP_MEMBERGET_SAFE (safe — null on missing or null obj) */
     op_memberget_safe: {
         Value obj = REG(RB);
         ObjString *field = KSTROBJ(RC);
@@ -1860,7 +1900,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             char buf[256];
             snprintf(buf, sizeof(buf), "vm: unknown method '%s'", mname);
             release_value(_exc);
-            _exc = make_exception_instance(vm, buf);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1933,7 +1973,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             char buf[256];
             snprintf(buf, sizeof(buf), "vm: unknown super method '%s'", mname);
             release_value(_exc);
-            _exc = make_exception_instance(vm, buf);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -1995,7 +2035,26 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 57. OP_DEFAULT */
+    /* 58. OP_ISINSTANCE */
+    op_isinstance: {
+        Value obj = REG(RB);
+        Value cls = REG(RC);
+        bool result = false;
+        if (IS_OBJ(obj) && AS_OBJ(obj) && AS_OBJ(obj)->type == OBJ_INSTANCE) {
+            ObjClass *obj_class = ((ObjInstance*)AS_OBJ(obj))->klass;
+            if (IS_OBJ(cls) && AS_OBJ(cls) && AS_OBJ(cls)->type == OBJ_CLASS) {
+                ObjClass *target = (ObjClass*)AS_OBJ(cls);
+                while (obj_class) {
+                    if (obj_class == target) { result = true; break; }
+                    obj_class = obj_class->base;
+                }
+            }
+        }
+        SET_REG_PRIM(RA, make_bool(result));
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 59. OP_DEFAULT */
     op_default: {
         uint8_t param_idx = RA;
         int32_t skip = sBx;
@@ -2013,7 +2072,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 58. OP_KWARGS */
+    /* 60. OP_KWARGS */
     op_kwargs: {
         if (FRAME.fn && FRAME.fn->param_name_objs &&
             IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type == OBJ_DICT) {
@@ -2030,7 +2089,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 59. OP_KCALL */
+    /* 61. OP_KCALL */
     op_kcall: {
         uint8_t ret_reg = RA;
         uint8_t fn_reg  = B;
@@ -2048,7 +2107,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -2088,7 +2147,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -2129,7 +2188,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -2168,13 +2227,13 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
             }
             free(s);
             release_value(_exc);
-            _exc = make_exception_instance(vm, buf);
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 60. OP_COALESCE */
+    /* 62. OP_COALESCE */
     op_coalesce: {
         if (!IS_NIL(REG(RA))) {
             IP += sBx;
@@ -2185,7 +2244,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         goto *op_labels[OP(instr)];
     }
 
-    /* 61. OP_HALT */
+    /* 66. OP_HALT */
     op_halt:
         return VM_OK;
 

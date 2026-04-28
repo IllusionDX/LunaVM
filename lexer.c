@@ -131,8 +131,9 @@ static Keyword keywords[] = {
     {"case", TOK_CASE},
     {"default", TOK_DEFAULT},
     {"try", TOK_TRY},
-    {"catch", TOK_CATCH},
+    {"except", TOK_EXCEPT},
     {"finally", TOK_FINALLY},
+    {"as", TOK_AS},
     {"throw", TOK_THROW},
     {"and", TOK_AND},
     {"or", TOK_OR},
@@ -569,8 +570,9 @@ const char *token_type_name(TokenType type) {
         case TOK_CASE: return "CASE";
         case TOK_DEFAULT: return "DEFAULT";
         case TOK_TRY: return "TRY";
-        case TOK_CATCH: return "CATCH";
+        case TOK_EXCEPT: return "EXCEPT";
         case TOK_FINALLY: return "FINALLY";
+        case TOK_AS: return "AS";
         case TOK_THROW: return "THROW";
         case TOK_AND: return "AND";
         case TOK_OR: return "OR";

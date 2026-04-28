@@ -321,20 +321,20 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.11-alpha` | Done | QNAN_TAG collision fix: changed from `0x7FFC` to `0x7FF8` (bit 50 = 0) so 16 type signatures are unique. Inf/NaN value support: `IS_INF`, `IS_POS_INF`, `IS_NEG_INF`, `IS_NAN` macros, `make_pos_inf()`, `make_neg_inf()`, Inf division results in `OP_DIV`/`OP_MOD`. `make_double()` normalizes all NaNs to payload=10. 32-type expansion path documented in NaN-boxing architecture section. |
 | `0.2.12-alpha` | Done | Nullish coalescing (`??`): `var name = nickname ?? "Unknown"` — evaluates to RHS only when LHS is `null`, preserving `false`, `0`, and `""`. Short-circuit evaluation. Test consolidation: merged duplicate closure, lambda, list, and object tests. |
 | `0.2.13-alpha` | Done | Ternary expression (`a if cond else b`): Python-style conditional expression. Parses with backtracking to avoid conflict with list comprehension `if` filters. |
-| `0.2.14-alpha` | **Current** | Optional chaining (`?.`): `obj?.field` returns `null` if `obj` is `null`, otherwise accesses `field`. Chains correctly: `a?.b?.c`. Short-circuit via `OP_JNIL`. |
+| `0.2.14-alpha` | Done | Optional chaining (`?.`): `obj?.field` returns `null` if `obj` is `null`, otherwise accesses `field`. Chains correctly: `a?.b?.c`. Short-circuit via `OP_JNIL`. |
+| `0.3.0-alpha` | **Current** | Typed exception handling: `try`/`except`/`finally` with real exception class hierarchy (`Exception`, `TypeError`, `KeyError`, `IndexError`, `AttributeError`, `ValueError`, `RuntimeError`). `except Type:` and `except Type as var:` syntax with runtime `isinstance` dispatch. `OP_ISINSTANCE` opcode for subclass-aware type checking. Descriptive error messages prefixed with exception type. |
 
 ## Roadmap
 
 | Version | Milestone |
 |---------|-----------|
-| `0.2.x` | Better error messages with line/column context and suggestions. |
-| `0.3.x` | Modules, imports, and standard library (strings, math, io, os). Optional chaining (`?.`) for null-safe member access. Ternary expression (`a if cond else b`). |
+| `0.3.x` | Better error messages with line/column context and suggestions. Modules, imports, and standard library (strings, math, io, os). |
 | `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
-| `0.5.x` | Exception handling (`try` / `catch` / `finally`, custom exceptions, stack traces). |
-| `0.6.x` | Debugger / profiler. |
-| `0.7.x` | Coroutines / async (`await`, `async def`). |
-| `0.8.x` | Generation 2 optimized VM lands. Type specialization from hints. |
-| `0.9.x` | Generation 3 simple JIT. |
+| `0.5.x` | Debugger / profiler. |
+| `0.6.x` | Coroutines / async (`await`, `async def`). |
+| `0.7.x` | Generation 2 optimized VM lands. Type specialization from hints. |
+| `0.8.x` | Generation 3 simple JIT. |
+| `0.9.x` | Package manager and ecosystem tools. |
 | `1.0.0-beta` | Spec freeze, release candidate phase. |
 | `1.0.0` | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
 

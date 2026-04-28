@@ -315,13 +315,34 @@ static Stmt *parse_try_statement(Parser *parser) {
 
     if (match(parser, TOK_NEWLINE)) advance(parser);
 
-    while (match(parser, TOK_CATCH)) {
+    while (match(parser, TOK_EXCEPT)) {
         advance(parser);
+        char *type_name = NULL;
         char *var_name = strdup("e");
-        if (match(parser, TOK_IDENTIFIER)) {
-            free(var_name);
-            var_name = strdup(peek(parser)->value);
+        if (match(parser, TOK_AS)) {
+            /* except as var: */
+            advance(parser); /* consume 'as' */
+            if (match(parser, TOK_IDENTIFIER)) {
+                free(var_name);
+                var_name = strdup(peek(parser)->value);
+                advance(parser);
+            } else {
+                parser_error(parser, "Expected variable name after 'as'");
+            }
+        } else if (match(parser, TOK_IDENTIFIER)) {
+            /* except Type:  or  except Type as var: */
+            type_name = strdup(peek(parser)->value);
             advance(parser);
+            if (match(parser, TOK_AS)) {
+                advance(parser); /* consume 'as' */
+                if (match(parser, TOK_IDENTIFIER)) {
+                    free(var_name);
+                    var_name = strdup(peek(parser)->value);
+                    advance(parser);
+                } else {
+                    parser_error(parser, "Expected variable name after 'as'");
+                }
+            }
         }
         if (match(parser, TOK_COLON)) {
             advance(parser);
@@ -334,6 +355,7 @@ static Stmt *parse_try_statement(Parser *parser) {
         if (match(parser, TOK_NEWLINE)) advance(parser);
 
         if (catch_count >= catch_capacity) { catch_capacity *= 2; catch_clauses = realloc(catch_clauses, catch_capacity * sizeof(CatchClause)); }
+        catch_clauses[catch_count].type_name = type_name;
         catch_clauses[catch_count].variable = var_name;
         catch_clauses[catch_count].body = catch_body;
         catch_clauses[catch_count].body_count = catch_body_count;

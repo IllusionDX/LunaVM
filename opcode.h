@@ -140,6 +140,9 @@ typedef enum {
     OP_TRY,         /* AsBx : push try, catch at PC+sBx                   */
     OP_ENDTRY,      /* ABC  : pop try frame (A,B,C unused)               */
 
+    /* ---- Type checking ---- */
+    OP_ISINSTANCE,  /* ABC  : A = isinstance(B, C)  (C is a class object) */
+
     /* ---- Default arguments & keyword calls ---- */
     OP_DEFAULT,     /* AsBx : if arg[RA] provided OR in kw_args then PC += sBx else fall through */
     OP_KWARGS,      /* ABC  : populate params from kwargs dict (A,B,C unused) */

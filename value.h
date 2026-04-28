@@ -335,7 +335,7 @@ ObjInstance *new_instance(struct ObjClass *klass, int field_capacity);
 ObjClass    *new_class(const char *name, const char *base_name);
 ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
-Value make_exception_instance(struct VM *vm, const char *message);
+Value make_exception_instance(struct VM *vm, struct ObjClass *cls, const char *message);
 ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);
 ObjEnum     *new_enum(const char *name, int count);
