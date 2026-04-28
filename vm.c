@@ -1140,6 +1140,63 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
                 DECODE;
                 goto *op_labels[OP(instr)];
             }
+        } else if (IS_INSTANCE(fn_val)) {
+            ObjInstance *inst = (ObjInstance *)AS_OBJ(fn_val);
+            int mi = -1;
+            if (inst->klass) {
+                for (int i = 0; i < inst->klass->method_count; i++) {
+                    if (strcmp(inst->klass->method_names[i], "_call") == 0) { mi = i; break; }
+                }
+            }
+            if (mi >= 0) {
+                ObjFunction *fn = inst->klass->methods[mi];
+                if (fn->is_native) {
+                    Value scratch[256];
+                    scratch[0] = fn_val;
+                    for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
+                    Value result = fn->native_fn(vm, scratch, nargs + 1);
+                    SET_REG(ret_reg, result);
+                    DECODE; goto *op_labels[OP(instr)];
+                } else {
+                    if (vm->frame_count >= MAX_FRAMES) {
+                        release_value(_exc);
+                        _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
+                        goto op_throw;
+                    }
+                    CallFrame *caller = &FRAME;
+                    CallFrame *callee = &vm->frames[vm->frame_count];
+                    callee->chunk = fn->chunk;
+                    callee->ip = 0;
+                    /* Overwrite instance slot with self; base points there so reg 0 = self */
+                    SET_REG(fn_reg, fn_val);
+                    callee->base = caller->base + fn_reg;
+                    callee->ret_reg = ret_reg;
+                    callee->nargs = nargs;
+                    callee->kw_args = make_null();
+                    frame_set_refs(callee, NULL, fn);
+                    callee->saved_globals = NULL;
+                    int needed = callee->base + fn->chunk->max_registers;
+                    if (needed > vm->stack_cap) {
+                        vm->stack_cap = needed < 64 ? 64 : needed * 2;
+                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                    }
+                    /* nargs+1 because self occupies reg 0 */
+                    for (int i = nargs + 1; i < fn->chunk->max_registers; i++)
+                        vm->stack[callee->base + i] = make_null();
+                    vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                    vm->frame_count++;
+                    CHUNK = callee->chunk;
+                    IP = 0;
+                    DECODE;
+                    goto *op_labels[OP(instr)];
+                }
+            } else {
+                char buf[256];
+                snprintf(buf, sizeof(buf), "vm: attempt to call instance of '%s' (no _call method)", inst->klass ? inst->klass->name : "?");
+                release_value(_exc);
+                _exc = make_exception_instance(vm, vm->exception_class, buf);
+                goto op_throw;
+            }
         } else {
             char *s = value_to_string(fn_val);
             char buf[256];

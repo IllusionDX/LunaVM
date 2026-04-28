@@ -147,6 +147,21 @@ static Value pcg_seed(VM *vm, Value *args, int n) {
     return make_null();
 }
 
+static Value pcg_call(VM *vm, Value *args, int n) {
+    (void)n;
+    ObjList *state_list = get_state_list(args[0]);
+    if (!state_list) luna_throw(vm, vm->runtime_error_class, "PCG instance corrupted: missing _state");
+
+    uint64_t state = read_u64(state_list, 0);
+    uint64_t inc   = read_u64(state_list, 2);
+    uint32_t raw   = pcg32_step(&state, &inc);
+    write_u64(state_list, 0, state);
+    write_u64(state_list, 2, inc);
+
+    double normalized = (double)raw / ((double)UINT32_MAX + 1.0);
+    return make_double(normalized);
+}
+
 /* ============================================================ */
 /* Constructor                                                  */
 /* ============================================================ */
@@ -193,9 +208,10 @@ void vm_register_random_module(VM *vm) {
     pcg_class = new_class("PCG", NULL);
     retain_obj((Object*)pcg_class);
 
-    class_add_native_method(pcg_class, "int",   pcg_int);
-    class_add_native_method(pcg_class, "float", pcg_float);
-    class_add_native_method(pcg_class, "seed",  pcg_seed);
+    class_add_native_method(pcg_class, "int",    pcg_int);
+    class_add_native_method(pcg_class, "float",  pcg_float);
+    class_add_native_method(pcg_class, "seed",   pcg_seed);
+    class_add_native_method(pcg_class, "_call",  pcg_call);
 
     ObjModule *mod = new_module("random");
 

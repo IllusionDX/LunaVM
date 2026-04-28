@@ -1,0 +1,11 @@
+import random
+
+var rng = random.PCG(42)
+var a = rng()
+var b = rng()
+var c = rng()
+
+print(a >= 0.0 and a < 1.0)
+print(b >= 0.0 and b < 1.0)
+print(c >= 0.0 and c < 1.0)
+print(a != b or a != c)
