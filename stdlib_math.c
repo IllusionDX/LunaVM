@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "stdlib_math.h"
 #include "value.h"
 
@@ -17,8 +18,7 @@
     static Value math_##name(VM *vm, Value *args, int n) {      \
         (void)vm;                                               \
         if (!n) return make_double(0.0);                       \
-        double v = IS_INT(args[0]) ? (double)AS_INT(args[0])   \
-                                   : AS_DOUBLE(args[0]);       \
+        double v = value_to_double(args[0]);                    \
         return make_double(cfn(v));                             \
     }
 
@@ -26,10 +26,8 @@
     static Value math_##name(VM *vm, Value *args, int n) {      \
         (void)vm;                                               \
         if (n < 2) return make_double(0.0);                     \
-        double a = IS_INT(args[0]) ? (double)AS_INT(args[0])   \
-                                   : AS_DOUBLE(args[0]);       \
-        double b = IS_INT(args[1]) ? (double)AS_INT(args[1])   \
-                                   : AS_DOUBLE(args[1]);       \
+        double a = value_to_double(args[0]);                    \
+        double b = value_to_double(args[1]);                    \
         return make_double(cfn(a, b));                          \
     }
 
@@ -71,9 +69,9 @@ static Value math_abs(VM *vm, Value *args, int n) {
 static Value math_clamp(VM *vm, Value *args, int n) {
     (void)vm;
     if (n < 3) return make_double(0.0);
-    double v = IS_INT(args[0]) ? (double)AS_INT(args[0]) : AS_DOUBLE(args[0]);
-    double mn = IS_INT(args[1]) ? (double)AS_INT(args[1]) : AS_DOUBLE(args[1]);
-    double mx = IS_INT(args[2]) ? (double)AS_INT(args[2]) : AS_DOUBLE(args[2]);
+    double v = value_to_double(args[0]);
+    double mn = value_to_double(args[1]);
+    double mx = value_to_double(args[2]);
     if (v < mn) v = mn;
     if (v > mx) v = mx;
     return make_double(v);
@@ -82,16 +80,16 @@ static Value math_clamp(VM *vm, Value *args, int n) {
 static Value math_lerp(VM *vm, Value *args, int n) {
     (void)vm;
     if (n < 3) return make_double(0.0);
-    double a = IS_INT(args[0]) ? (double)AS_INT(args[0]) : AS_DOUBLE(args[0]);
-    double b = IS_INT(args[1]) ? (double)AS_INT(args[1]) : AS_DOUBLE(args[1]);
-    double t = IS_INT(args[2]) ? (double)AS_INT(args[2]) : AS_DOUBLE(args[2]);
+    double a = value_to_double(args[0]);
+    double b = value_to_double(args[1]);
+    double t = value_to_double(args[2]);
     return make_double(a + (b - a) * t);
 }
 
 static Value math_sign(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n) return make_int(0);
-    double v = IS_INT(args[0]) ? (double)AS_INT(args[0]) : AS_DOUBLE(args[0]);
+    double v = value_to_double(args[0]);
     if (v > 0.0) return make_int(1);
     if (v < 0.0) return make_int(-1);
     return make_int(0);
@@ -100,14 +98,14 @@ static Value math_sign(VM *vm, Value *args, int n) {
 static Value math_deg_to_rad(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n) return make_double(0.0);
-    double d = IS_INT(args[0]) ? (double)AS_INT(args[0]) : AS_DOUBLE(args[0]);
+    double d = value_to_double(args[0]);
     return make_double(d * (3.14159265358979323846 / 180.0));
 }
 
 static Value math_rad_to_deg(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n) return make_double(0.0);
-    double r = IS_INT(args[0]) ? (double)AS_INT(args[0]) : AS_DOUBLE(args[0]);
+    double r = value_to_double(args[0]);
     return make_double(r * (180.0 / 3.14159265358979323846));
 }
 
@@ -116,17 +114,29 @@ static Value math_rad_to_deg(VM *vm, Value *args, int n) {
 /* ============================================================ */
 
 static Value math_random(VM *vm, Value *args, int n) {
-    (void)vm; (void)args; (void)n;
-    return make_double((double)rand() / (double)RAND_MAX);
-}
-
-static Value math_random_int(VM *vm, Value *args, int n) {
     (void)vm;
-    if (n < 2) return make_int(0);
+    if (n == 0) {
+        return make_double((double)rand() / (double)RAND_MAX);
+    }
+    if (n == 1) {
+        int mx = IS_INT(args[0]) ? AS_INT(args[0]) : (int)AS_DOUBLE(args[0]);
+        if (mx < 1) return make_int(0);
+        return make_int(1 + rand() % mx);
+    }
     int mn = IS_INT(args[0]) ? AS_INT(args[0]) : (int)AS_DOUBLE(args[0]);
     int mx = IS_INT(args[1]) ? AS_INT(args[1]) : (int)AS_DOUBLE(args[1]);
     if (mn > mx) { int t = mn; mn = mx; mx = t; }
     return make_int(mn + rand() % (mx - mn + 1));
+}
+
+static Value math_randomseed(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (n > 0) {
+        srand((unsigned int)value_to_double(args[0]));
+    } else {
+        srand((unsigned int)time(NULL));
+    }
+    return make_null();
 }
 
 /* ============================================================ */
@@ -174,8 +184,8 @@ void vm_register_math_module(VM *vm) {
     math_add_fn(vm, mod->exports, "rad_to_deg", math_rad_to_deg);
 
     /* Random */
-    math_add_fn(vm, mod->exports, "random",     math_random);
-    math_add_fn(vm, mod->exports, "random_int", math_random_int);
+    math_add_fn(vm, mod->exports, "random",      math_random);
+    math_add_fn(vm, mod->exports, "randomseed",  math_randomseed);
 
     /* Constants */
     math_add_const(mod->exports, "pi",       3.14159265358979323846);

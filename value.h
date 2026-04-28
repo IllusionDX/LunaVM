@@ -400,6 +400,11 @@ static inline void release_value(Value v) {
     if (IS_OBJ(v)) release_obj(AS_OBJ(v));
 }
 
+static inline double value_to_double(Value v) {
+    if (IS_INT(v)) return (double)AS_INT(v);
+    return AS_DOUBLE(v);
+}
+
 void value_free_intern_table(void);
 
 /* ============================================================ */
