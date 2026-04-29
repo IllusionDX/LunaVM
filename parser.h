@@ -52,9 +52,9 @@ void expect_newline(Parser *parser);
 ParserState save_state(Parser *parser);
 void restore_state(Parser *parser, ParserState s);
 
-Expr *make_expr(ExprKind kind);
-Stmt *make_stmt(StmtKind kind);
-Decl *make_decl(DeclKind kind);
+Expr *make_expr(ExprKind kind, int line);
+Stmt *make_stmt(StmtKind kind, int line);
+Decl *make_decl(DeclKind kind, int line);
 
 bool is_type_hint_token(TokenType t);
 bool is_type_hint_start(Parser *parser);

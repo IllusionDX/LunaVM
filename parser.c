@@ -91,24 +91,27 @@ void restore_state(Parser *parser, ParserState s) {
 
 /* ============== Memory allocation helpers ============== */
 
-Expr *make_expr(ExprKind kind) {
+Expr *make_expr(ExprKind kind, int line) {
     Expr *expr = (Expr *)calloc(1, sizeof(Expr));
     if (!expr) return NULL;
     expr->kind = kind;
+    expr->line = line;
     return expr;
 }
 
-Stmt *make_stmt(StmtKind kind) {
+Stmt *make_stmt(StmtKind kind, int line) {
     Stmt *stmt = (Stmt *)calloc(1, sizeof(Stmt));
     if (!stmt) return NULL;
     stmt->kind = kind;
+    stmt->line = line;
     return stmt;
 }
 
-Decl *make_decl(DeclKind kind) {
+Decl *make_decl(DeclKind kind, int line) {
     Decl *decl = (Decl *)calloc(1, sizeof(Decl));
     if (!decl) return NULL;
     decl->kind = kind;
+    decl->line = line;
     return decl;
 }
 

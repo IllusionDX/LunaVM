@@ -458,13 +458,16 @@ static Token *scan_token(Lexer *lexer) {
     
     if (c == '\n' || c == '\r') {
         lexer->at_line_start = true;
+        int save_line = lexer->line;
         if (c == '\r' && peek_next(lexer) == '\n') {
             advance(lexer); /* consume \r */
             advance(lexer); /* consume \n */
         } else {
             advance(lexer);
         }
-        return make_token(lexer, TOK_NEWLINE, "\\n", 1);
+        Token *tok = make_token(lexer, TOK_NEWLINE, "\\n", 1);
+        tok->line = save_line;
+        return tok;
     }
     
     if (c == 'f' && (peek_next(lexer) == '"' || peek_next(lexer) == '\'')) {

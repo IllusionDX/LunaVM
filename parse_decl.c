@@ -78,7 +78,7 @@ static Decl *parse_function_declaration(Parser *parser) {
         body_count = 1;
     }
 
-    Decl *decl = make_decl(DECL_FUNCTION);
+    Decl *decl = make_decl(DECL_FUNCTION, name->line);
     decl->data.function.name = strdup(name ? name->value : "");
     decl->data.function.params = params;
     decl->data.function.param_count = param_count;
@@ -134,7 +134,7 @@ static Decl *parse_class_declaration(Parser *parser) {
     }
     expect(parser, TOK_DEDENT, "Expected dedent after class");
 
-    Decl *decl = make_decl(DECL_CLASS);
+    Decl *decl = make_decl(DECL_CLASS, name ? name->line : 0);
     decl->data.class_decl.name = strdup(name ? name->value : "");
     decl->data.class_decl.base_class = base_class;
     decl->data.class_decl.fields = fields;
@@ -180,7 +180,7 @@ static Decl *parse_enum_declaration(Parser *parser) {
     }
     expect(parser, TOK_DEDENT, "Expected dedent after enum");
 
-    Decl *decl = make_decl(DECL_ENUM);
+    Decl *decl = make_decl(DECL_ENUM, name ? name->line : 0);
     decl->data.enum_decl.name = strdup(name ? name->value : "");
     decl->data.enum_decl.variants = variants;
     decl->data.enum_decl.variant_count = variant_count;
@@ -194,10 +194,11 @@ static Decl *parse_import_declaration(Parser *parser) {
     char **items = NULL;
     int item_count = 0;
     bool import_all = false;
+    Token *mod = NULL;
 
     if (match(parser, TOK_FROM)) {
         advance(parser);
-        Token *mod = expect(parser, TOK_IDENTIFIER, "Expected module name");
+        mod = expect(parser, TOK_IDENTIFIER, "Expected module name");
         module_name = strdup(mod ? mod->value : "");
         expect(parser, TOK_IMPORT, "Expected 'import'");
 
@@ -218,11 +219,11 @@ static Decl *parse_import_declaration(Parser *parser) {
         }
     } else {
         expect(parser, TOK_IMPORT, "Expected 'import'");
-        Token *mod = expect(parser, TOK_IDENTIFIER, "Expected module name");
+        mod = expect(parser, TOK_IDENTIFIER, "Expected module name");
         module_name = strdup(mod ? mod->value : "");
     }
 
-    Decl *decl = make_decl(DECL_IMPORT);
+    Decl *decl = make_decl(DECL_IMPORT, mod ? mod->line : 0);
     decl->data.import_decl.module_name = module_name;
     decl->data.import_decl.items = items;
     decl->data.import_decl.item_count = item_count;

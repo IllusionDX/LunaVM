@@ -1179,3 +1179,56 @@ bool vm_call_native(VM *vm, NativeFn fn, Value *args, int arg_count, Value *out)
     vm->native_jump = jump.prev;
     return ok;
 }
+
+void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size) {
+    /* Find the innermost frame that has a source_path */
+    const char *fallback_source = NULL;
+    for (int j = vm->frame_count - 1; j >= 0; j--) {
+        if (vm->frames[j].chunk && vm->frames[j].chunk->source_path) {
+            fallback_source = vm->frames[j].chunk->source_path;
+            break;
+        }
+    }
+    int pos = 0;
+    int top_line = 0;
+    for (int i = 0; i < vm->frame_count && pos < (int)buf_size - 1; i++) {
+        CallFrame *f = &vm->frames[i];
+        if (!f->chunk) continue;
+        int line = 0;
+        int ip = f->ip;
+        if (ip > 0 && ip <= f->chunk->count) {
+            line = f->chunk->lines[ip - 1];
+        }
+        const char *fn_name = f->chunk->name ? f->chunk->name : "<unknown>";
+        const char *source = f->chunk->source_path ? f->chunk->source_path : (fallback_source ? fallback_source : NULL);
+        int n = snprintf(buf + pos, buf_size - pos, "\n  File \"%s\", line %d, in %s", source ? source : "?", line, fn_name);
+        if (n > 0) pos += n;
+        top_line = line;
+    }
+    /* Try to show source context for the top frame */
+    const char *src_path = NULL;
+    for (int j = vm->frame_count - 1; j >= 0; j--) {
+        if (vm->frames[j].chunk && vm->frames[j].chunk->source_path) {
+            src_path = vm->frames[j].chunk->source_path;
+            break;
+        }
+    }
+    if (src_path && top_line > 0) {
+        FILE *f = fopen(src_path, "r");
+        if (f) {
+            char line_buf[512];
+            int current = 1;
+            while (fgets(line_buf, sizeof(line_buf), f)) {
+                size_t len = strlen(line_buf);
+                if (len > 0 && line_buf[len-1] == '\n') line_buf[len-1] = '\0';
+                if (current >= top_line - 1 && current <= top_line + 1) {
+                    int n = snprintf(buf + pos, buf_size - pos, "\n%s %s", current == top_line ? " >" : "  ", line_buf);
+                    if (n > 0) pos += n;
+                }
+                current++;
+            }
+            fclose(f);
+        }
+    }
+    buf[pos] = '\0';
+}

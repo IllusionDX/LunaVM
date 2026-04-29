@@ -51,6 +51,7 @@ typedef struct DictEntry {
 
 typedef struct Expr {
     ExprKind kind;
+    int line;
     union {
         struct {
             char *value;
@@ -185,6 +186,7 @@ typedef struct CatchClause {
 
 typedef struct Stmt {
     StmtKind kind;
+    int line;
     union {
         struct {
             Expr *expression;
@@ -259,6 +261,7 @@ typedef struct EnumVariant {
 
 typedef struct Decl {
     DeclKind kind;
+    int line;
     union {
         struct {
             char *name;

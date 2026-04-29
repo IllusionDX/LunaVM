@@ -1109,6 +1109,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
 /* ============================================================ */
 
 static void compile_stmt(Compiler *c, Stmt *stmt) {
+    c->line = stmt->line;
     switch (stmt->kind) {
 
     case STMT_EXPRESSION: {
@@ -1498,6 +1499,7 @@ static void compile_class(Compiler *c, Decl *decl);
 static void compile_enum(Compiler *c, Decl *decl);
 
 static void compile_decl(Compiler *c, Decl *decl) {
+    c->line = decl->line;
     switch (decl->kind) {
     case DECL_FUNCTION: compile_function(c, decl); break;
     case DECL_CLASS:    compile_class(c, decl);    break;
@@ -1778,7 +1780,7 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl, bool 
         .vm         = vm,
         .temp_base  = 0,
         .max_temp_base = 0,
-        .line       = 1,
+        .line       = 0,
         .func_depth = 0,
         .loop       = NULL,
         .is_repl    = is_repl

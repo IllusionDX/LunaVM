@@ -60,7 +60,7 @@
         Value _L = RKB, _R = RKC;
         if (is_int_type(_L) && is_int_type(_R)) {
             int64_t ri = to_i64(_R);
-            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->exception_class, "vm: div/0"); goto op_throw; }
+            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->runtime_error_class, "vm: division by zero"); goto op_throw; }
             SET_REG_PRIM(RA, make_int_result(to_i64(_L) / ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);

@@ -120,9 +120,12 @@ static int execute_native_program(const char *source, const char *filepath, int 
     fprintf(stderr, "DEBUG: vm_run_chunk returned %d\n", result);
 #endif
     if (result == VM_EXCEPTION) {
-        fprintf(stderr, "Uncaught exception: ");
+        fprintf(stderr, "Uncaught exception:");
+        char trace[2048];
+        vm_format_stack_trace(&vm, trace, sizeof(trace));
+        fprintf(stderr, "%s", trace);
         char *exc_str = value_to_string(vm.last_exception);
-        fprintf(stderr, "%s\n", exc_str);
+        fprintf(stderr, "\n%s\n", exc_str);
         free(exc_str);
         chunk_free(&chunk);
         vm_free(&vm);
@@ -181,9 +184,12 @@ static int execute_repl_line(VM *vm, const char *source) {
     VMResult result = vm_run_chunk(vm, &chunk);
     if (result == VM_EXCEPTION) {
         fflush(stdout);
-        fprintf(stderr, "Uncaught exception: ");
+        fprintf(stderr, "Uncaught exception:");
+        char trace[2048];
+        vm_format_stack_trace(vm, trace, sizeof(trace));
+        fprintf(stderr, "%s", trace);
         char *exc_str = value_to_string(vm->last_exception);
-        fprintf(stderr, "%s\n", exc_str);
+        fprintf(stderr, "\n%s\n", exc_str);
         free(exc_str);
         chunk_free(&chunk);
         free_program(program);

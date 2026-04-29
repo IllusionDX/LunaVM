@@ -30,7 +30,7 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
             }
             expect(parser, TOK_ASSIGN, "Expected '=' after var declaration");
             Expr *initializer = parse_expression(parser);
-            Stmt *stmt = make_stmt(STMT_VAR_DECL);
+            Stmt *stmt = make_stmt(STMT_VAR_DECL, peek(parser)->line);
             stmt->data.var_decl.is_const = false;
             stmt->data.var_decl.name = NULL;
             stmt->data.var_decl.pattern = pattern;
@@ -48,7 +48,7 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
             }
             expect(parser, TOK_ASSIGN, "Expected '=' after var declaration");
             Expr *initializer = parse_expression(parser);
-            Stmt *stmt = make_stmt(STMT_VAR_DECL);
+            Stmt *stmt = make_stmt(STMT_VAR_DECL, peek(parser)->line);
             stmt->data.var_decl.is_const = false;
             stmt->data.var_decl.name = NULL;
             stmt->data.var_decl.pattern = pattern;
@@ -64,7 +64,7 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
         }
         expect(parser, TOK_ASSIGN, "Expected '=' after var declaration");
         Expr *initializer = parse_expression(parser);
-        Stmt *stmt = make_stmt(STMT_VAR_DECL);
+        Stmt *stmt = make_stmt(STMT_VAR_DECL, peek(parser)->line);
         stmt->data.var_decl.is_const = false;
         stmt->data.var_decl.name = name;
         stmt->data.var_decl.pattern = NULL;
@@ -88,7 +88,7 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
             }
             expect(parser, TOK_ASSIGN, "Expected '=' after const declaration");
             Expr *initializer = parse_expression(parser);
-            Stmt *stmt = make_stmt(STMT_VAR_DECL);
+            Stmt *stmt = make_stmt(STMT_VAR_DECL, peek(parser)->line);
             stmt->data.var_decl.is_const = true;
             stmt->data.var_decl.name = NULL;
             stmt->data.var_decl.pattern = pattern;
@@ -121,7 +121,7 @@ static Stmt *parse_var_decl(Parser *parser, bool is_const, bool use_var) {
         initializer = parse_expression(parser);
     }
 
-    Stmt *stmt = make_stmt(STMT_VAR_DECL);
+    Stmt *stmt = make_stmt(STMT_VAR_DECL, peek(parser)->line);
     stmt->data.var_decl.is_const = is_const;
     stmt->data.var_decl.name = name;
     stmt->data.var_decl.pattern = NULL;
@@ -186,7 +186,7 @@ static Stmt *parse_if_statement(Parser *parser) {
         else_body = parse_block(parser, &else_count);
     }
 
-    Stmt *stmt = make_stmt(STMT_IF);
+    Stmt *stmt = make_stmt(STMT_IF, peek(parser)->line);
     stmt->data.if_stmt.condition = condition;
     stmt->data.if_stmt.then_body = then_body;
     stmt->data.if_stmt.then_count = then_count;
@@ -206,7 +206,7 @@ static Stmt *parse_while_statement(Parser *parser) {
     int body_count = 0;
     Stmt **body = parse_block(parser, &body_count);
 
-    Stmt *stmt = make_stmt(STMT_WHILE);
+    Stmt *stmt = make_stmt(STMT_WHILE, peek(parser)->line);
     stmt->data.while_stmt.condition = condition;
     stmt->data.while_stmt.body = body;
     stmt->data.while_stmt.body_count = body_count;
@@ -226,7 +226,7 @@ static Stmt *parse_for_statement(Parser *parser) {
     int body_count = 0;
     Stmt **body = parse_block(parser, &body_count);
 
-    Stmt *stmt = make_stmt(STMT_FOR);
+    Stmt *stmt = make_stmt(STMT_FOR, peek(parser)->line);
     stmt->data.for_stmt.variable = strdup(var_tok ? var_tok->value : "");
     stmt->data.for_stmt.iterable = iterable;
     stmt->data.for_stmt.body = body;
@@ -280,7 +280,7 @@ static Stmt *parse_switch_statement(Parser *parser) {
 
     expect(parser, TOK_DEDENT, "Expected dedent after switch");
 
-    Stmt *stmt = make_stmt(STMT_SWITCH);
+    Stmt *stmt = make_stmt(STMT_SWITCH, peek(parser)->line);
     stmt->data.switch_stmt.expression = expr;
     stmt->data.switch_stmt.cases = cases;
     stmt->data.switch_stmt.case_count = case_count;
@@ -292,7 +292,7 @@ static Stmt *parse_switch_statement(Parser *parser) {
 static Stmt *parse_throw_statement(Parser *parser) {
     expect(parser, TOK_THROW, "Expected 'throw'");
     Expr *expr = parse_expression(parser);
-    Stmt *stmt = make_stmt(STMT_THROW);
+    Stmt *stmt = make_stmt(STMT_THROW, peek(parser)->line);
     stmt->data.throw_stmt.expression = expr;
     return stmt;
 }
@@ -369,7 +369,7 @@ static Stmt *parse_try_statement(Parser *parser) {
         finally_body = parse_block(parser, &finally_count);
     }
 
-    Stmt *stmt = make_stmt(STMT_TRY);
+    Stmt *stmt = make_stmt(STMT_TRY, peek(parser)->line);
     stmt->data.try_stmt.try_body = try_body;
     stmt->data.try_stmt.try_count = try_count;
     stmt->data.try_stmt.catch_clauses = catch_clauses;
@@ -387,7 +387,7 @@ static Stmt *parse_return_statement(Parser *parser) {
     if (!match(parser, TOK_NEWLINE) && !match(parser, TOK_DEDENT) && !match(parser, TOK_EOF)) {
         value = parse_expression(parser);
     }
-    Stmt *stmt = make_stmt(STMT_RETURN);
+    Stmt *stmt = make_stmt(STMT_RETURN, peek(parser)->line);
     stmt->data.return_stmt.value = value;
     return stmt;
 }
@@ -400,7 +400,7 @@ Stmt *parse_statement(Parser *parser) {
     if (is_declaration_start(parser)) {
         Decl *decl = parse_declaration(parser);
         if (decl) {
-            Stmt *stmt = make_stmt(STMT_DECLARATION);
+            Stmt *stmt = make_stmt(STMT_DECLARATION, peek(parser)->line);
             stmt->data.declaration.decl = decl;
             return stmt;
         }
@@ -431,19 +431,19 @@ Stmt *parse_statement(Parser *parser) {
 
     if (match(parser, TOK_PASS)) {
         advance(parser);
-        return make_stmt(STMT_PASS);
+        return make_stmt(STMT_PASS, peek(parser)->line);
     }
     if (match(parser, TOK_BREAK)) {
         advance(parser);
-        return make_stmt(STMT_BREAK);
+        return make_stmt(STMT_BREAK, peek(parser)->line);
     }
     if (match(parser, TOK_CONTINUE)) {
         advance(parser);
-        return make_stmt(STMT_CONTINUE);
+        return make_stmt(STMT_CONTINUE, peek(parser)->line);
     }
 
     Expr *expr = parse_expression(parser);
-    Stmt *stmt = make_stmt(STMT_EXPRESSION);
+    Stmt *stmt = make_stmt(STMT_EXPRESSION, peek(parser)->line);
     stmt->data.expression.expression = expr;
     return stmt;
 }

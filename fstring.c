@@ -20,10 +20,10 @@ TokenList *lexer_tokenize(Lexer *lexer);
 static Expr *append_fstring_part(Expr *current, Expr *part) {
     if (!current) {
         if (part->kind != EXPR_STRING) {
-            Expr *empty = make_expr(EXPR_STRING);
+            Expr *empty = make_expr(EXPR_STRING, 0);
             empty->data.string.value = strdup("");
             empty->data.string.length = 0;
-            Expr *bin = make_expr(EXPR_BINARY);
+            Expr *bin = make_expr(EXPR_BINARY, 0);
             bin->data.binary.left = empty;
             bin->data.binary.operator = strdup("+");
             bin->data.binary.right = part;
@@ -32,7 +32,7 @@ static Expr *append_fstring_part(Expr *current, Expr *part) {
         return part;
     }
 
-    Expr *bin = make_expr(EXPR_BINARY);
+    Expr *bin = make_expr(EXPR_BINARY, 0);
     bin->data.binary.left = current;
     bin->data.binary.operator = strdup("+");
     bin->data.binary.right = part;
@@ -81,7 +81,7 @@ Expr *desugar_fstring_len(const char *template, int len) {
 
         int text_len = (brace_start == -1) ? len - i : brace_start - i;
         if (text_len > 0) {
-            Expr *text = make_expr(EXPR_STRING);
+            Expr *text = make_expr(EXPR_STRING, 0);
             text->data.string.value = malloc(text_len + 1);
             memcpy(text->data.string.value, template + i, text_len);
             text->data.string.value[text_len] = '\0';
@@ -106,7 +106,7 @@ Expr *desugar_fstring_len(const char *template, int len) {
 
         if (brace_end == -1) {
             int rest_len = len - brace_start;
-            Expr *text = make_expr(EXPR_STRING);
+            Expr *text = make_expr(EXPR_STRING, 0);
             text->data.string.value = malloc(rest_len + 1);
             memcpy(text->data.string.value, template + brace_start, rest_len + 1);
             text->data.string.length = rest_len;
@@ -140,7 +140,7 @@ Expr *desugar_fstring_len(const char *template, int len) {
     }
 
     if (!result) {
-        result = make_expr(EXPR_STRING);
+        result = make_expr(EXPR_STRING, 0);
         result->data.string.value = strdup("");
         result->data.string.length = 0;
     }
