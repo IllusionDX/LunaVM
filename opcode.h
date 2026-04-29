@@ -162,6 +162,12 @@ typedef enum {
 
     OP_HALT,        /* ABC  : stop VM (A,B,C unused)                     */
 
+    /* ---- Compare-and-branch (ABC: A=left, B=right, C=offset) ---- */
+    OP_LT_JZ,       /* ABC  : if !(A < B) then IP += C                  */
+    OP_LE_JZ,       /* ABC  : if !(A <= B) then IP += C                 */
+    OP_GT_JZ,       /* ABC  : if !(A > B) then IP += C                  */
+    OP_GE_JZ,       /* ABC  : if !(A >= B) then IP += C                 */
+
     OP_COUNT        /* sentinel — total opcode count                       */
 } OpCode;
 

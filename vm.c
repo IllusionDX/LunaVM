@@ -911,13 +911,17 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 
 #define DECODE \
     do { \
-        if ((++vm->instr_count & 4095) == 0 && bytes_allocated > next_gc_threshold) mark_and_sweep(vm); \
         instr = CHUNK->code[IP++]; \
         A   = DECODE_A(instr); \
         B   = DECODE_B(instr); \
         C   = DECODE_C(instr); \
         Bx  = DECODE_Bx(instr); \
         sBx = DECODE_sBx(instr); \
+    } while (0)
+    
+#define CHECK_GC \
+    do { \
+        if (LUNA_UNLIKELY(bytes_allocated > next_gc_threshold)) mark_and_sweep(vm); \
     } while (0)
 
 #define OP(inst) DECODE_OP(inst)
@@ -994,7 +998,11 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_slice_safe,    // 65 OP_SLICE_SAFE
         &&op_import,        // 66 OP_IMPORT
         &&op_tryinit,       // 67 OP_TRYINIT
-        &&op_halt           // 68 OP_HALT
+        &&op_halt,          // 68 OP_HALT
+        &&op_lt_jz,         // 69 OP_LT_JZ
+        &&op_le_jz,         // 70 OP_LE_JZ
+        &&op_gt_jz,         // 71 OP_GT_JZ
+        &&op_ge_jz          // 72 OP_GE_JZ
     };
 
     DECODE;

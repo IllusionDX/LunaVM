@@ -191,6 +191,60 @@
         if (IS_NIL(REG(RA))) IP += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
+    /* ---- Compare-and-branch (ABC: A=left, B=right, C=offset) ---- */
+    op_lt_jz: {
+        Value _L = REG(RA), _R = REG(RB);
+        bool _c;
+        if (is_int_type(_L) && is_int_type(_R)) {
+            _c = to_i64(_L) < to_i64(_R);
+        } else if (is_num(_L) && is_num(_R)) {
+            _c = to_f64(_L) < to_f64(_R);
+        } else {
+            _c = is_truthy(do_cmp(_L, _R, OP_LT));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_le_jz: {
+        Value _L = REG(RA), _R = REG(RB);
+        bool _c;
+        if (is_int_type(_L) && is_int_type(_R)) {
+            _c = to_i64(_L) <= to_i64(_R);
+        } else if (is_num(_L) && is_num(_R)) {
+            _c = to_f64(_L) <= to_f64(_R);
+        } else {
+            _c = is_truthy(do_cmp(_L, _R, OP_LE));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_gt_jz: {
+        Value _L = REG(RA), _R = REG(RB);
+        bool _c;
+        if (is_int_type(_L) && is_int_type(_R)) {
+            _c = to_i64(_L) > to_i64(_R);
+        } else if (is_num(_L) && is_num(_R)) {
+            _c = to_f64(_L) > to_f64(_R);
+        } else {
+            _c = is_truthy(do_cmp(_L, _R, OP_GT));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_ge_jz: {
+        Value _L = REG(RA), _R = REG(RB);
+        bool _c;
+        if (is_int_type(_L) && is_int_type(_R)) {
+            _c = to_i64(_L) >= to_i64(_R);
+        } else if (is_num(_L) && is_num(_R)) {
+            _c = to_f64(_L) >= to_f64(_R);
+        } else {
+            _c = is_truthy(do_cmp(_L, _R, OP_GE));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
     /* ---- Functions ---- */
     /* 33. OP_CALL */
     op_call: {
@@ -485,6 +539,7 @@
             if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
         }
         SET_REG(dst, make_obj((Object*)cl));
+        CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -597,12 +652,21 @@
         ObjClass *cls = (ObjClass*)AS_OBJ(cls_val);
         ObjInstance *new_inst = new_instance(cls, 4);
         SET_REG(RA, make_obj((Object*)new_inst));
+        CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 42. OP_NEWDICT */
-    op_newdict: SET_REG(RA, make_obj((Object*)new_dict())); DECODE; goto *op_labels[OP(instr)];
+    op_newdict: {
+        SET_REG(RA, make_obj((Object*)new_dict()));
+        CHECK_GC;
+        DECODE; goto *op_labels[OP(instr)];
+    }
     /* 43. OP_NEWLIST */
-    op_newlist: SET_REG(RA, make_obj((Object*)new_list((int)Bx))); DECODE; goto *op_labels[OP(instr)];
+    op_newlist: {
+        SET_REG(RA, make_obj((Object*)new_list((int)Bx)));
+        CHECK_GC;
+        DECODE; goto *op_labels[OP(instr)];
+    }
     /* 44. OP_LISTAPPEND */
     op_listappend: {
         Value lst = REG(RA);
