@@ -260,8 +260,10 @@ void chunk_disassemble(Chunk *chunk) {
         printf("  %4d  %-15s", i, mnem);
 
         /* Special: ADDI / SUBI use B as immediate, not register */
-        if (opcode == OP_ADDI || opcode == OP_SUBI) {
+        if (opcode == OP_ADDI) {
             printf(" R%d %+d", a, (int8_t)b);
+        } else if (opcode == OP_SUBI) {
+            printf(" R%d %+d", a, -(int8_t)b);
         }
         /* Special: LT_JZ / LE_JZ / GT_JZ / GE_JZ use A=left, B=right, C=offset */
         else if (opcode == OP_LT_JZ || opcode == OP_LE_JZ ||
