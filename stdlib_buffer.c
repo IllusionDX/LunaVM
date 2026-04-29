@@ -41,20 +41,18 @@ static Value buffer_from_string(VM *vm, Value *args, int n) {
 }
 
 void vm_register_buffer_module(VM *vm) {
-    ObjClass *buffer_class = new_class("Buffer", NULL);
-    retain_obj((Object*)buffer_class);
+    ObjModule *mod = new_module("buffer");
 
+    /* Export new/from_string directly on the module */
     ObjFunction *fn = new_native_function("new", buffer_new);
-    ObjString *key = new_string("new", 3);
-    dict_set(buffer_class->fields, make_obj((Object*)key), make_obj((Object*)fn));
+    dict_set(mod->exports,
+             make_obj((Object*)new_string("new", 3)),
+             make_obj((Object*)fn));
 
     fn = new_native_function("from_string", buffer_from_string);
-    key = new_string("from_string", 11);
-    dict_set(buffer_class->fields, make_obj((Object*)key), make_obj((Object*)fn));
-
-    ObjModule *mod = new_module("buffer");
-    dict_set(mod->exports, make_obj((Object*)new_string("Buffer", 6)),
-             make_obj((Object*)buffer_class));
+    dict_set(mod->exports,
+             make_obj((Object*)new_string("from_string", 11)),
+             make_obj((Object*)fn));
 
     Value mod_val = make_obj((Object *)mod);
     ObjString *mod_key = new_string("buffer", 6);

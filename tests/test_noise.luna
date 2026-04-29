@@ -1,26 +1,26 @@
 import noise
 
-# --- Callable 2D noise ---
-var perlin = noise.Perlin(42)
-var p1 = perlin(1.5, 2.5)
+# --- Sample 2D noise ---
+var perlin = new noise.Perlin(42)
+var p1 = perlin.sample(1.5, 2.5)
 print(p1 >= 0.0 and p1 <= 1.0)
 
-var simplex = noise.Simplex(42)
-var s1 = simplex(1.5, 2.5)
+var simplex = new noise.Simplex(42)
+var s1 = simplex.sample(1.5, 2.5)
 print(s1 >= 0.0 and s1 <= 1.0)
 
-var voronoi = noise.Voronoi(42, 2.0)
-var v1 = voronoi(1.5, 2.5)
+var voronoi = new noise.Voronoi(42, 2.0)
+var v1 = voronoi.sample(1.5, 2.5)
 print(v1 >= 0.0 and v1 <= 1.0)
 
-# --- Callable 3D noise (optional z) ---
-var p3d = perlin(1.5, 2.5, 3.5)
+# --- Sample 3D noise (optional z) ---
+var p3d = perlin.sample(1.5, 2.5, 3.5)
 print(p3d >= 0.0 and p3d <= 1.0)
 
-var s3d = simplex(1.5, 2.5, 3.5)
+var s3d = simplex.sample(1.5, 2.5, 3.5)
 print(s3d >= 0.0 and s3d <= 1.0)
 
-var v3d = voronoi(1.5, 2.5, 3.5)
+var v3d = voronoi.sample(1.5, 2.5, 3.5)
 print(v3d >= 0.0 and v3d <= 1.0)
 
 # --- Voronoi edge (2D and 3D) ---
@@ -31,29 +31,29 @@ var e3d = voronoi.edge(1.5, 2.5, 3.5)
 print(e3d >= 0.0 and e3d <= 1.0)
 
 # --- Reproducibility: same seed gives same value ---
-var perlin2 = noise.Perlin(42)
-var p2 = perlin2(1.5, 2.5)
+var perlin2 = new noise.Perlin(42)
+var p2 = perlin2.sample(1.5, 2.5)
 print(p1 == p2)
 
-var simplex2 = noise.Simplex(42)
-var s2 = simplex2(1.5, 2.5)
+var simplex2 = new noise.Simplex(42)
+var s2 = simplex2.sample(1.5, 2.5)
 print(s1 == s2)
 
-var voronoi2 = noise.Voronoi(42, 2.0)
-var v2 = voronoi2(1.5, 2.5)
+var voronoi2 = new noise.Voronoi(42, 2.0)
+var v2 = voronoi2.sample(1.5, 2.5)
 print(v1 == v2)
 
 # --- Different seeds give different values ---
-var perlin3 = noise.Perlin(99)
-var p3 = perlin3(1.5, 2.5)
+var perlin3 = new noise.Perlin(99)
+var p3 = perlin3.sample(1.5, 2.5)
 print(p1 != p3)
 
 # --- Default seed (0) works ---
-var perlin0 = noise.Perlin()
-var p0 = perlin0(0.0, 0.0)
+var perlin0 = new noise.Perlin()
+var p0 = perlin0.sample(0.0, 0.0)
 print(p0 >= 0.0 and p0 <= 1.0)
 
 # --- Voronoi default cell_size ---
-var voronoi_default = noise.Voronoi(123)
-var vd = voronoi_default(3.0, 4.0)
+var voronoi_default = new noise.Voronoi(123)
+var vd = voronoi_default.sample(3.0, 4.0)
 print(vd >= 0.0 and vd <= 1.0)

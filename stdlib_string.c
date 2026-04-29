@@ -29,9 +29,27 @@ static Value string_from_byte(VM *vm, Value *args, int n) {
     return make_obj((Object*)new_string(&c, 1));
 }
 
+static void module_add_const(ObjModule *mod, const char *name, const char *value) {
+    dict_set(mod->exports,
+             make_obj((Object*)new_string(name, (int)strlen(name))),
+             make_obj((Object*)new_string(value, (int)strlen(value))));
+}
+
 void vm_register_string_module(VM *vm) {
     ObjModule *mod = new_module("string");
+
     module_add_native(mod, "from_byte", string_from_byte);
+
+    module_add_const(mod, "ascii_letters",
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    module_add_const(mod, "digits",
+        "0123456789");
+    module_add_const(mod, "punctuation",
+        "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~");
+    module_add_const(mod, "whitespace",
+        " \t\n\r\x0b\x0c");
+    module_add_const(mod, "hexdigits",
+        "0123456789abcdefABCDEF");
 
     Value mod_val = make_obj((Object *)mod);
     ObjString *key = new_string("string", 6);

@@ -1,10 +1,12 @@
-/* stdlib_os.c — Built-in os module for Luna.
+/* stdlib_os.c — Built-in os module for Luna (Go-inspired).
  *
- * Directory: getcwd(), chdir(), listdir(), mkdir()
- * Files:     rename(), remove(), stat()
- * System:    execute(), getpid(), hostname(), username(), tmpdir()
- * Env:       getenv(), setenv()
- * Paths:     path_join(...), sep, pathsep
+ * File I/O:   open()/File(), read_file(), write_file(), append_file(),
+ *             exists(); File methods: read_line(), read_all(), write(), flush(), close()
+ * Directory:  getcwd(), chdir(), listdir(), mkdir()
+ * Filesystem: rename(), remove(), stat()
+ * System:     execute(), getpid(), hostname(), username(), tmpdir()
+ * Env:        getenv(), setenv()
+ * Paths:      path_join(...), sep, pathsep
  */
 
 #include <stdlib.h>
@@ -159,7 +161,304 @@ static Value os_mkdir(VM *vm, Value *args, int n) {
 }
 
 /* ==================================================================
- * File operations
+ * File I/O — File class + convenience functions (moved from io)
+ * ================================================================== */
+
+typedef struct LunaFile {
+    FILE *fp;
+    char *path;
+    char *mode;
+} LunaFile;
+
+static ObjClass *file_class = NULL;
+
+static char *dup_cstr(const char *s) {
+    size_t len = strlen(s);
+    char *out = malloc(len + 1);
+    if (!out) { fprintf(stderr, "OOM\n"); exit(1); }
+    memcpy(out, s, len + 1);
+    return out;
+}
+
+static char *value_to_cstring(VM *vm, Value v, const char *fn, int arg_idx) {
+    if (!IS_STRING(v)) {
+        luna_throw(vm, vm->type_error_class,
+            "%s() argument %d must be a string", fn, arg_idx);
+    }
+    ObjString *s = (ObjString*)AS_OBJ(v);
+    char *buf = malloc((size_t)s->length + 1);
+    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+    memcpy(buf, s->chars, (size_t)s->length);
+    buf[s->length] = '\0';
+    return buf;
+}
+
+static void file_finalizer(void *data) {
+    LunaFile *file = (LunaFile*)data;
+    if (!file) return;
+    if (file->fp) {
+        fclose(file->fp);
+        file->fp = NULL;
+    }
+    free(file->path);
+    free(file->mode);
+    free(file);
+}
+
+static ObjUserdata *file_userdata_from_instance(VM *vm, Value self, const char *fn) {
+    if (!IS_INSTANCE(self) || !AS_OBJ(self)) {
+        luna_throw(vm, vm->type_error_class, "%s() expects a File instance", fn);
+    }
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
+    Value handle = instance_get_field(inst, "_handle");
+    if (!IS_USERDATA(handle) || !AS_OBJ(handle)) {
+        luna_throw(vm, vm->runtime_error_class, "%s() called on closed file handle", fn);
+    }
+    ObjUserdata *ud = (ObjUserdata*)AS_OBJ(handle);
+    if (!ud->data) {
+        luna_throw(vm, vm->runtime_error_class, "%s() called on closed file handle", fn);
+    }
+    if (!ud->tag || strcmp(ud->tag, "os.File") != 0) {
+        luna_throw(vm, vm->type_error_class, "%s() invalid file handle", fn);
+    }
+    return ud;
+}
+
+static LunaFile *file_handle_from_instance(VM *vm, Value self, const char *fn) {
+    ObjUserdata *ud = file_userdata_from_instance(vm, self, fn);
+    return (LunaFile*)ud->data;
+}
+
+static void set_file_handle(ObjInstance *inst, FILE *fp, const char *path, const char *mode) {
+    LunaFile *file = malloc(sizeof(LunaFile));
+    if (!file) { fprintf(stderr, "OOM\n"); exit(1); }
+    file->fp = fp;
+    file->path = dup_cstr(path);
+    file->mode = dup_cstr(mode);
+
+    ObjUserdata *ud = new_userdata_tagged("os.File", file, file_finalizer);
+    instance_set_field(inst, "_handle", make_obj((Object*)ud));
+}
+
+static void clear_file_handle(ObjInstance *inst) {
+    instance_set_field(inst, "_handle", make_null());
+}
+
+/* File instance methods */
+
+static Value file_close(VM *vm, Value *args, int n) {
+    (void)vm;
+    (void)n;
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
+    Value handle = instance_get_field(inst, "_handle");
+    if (!IS_USERDATA(handle) || !AS_OBJ(handle)) {
+        return make_bool(false);
+    }
+    clear_file_handle(inst);
+    return make_bool(true);
+}
+
+static Value file_flush(VM *vm, Value *args, int n) {
+    (void)n;
+    LunaFile *file = file_handle_from_instance(vm, args[0], "flush");
+    if (fflush(file->fp) != 0) {
+        luna_throw(vm, vm->runtime_error_class, "flush() failed");
+    }
+    return make_null();
+}
+
+static Value file_write(VM *vm, Value *args, int n) {
+    if (n < 2) {
+        luna_throw(vm, vm->argument_error_class, "write() requires a value argument");
+    }
+    LunaFile *file = file_handle_from_instance(vm, args[0], "write");
+    char *text = value_to_string(args[1]);
+    size_t len = strlen(text);
+    size_t written = fwrite(text, 1, len, file->fp);
+    free(text);
+    if (written != len) {
+        luna_throw(vm, vm->runtime_error_class, "write() failed");
+    }
+    return make_int((int32_t)written);
+}
+
+static Value file_read_line(VM *vm, Value *args, int n) {
+    (void)n;
+    LunaFile *file = file_handle_from_instance(vm, args[0], "read_line");
+    char buf[1024];
+    if (!fgets(buf, sizeof(buf), file->fp)) {
+        return make_null();
+    }
+    size_t len = strlen(buf);
+    if (len > 0 && buf[len - 1] == '\n') {
+        buf[len - 1] = '\0';
+        len--;
+    }
+    return make_obj((Object*)new_string(buf, (int)len));
+}
+
+static Value file_read_all(VM *vm, Value *args, int n) {
+    (void)n;
+    LunaFile *file = file_handle_from_instance(vm, args[0], "read_all");
+    long start = ftell(file->fp);
+    if (start < 0) start = 0;
+    if (fseek(file->fp, 0, SEEK_END) != 0) {
+        luna_throw(vm, vm->runtime_error_class, "read_all() failed");
+    }
+    long size = ftell(file->fp);
+    if (size < 0) {
+        luna_throw(vm, vm->runtime_error_class, "read_all() failed");
+    }
+    if (fseek(file->fp, start, SEEK_SET) != 0) {
+        luna_throw(vm, vm->runtime_error_class, "read_all() failed");
+    }
+
+    char *buf = malloc((size_t)size + 1);
+    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+    size_t read = fread(buf, 1, (size_t)size, file->fp);
+    if (read == 0 && ferror(file->fp)) {
+        free(buf);
+        luna_throw(vm, vm->runtime_error_class, "read_all() failed");
+    }
+    buf[read] = '\0';
+    Value out = make_obj((Object*)new_string(buf, (int)read));
+    free(buf);
+    return out;
+}
+
+static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn) {
+    if (cls->method_count >= cls->method_capacity) {
+        int new_cap = cls->method_capacity < 4 ? 4 : cls->method_capacity * 2;
+        cls->methods = realloc(cls->methods, sizeof(ObjFunction*) * new_cap);
+        cls->method_names = realloc(cls->method_names, sizeof(char*) * new_cap);
+        cls->method_capacity = new_cap;
+    }
+    ObjFunction *f = new_native_function(name, fn);
+    cls->methods[cls->method_count] = f;
+    cls->method_names[cls->method_count] = dup_cstr(name);
+    cls->method_count++;
+}
+
+/* Convenience functions */
+
+static Value os_open(VM *vm, Value *args, int n) {
+    if (n < 2) {
+        luna_throw(vm, vm->argument_error_class, "os.open() requires path and mode");
+    }
+    char *path = value_to_cstring(vm, args[0], "open", 1);
+    char *mode = value_to_cstring(vm, args[1], "open", 2);
+    FILE *fp = fopen(path, mode);
+    if (!fp) {
+        free(path);
+        free(mode);
+        luna_throw(vm, vm->runtime_error_class, "os.open: failed to open file");
+    }
+
+    ObjInstance *inst = new_instance(file_class, 4);
+    set_file_handle(inst, fp, path, mode);
+    free(path);
+    free(mode);
+    return make_obj((Object*)inst);
+}
+
+static Value os_exists(VM *vm, Value *args, int n) {
+    if (n < 1) {
+        luna_throw(vm, vm->argument_error_class, "os.exists() requires a path");
+    }
+    char *path = value_to_cstring(vm, args[0], "exists", 1);
+    FILE *fp = fopen(path, "rb");
+    bool ok = fp != NULL;
+    if (fp) fclose(fp);
+    free(path);
+    return make_bool(ok);
+}
+
+static Value os_read_file(VM *vm, Value *args, int n) {
+    if (n < 1) {
+        luna_throw(vm, vm->argument_error_class, "os.read_file() requires a path");
+    }
+    char *path = value_to_cstring(vm, args[0], "read_file", 1);
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        free(path);
+        luna_throw(vm, vm->runtime_error_class, "os.read_file: failed to open file");
+    }
+
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        free(path);
+        luna_throw(vm, vm->runtime_error_class, "read_file() failed");
+    }
+    long size = ftell(fp);
+    if (size < 0) {
+        fclose(fp);
+        free(path);
+        luna_throw(vm, vm->runtime_error_class, "read_file() failed");
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        free(path);
+        luna_throw(vm, vm->runtime_error_class, "read_file() failed");
+    }
+
+    char *buf = malloc((size_t)size + 1);
+    if (!buf) { fclose(fp); free(path); fprintf(stderr, "OOM\n"); exit(1); }
+    size_t read = fread(buf, 1, (size_t)size, fp);
+    bool had_error = ferror(fp);
+    fclose(fp);
+    free(path);
+    if (had_error) {
+        free(buf);
+        luna_throw(vm, vm->runtime_error_class, "read_file() failed");
+    }
+    buf[read] = '\0';
+    Value out = make_obj((Object*)new_string(buf, (int)read));
+    free(buf);
+    return out;
+}
+
+static Value os_write_file(VM *vm, Value *args, int n) {
+    if (n < 2) {
+        luna_throw(vm, vm->argument_error_class, "os.write_file() requires path and data");
+    }
+    char *path = value_to_cstring(vm, args[0], "write_file", 1);
+    char *data = value_to_string(args[1]);
+    FILE *fp = fopen(path, "wb");
+    if (!fp) {
+        free(path);
+        free(data);
+        luna_throw(vm, vm->runtime_error_class, "os.write_file: failed to open file");
+    }
+    size_t len = strlen(data);
+    size_t written = fwrite(data, 1, len, fp);
+    int ok = fclose(fp);
+    free(path);
+    free(data);
+    return make_bool(written == len && ok == 0);
+}
+
+static Value os_append_file(VM *vm, Value *args, int n) {
+    if (n < 2) {
+        luna_throw(vm, vm->argument_error_class, "os.append_file() requires path and data");
+    }
+    char *path = value_to_cstring(vm, args[0], "append_file", 1);
+    char *data = value_to_string(args[1]);
+    FILE *fp = fopen(path, "ab");
+    if (!fp) {
+        free(path);
+        free(data);
+        luna_throw(vm, vm->runtime_error_class, "os.append_file: failed to open file");
+    }
+    size_t len = strlen(data);
+    size_t written = fwrite(data, 1, len, fp);
+    int ok = fclose(fp);
+    free(path);
+    free(data);
+    return make_bool(written == len && ok == 0);
+}
+
+/* ==================================================================
+ * File operations (rename, remove, stat)
  * ================================================================== */
 
 static Value os_rename(VM *vm, Value *args, int n) {
@@ -179,10 +478,8 @@ static Value os_remove(VM *vm, Value *args, int n) {
         luna_throw(vm, vm->argument_error_class, "os.remove() expects exactly 1 argument");
     }
     require_string(vm, args[0], "os.remove", 1);
-    if (remove(as_cstring(args[0])) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.remove(): %s", strerror(errno));
-    }
-    return make_null();
+    int rc = remove(as_cstring(args[0]));
+    return make_bool(rc == 0);
 }
 
 static Value os_stat(VM *vm, Value *args, int n) {
@@ -463,6 +760,24 @@ static Value os_path_join(VM *vm, Value *args, int n) {
 
 void vm_register_os_module(VM *vm) {
     ObjModule *mod = new_module("os");
+
+    /* File class */
+    file_class = new_class("File", NULL);
+    retain_obj((Object*)file_class);
+
+    class_add_native_method(file_class, "read_line", file_read_line);
+    class_add_native_method(file_class, "read_all",  file_read_all);
+    class_add_native_method(file_class, "write",     file_write);
+    class_add_native_method(file_class, "flush",     file_flush);
+    class_add_native_method(file_class, "close",     file_close);
+
+    /* File I/O convenience */
+    module_add_native(mod, "File",        os_open);
+    module_add_native(mod, "open",        os_open);
+    module_add_native(mod, "read_file",   os_read_file);
+    module_add_native(mod, "write_file",  os_write_file);
+    module_add_native(mod, "append_file", os_append_file);
+    module_add_native(mod, "exists",      os_exists);
 
     /* Directory */
     module_add_native(mod, "getcwd",  os_getcwd);

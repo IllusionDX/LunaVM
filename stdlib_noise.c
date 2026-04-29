@@ -1,8 +1,13 @@
 /* stdlib_noise.c — Noise generation module for Luna.
  *
- * Perlin, Simplex, and Voronoi (cellular) noise for game dev.
+ * Three independent noise algorithms, each as its own class:
+ *   Perlin  — layered smooth noise
+ *   Simplex — gradient noise (fewer artifacts than Perlin)
+ *   Voronoi — cellular / Worley noise
+ *
  * All algorithms are deterministic given a seed.
- * Noise instances are callable: n(x, y) or n(x, y, z).
+ * Instances are callable: p(x, y) or p(x, y, z).
+ * Voronoi additionally exposes :edge(x, y) / :edge(x, y, z).
  */
 
 #include <stdio.h>
@@ -13,18 +18,6 @@
 #include "vm.h"
 #include "value.h"
 #include "stdlib_noise.h"
-
-/* ============================================================ */
-/* Algorithm tag                                                 */
-/* ============================================================ */
-
-typedef enum {
-    NOISE_PERLIN,
-    NOISE_SIMPLEX,
-    NOISE_VORONOI
-} NoiseAlgo;
-
-static ObjClass *noise_class = NULL;
 
 /* ============================================================ */
 /* Hash helpers (deterministic, seed-based)                      */
@@ -333,7 +326,6 @@ static float voronoi2d(uint32_t seed, float x, float y, float cell_size) {
     return sqrtf(min_dist) / sqrtf(max_possible);
 }
 
-/* F2-F1 edge detection for cracks/stone patterns */
 static float voronoi_edge2d(uint32_t seed, float x, float y, float cell_size) {
     if (cell_size <= 0.0f) cell_size = 1.0f;
 
@@ -471,104 +463,6 @@ static float voronoi_edge3d(uint32_t seed, float x, float y, float z, float cell
 }
 
 /* ============================================================ */
-/* Noise callable dispatcher (_call)                             */
-/* ============================================================ */
-
-static Value noise_call(VM *vm, Value *args, int n) {
-    if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
-            "Noise instance requires at least (x, y)");
-    }
-
-    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
-    Value state_val = instance_get_field(inst, "_state");
-    if (!IS_OBJ(state_val) || AS_OBJ(state_val)->type != OBJ_LIST) {
-        luna_throw(vm, vm->runtime_error_class, "noise instance has invalid state");
-    }
-    ObjList *state = (ObjList*)AS_OBJ(state_val);
-
-    int tag = AS_INT(list_get(state, 0));
-    uint32_t seed = (uint32_t)AS_INT(list_get(state, 1));
-
-    float x = (float)value_to_double(args[1]);
-    float y = (float)value_to_double(args[2]);
-    int is_3d = (n >= 4);
-    float z = 0.0f;
-    if (is_3d) {
-        z = (float)value_to_double(args[3]);
-    }
-
-    float result;
-    switch (tag) {
-        case NOISE_PERLIN:
-            result = is_3d ? perlin3d_01(seed, x, y, z) : perlin2d_01(seed, x, y);
-            break;
-        case NOISE_SIMPLEX:
-            result = is_3d ? simplex3d_01(seed, x, y, z) : simplex2d_01(seed, x, y);
-            break;
-        case NOISE_VORONOI: {
-            float cell_size = 1.0f;
-            if (state->count > 2) {
-                cell_size = (float)value_to_double(list_get(state, 2));
-            }
-            result = is_3d
-                ? voronoi3d(seed, x, y, z, cell_size)
-                : voronoi2d(seed, x, y, cell_size);
-            break;
-        }
-        default:
-            result = 0.0f;
-            break;
-    }
-
-    return make_double((double)result);
-}
-
-/* ============================================================ */
-/* Noise instance method: edge (Voronoi only)                    */
-/* ============================================================ */
-
-static Value noise_edge(VM *vm, Value *args, int n) {
-    if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
-            "noise.edge requires at least (x, y)");
-    }
-
-    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
-    Value state_val = instance_get_field(inst, "_state");
-    if (!IS_OBJ(state_val) || AS_OBJ(state_val)->type != OBJ_LIST) {
-        luna_throw(vm, vm->runtime_error_class, "noise instance has invalid state");
-    }
-    ObjList *state = (ObjList*)AS_OBJ(state_val);
-
-    int tag = AS_INT(list_get(state, 0));
-    if (tag != NOISE_VORONOI) {
-        luna_throw(vm, vm->type_error_class,
-            "noise.edge is only available for Voronoi noise");
-    }
-
-    uint32_t seed = (uint32_t)AS_INT(list_get(state, 1));
-    float cell_size = 1.0f;
-    if (state->count > 2) {
-        cell_size = (float)value_to_double(list_get(state, 2));
-    }
-
-    float x = (float)value_to_double(args[1]);
-    float y = (float)value_to_double(args[2]);
-    int is_3d = (n >= 4);
-    float z = 0.0f;
-    if (is_3d) {
-        z = (float)value_to_double(args[3]);
-    }
-
-    float result = is_3d
-        ? voronoi_edge3d(seed, x, y, z, cell_size)
-        : voronoi_edge2d(seed, x, y, cell_size);
-
-    return make_double((double)result);
-}
-
-/* ============================================================ */
 /* Class helpers                                                 */
 /* ============================================================ */
 
@@ -586,69 +480,128 @@ static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn
     cls->method_count++;
 }
 
-static void noise_add_fn(ObjDict *exports, const char *name, NativeFn fn) {
-    ObjFunction *f = new_native_function(name, fn);
-    Value v = make_obj((Object*)f);
-    dict_set(exports, make_obj((Object*)new_string(name, (int)strlen(name))), v);
+/* ============================================================ */
+/* Perlin class                                                  */
+/* ============================================================ */
+
+static Value perlin_init(VM *vm, Value *args, int n) {
+    (void)vm;
+    uint32_t seed = 0;
+    if (n >= 2 && (IS_INT(args[1]) || IS_DOUBLE(args[1]))) {
+        seed = (uint32_t)value_to_double(args[1]);
+    }
+    instance_set_field((ObjInstance*)AS_OBJ(args[0]), "_seed", make_int((int32_t)seed));
+    return args[0];
+}
+
+static Value perlin_sample(VM *vm, Value *args, int n) {
+    if (n < 3) {
+        luna_throw(vm, vm->argument_error_class,
+            "perlin.sample requires at least (x, y)");
+    }
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
+    Value seed_val = instance_get_field(inst, "_seed");
+    uint32_t seed = (uint32_t)(IS_INT(seed_val) ? AS_INT(seed_val) : 0);
+    float x = (float)value_to_double(args[1]);
+    float y = (float)value_to_double(args[2]);
+    if (n >= 4) {
+        float z = (float)value_to_double(args[3]);
+        return make_double((double)perlin3d_01(seed, x, y, z));
+    }
+    return make_double((double)perlin2d_01(seed, x, y));
 }
 
 /* ============================================================ */
-/* Constructors                                                  */
+/* Simplex class                                                 */
 /* ============================================================ */
 
-static Value noise_perlin(VM *vm, Value *args, int n) {
+static Value simplex_init(VM *vm, Value *args, int n) {
     (void)vm;
     uint32_t seed = 0;
-    if (n >= 1 && (IS_INT(args[0]) || IS_DOUBLE(args[0]))) {
-        seed = (uint32_t)value_to_double(args[0]);
+    if (n >= 2 && (IS_INT(args[1]) || IS_DOUBLE(args[1]))) {
+        seed = (uint32_t)value_to_double(args[1]);
     }
-
-    ObjInstance *inst = new_instance(noise_class, 4);
-    ObjList *state = new_list(4);
-    list_add(state, make_int(NOISE_PERLIN));
-    list_add(state, make_int((int32_t)seed));
-    instance_set_field(inst, "_state", make_obj((Object*)state));
-
-    return make_obj((Object*)inst);
+    instance_set_field((ObjInstance*)AS_OBJ(args[0]), "_seed", make_int((int32_t)seed));
+    return args[0];
 }
 
-static Value noise_simplex(VM *vm, Value *args, int n) {
-    (void)vm;
-    uint32_t seed = 0;
-    if (n >= 1 && (IS_INT(args[0]) || IS_DOUBLE(args[0]))) {
-        seed = (uint32_t)value_to_double(args[0]);
+static Value simplex_sample(VM *vm, Value *args, int n) {
+    if (n < 3) {
+        luna_throw(vm, vm->argument_error_class,
+            "simplex.sample requires at least (x, y)");
     }
-
-    ObjInstance *inst = new_instance(noise_class, 4);
-    ObjList *state = new_list(4);
-    list_add(state, make_int(NOISE_SIMPLEX));
-    list_add(state, make_int((int32_t)seed));
-    instance_set_field(inst, "_state", make_obj((Object*)state));
-
-    return make_obj((Object*)inst);
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
+    Value seed_val = instance_get_field(inst, "_seed");
+    uint32_t seed = (uint32_t)(IS_INT(seed_val) ? AS_INT(seed_val) : 0);
+    float x = (float)value_to_double(args[1]);
+    float y = (float)value_to_double(args[2]);
+    if (n >= 4) {
+        float z = (float)value_to_double(args[3]);
+        return make_double((double)simplex3d_01(seed, x, y, z));
+    }
+    return make_double((double)simplex2d_01(seed, x, y));
 }
 
-static Value noise_voronoi(VM *vm, Value *args, int n) {
+/* ============================================================ */
+/* Voronoi class                                                 */
+/* ============================================================ */
+
+static Value voronoi_init(VM *vm, Value *args, int n) {
     (void)vm;
     uint32_t seed = 0;
     float cell_size = 1.0f;
-
-    if (n >= 1 && (IS_INT(args[0]) || IS_DOUBLE(args[0]))) {
-        seed = (uint32_t)value_to_double(args[0]);
-    }
     if (n >= 2 && (IS_INT(args[1]) || IS_DOUBLE(args[1]))) {
-        cell_size = (float)value_to_double(args[1]);
+        seed = (uint32_t)value_to_double(args[1]);
+    }
+    if (n >= 3 && (IS_INT(args[2]) || IS_DOUBLE(args[2]))) {
+        cell_size = (float)value_to_double(args[2]);
         if (cell_size <= 0.0f) cell_size = 1.0f;
     }
+    instance_set_field((ObjInstance*)AS_OBJ(args[0]), "_seed", make_int((int32_t)seed));
+    instance_set_field((ObjInstance*)AS_OBJ(args[0]), "_cell_size", make_double((double)cell_size));
+    return args[0];
+}
 
-    ObjInstance *inst = new_instance(noise_class, 4);
-    ObjList *state = new_list(4);
-    list_add(state, make_int(NOISE_VORONOI));
-    list_add(state, make_int((int32_t)seed));
-    list_add(state, make_double((double)cell_size));
-    instance_set_field(inst, "_state", make_obj((Object*)state));
+static Value voronoi_sample(VM *vm, Value *args, int n) {
+    if (n < 3) {
+        luna_throw(vm, vm->argument_error_class,
+            "voronoi.sample requires at least (x, y)");
+    }
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
+    Value seed_val = instance_get_field(inst, "_seed");
+    uint32_t seed = (uint32_t)(IS_INT(seed_val) ? AS_INT(seed_val) : 0);
+    Value cs_val = instance_get_field(inst, "_cell_size");
+    float cell_size = IS_INT(cs_val) ? (float)AS_INT(cs_val) :
+                      IS_DOUBLE(cs_val) ? (float)AS_DOUBLE(cs_val) : 1.0f;
+    if (cell_size <= 0.0f) cell_size = 1.0f;
+    float x = (float)value_to_double(args[1]);
+    float y = (float)value_to_double(args[2]);
+    if (n >= 4) {
+        float z = (float)value_to_double(args[3]);
+        return make_double((double)voronoi3d(seed, x, y, z, cell_size));
+    }
+    return make_double((double)voronoi2d(seed, x, y, cell_size));
+}
 
-    return make_obj((Object*)inst);
+static Value voronoi_edge(VM *vm, Value *args, int n) {
+    if (n < 3) {
+        luna_throw(vm, vm->argument_error_class,
+            "voronoi.edge requires at least (x, y)");
+    }
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
+    Value seed_val = instance_get_field(inst, "_seed");
+    uint32_t seed = (uint32_t)(IS_INT(seed_val) ? AS_INT(seed_val) : 0);
+    Value cs_val = instance_get_field(inst, "_cell_size");
+    float cell_size = IS_INT(cs_val) ? (float)AS_INT(cs_val) :
+                      IS_DOUBLE(cs_val) ? (float)AS_DOUBLE(cs_val) : 1.0f;
+    if (cell_size <= 0.0f) cell_size = 1.0f;
+    float x = (float)value_to_double(args[1]);
+    float y = (float)value_to_double(args[2]);
+    if (n >= 4) {
+        float z = (float)value_to_double(args[3]);
+        return make_double((double)voronoi_edge3d(seed, x, y, z, cell_size));
+    }
+    return make_double((double)voronoi_edge2d(seed, x, y, cell_size));
 }
 
 /* ============================================================ */
@@ -656,18 +609,34 @@ static Value noise_voronoi(VM *vm, Value *args, int n) {
 /* ============================================================ */
 
 void vm_register_noise_module(VM *vm) {
-    noise_class = new_class("Noise", NULL);
-    retain_obj((Object*)noise_class);
+    ObjClass *perlin_class = new_class("Perlin", NULL);
+    class_add_native_method(perlin_class, "_init",  perlin_init);
+    class_add_native_method(perlin_class, "sample", perlin_sample);
 
-    class_add_native_method(noise_class, "_call", noise_call);
-    class_add_native_method(noise_class, "edge",  noise_edge);
+    ObjClass *simplex_class = new_class("Simplex", NULL);
+    class_add_native_method(simplex_class, "_init",  simplex_init);
+    class_add_native_method(simplex_class, "sample", simplex_sample);
+
+    ObjClass *voronoi_class = new_class("Voronoi", NULL);
+    class_add_native_method(voronoi_class, "_init",  voronoi_init);
+    class_add_native_method(voronoi_class, "sample", voronoi_sample);
+    class_add_native_method(voronoi_class, "edge",   voronoi_edge);
 
     ObjModule *mod = new_module("noise");
-    noise_add_fn(mod->exports, "Perlin",  noise_perlin);
-    noise_add_fn(mod->exports, "Simplex", noise_simplex);
-    noise_add_fn(mod->exports, "Voronoi", noise_voronoi);
 
-    Value mod_val = make_obj((Object*)mod);
-    ObjString *key = new_string("noise", 5);
-    dict_set(vm->module_cache, make_obj((Object*)key), mod_val);
+    dict_set(mod->exports,
+             make_obj((Object*)new_string("Perlin", 6)),
+             make_obj((Object*)perlin_class));
+
+    dict_set(mod->exports,
+             make_obj((Object*)new_string("Simplex", 7)),
+             make_obj((Object*)simplex_class));
+
+    dict_set(mod->exports,
+             make_obj((Object*)new_string("Voronoi", 7)),
+             make_obj((Object*)voronoi_class));
+
+    dict_set(vm->module_cache,
+             make_obj((Object*)new_string("noise", 5)),
+             make_obj((Object*)mod));
 }

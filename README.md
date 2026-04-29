@@ -412,53 +412,232 @@ Modules are loaded from the current file's directory or the working directory. E
 
 ### Built-in Modules
 
+Luna uses three unified API patterns across all built-in modules:
+
+- **Functional (A):** Pure utility functions and constants — no state, no classes
+- **Class (B):** Stateful types instantiated with `new`
+- **Factory (C):** High-level constructors + optional low-level class
+
+#### `math`
+
+```luna
+import math
+
+math.sin(0)           # 0.0
+math.cos(0)           # 1.0
+math.sqrt(16)         # 4.0
+math.pow(2, 8)        # 256.0
+math.floor(3.7)       # 3.0
+math.ceil(3.2)        # 4.0
+math.round(3.5)       # 4.0
+math.abs(-5)          # 5.0
+math.clamp(15, 0, 10) # 10.0
+math.lerp(0, 100, 0.5)# 50.0
+math.sign(-42)        # -1.0
+math.deg_to_rad(180)  # 3.14159...
+math.rad_to_deg(pi)   # 180.0
+math.log(1)           # 0.0
+math.exp(1)           # 2.71828...
+
+print(math.pi)        # 3.141592653589793
+print(math.tau)       # 6.283185307179586
+print(math.e)         # 2.718281828459045
+print(math.inf)       # Infinity
+```
+
+> **Pattern A — Functional.** No classes, no state. Random number generation moved to `random` module.
+
 #### `time`
 
 ```luna
 import time
 
-print(time.now())
-print(time.ticks_usec())
-print(time.ticks_msec())
-time.sleep(250)
+print(time.now())          # Unix timestamp in seconds (float)
+print(time.ticks_usec())   # Microseconds since VM started
+print(time.ticks_msec())   # Milliseconds since VM started
+time.sleep(250)            # Sleep for 250ms
 ```
-
-`time.now()` returns Unix time in seconds as a float.
-`time.ticks_usec()` returns monotonic microseconds since the VM started.
-`time.ticks_msec()` returns the same elapsed time in milliseconds.
-`time.sleep(ms)` yields execution to the OS for the requested milliseconds.
 
 #### `os`
 
 ```luna
 import os
 
-print(os.platform())
-print(os.env("HOME"))
-print(os.args())
+# --- Filesystem ---
+os.listdir(".")                      # List directory contents
+os.getcwd()                          # Current working directory
+os.chdir("/tmp")                     # Change directory
+os.mkdir("new_dir")                  # Create directory
+os.rename("old.txt", "new.txt")      # Rename file/dir
+os.remove("temp.txt")                # Delete file (returns bool)
+os.exists("data.txt")                # Check if path exists
+os.stat("file.txt")                  # File metadata (dict)
+
+# --- File I/O ---
+var f = os.open("data.txt", "rb")    # Open for reading
+print(f.read_all())                   # Read entire file
+f.close()
+
+var w = os.open("out.txt", "w")      # Open for writing
+w.write("hello")
+w.flush()
+w.close()
+
+# Convenience wrappers
+var text = os.read_file("data.txt")  # Open, read, close
+os.write_file("out.txt", "hello")    # Open, write, close
+os.append_file("log.txt", "line\n")  # Append line
+
+# --- System ---
+print(os.platform)      # "win32" or "posix"
+print(os.sep)           # "\" or "/"
+print(os.pathsep)       # ";" or ":"
+os.getenv("HOME")       # Environment variable (returns null if missing)
+os.setenv("KEY", "val") # Set environment variable
+os.args()               # Host argv as list
+os.exit(0)              # Exit process
+os.execute("cmd")       # Run command, return exit code
+os.getpid()             # Process ID
+os.hostname()           # Machine hostname
+os.username()           # Current user name
+os.tmpdir()             # Temp directory path
+os.path_join("a", "b")  # Join path segments
 ```
 
-`os.platform()` returns `"win32"` on Windows and `"posix"` on Unix-like systems.
-`os.env(key)` reads an environment variable and returns `null` if it does not exist.
-`os.exit(code)` exits the host process with the given code.
-`os.args()` returns the full host `argv` as a list:
+> **Pattern A — Functional.** File objects created via `os.open()`.
 
-- `os.args()[0]` is the executable path
-- `os.args()[1]` is the script path
-- `os.args()[2+]` are the real script arguments
+#### `io`
+
+```luna
+import io
+import os
+
+var f = os.open("data.txt", "rb")
+var content = io.read_all(f)    # Read entire reader
+f.close()
+
+var src = os.open("in.txt", "rb")
+var dst = os.open("out.txt", "w")
+io.copy(dst, src)               # Copy all bytes src -> dst
+src.close()
+dst.close()
+
+var r, w = io.pipe()            # In-memory pipe
+w.write("hello")
+w.close()
+io.read_all(r)                   # "hello"
+```
+
+> **Pattern A — Functional.** Stream utilities that work on any object with `read()`/`write()`/`close()`.
+
+#### `json`
+
+```luna
+import json
+
+var obj = json.parse('{"key": "value"}')  # Parse JSON string
+var text = json.encode(obj)               # Encode to JSON string
+
+json.parse("[1, 2, 3]")  # Returns list
+json.encode([1, 2, 3])   # "[1, 2, 3]"
+```
+
+> **Pattern A — Functional.** Direct functions, no container class.
 
 #### `buffer`
 
 ```luna
 import buffer
 
-var bytes = buffer.from_string("hello")
-print(bytes.read_long())
+var b = buffer.new(64)               # Empty buffer, capacity 64
+var b2 = buffer.from_string("hello") # Buffer from UTF-8 string
+b.read_byte()                        # Read byte
+b.read_short()                       # Read 16-bit
+b.read_int()                         # Read 32-bit
+b.read_long()                        # Read 64-bit
 ```
 
-`buffer.new(capacity)` creates a mutable byte buffer.
-`buffer.from_string(text)` copies UTF-8 bytes from a string into a buffer.
-Buffers expose sequential readers such as `read_byte()`, `read_short()`, `read_int()`, and `read_long()`.
+> **Pattern A — Functional.** Direct constructors, no container class.
+
+#### `string`
+
+```luna
+import string
+
+string.from_byte(65)           # "A"
+
+# Constants (Python-style)
+string.ascii_letters           # "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+string.digits                  # "0123456789"
+string.punctuation             # "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+string.whitespace              # " \t\n\r\x0b\x0c"
+string.hexdigits               # "0123456789abcdefABCDEF"
+```
+
+> **Pattern A — Functional.** Constants on the module; methods like `split`, `trim`, `upper` go on string instances.
+
+#### `random`
+
+```luna
+import random
+
+var rng = new random.Random(12345)    # Seeded generator
+rng.int(0, 100)                       # Random int in [0, 100]
+rng.float()                           # Random float in [0, 1)
+rng.seed(999)                         # Re-seed
+rng.pick([1, 2, 3, 4])               # Random element
+rng.shuffle([1, 2, 3, 4])            # Shuffle in-place
+```
+
+> **Pattern B — Stateful class.** PCG and Xorshift generators, independent of C `rand()`.
+
+#### `noise`
+
+```luna
+import noise
+
+var perlin = new noise.Perlin(42)
+var v = perlin.sample(1.5, 2.5)       # Perlin noise at (x, y)
+
+var simplex = new noise.Simplex(42)
+simplex.sample(1.5, 2.5, 3.5)         # 3D simplex noise
+
+var voronoi = new noise.Voronoi(42, 2.0)
+voronoi.sample(3.0, 4.0)              # Cellular noise
+voronoi.edge(3.0, 4.0)                # Edge detection (Voronoi only)
+```
+
+> **Pattern B — Three independent stateful classes.** Each algorithm is its own class with `_init(seed)` and `sample(x, y [, z])`.
+
+#### `net`
+
+```luna
+import net
+
+# High-level API (recommended)
+var conn = net.dial("tcp", "google.com", 80)
+conn.send("GET / HTTP/1.0\r\n\r\n")
+var resp = conn.recv(4096)
+conn.close()
+
+var listener = net.listen("tcp", 8080)
+var client = listener.accept()
+client.send("hello")
+
+var ip = net.resolve("google.com")    # DNS lookup
+
+# Low-level API (raw sockets)
+var sock = new net.Socket(net.IPV4, net.TCP)
+sock.connect("host", 443)
+
+# Constants
+net.IPV4    # = 2 (AF_INET)
+net.IPV6    # = 23 (AF_INET6)
+net.TCP     # = 1 (SOCK_STREAM)
+net.UDP     # = 2 (SOCK_DGRAM)
+```
+
+> **Pattern C — Factory.** `dial`/`listen` for 95% of use cases. `new net.Socket(...)` for raw control.
 
 ### Error Handling
 
@@ -522,7 +701,7 @@ main()
 | **Scope** | Block scoped (`var` at module level = module scoped) |
 | **Pass by reference** | Use return-and-assign |
 | **Collections** | Lists (dynamic), Dicts |
-| **Module/import** | `import x` with module cache and global isolation. `from x import y` / `from x import *` parsed but not functional. |
+| **Module/import** | `import x` with module cache and global isolation. `from x import y` and `from x import *` fully functional. |
 | **Error handling** | Exceptions |
 | **Semicolon insertion** | Auto-insert like Go |
 | **Loop control** | `break`, `continue` |

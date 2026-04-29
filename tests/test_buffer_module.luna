@@ -1,6 +1,6 @@
-from buffer import Buffer
+from buffer import from_string
 
-var buf = Buffer.from_string("abcdefghABCDEFGH")
+var buf = from_string("abcdefghABCDEFGH")
 
 print(type(buf.read_long()) == "int64")
 print(type(buf.read_long()) == "int64")

@@ -1,9 +1,9 @@
-from json import JSON
+import json
 
 # Parse tests
 
 # Basic types
-var basic = JSON.parse("{\"num\": 42, \"flt\": 3.14, \"str\": \"hello\", \"bool\": true, \"nil\": null}")
+var basic = json.parse("{\"num\": 42, \"flt\": 3.14, \"str\": \"hello\", \"bool\": true, \"nil\": null}")
 print(basic.num == 42)
 print(basic.flt == 3.14)
 print(basic.str == "hello")
@@ -11,7 +11,7 @@ print(basic.bool == true)
 print(basic["nil"] == null)
 
 # Array
-var arr = JSON.parse("[1, 2, 3, \"four\", false, null]")
+var arr = json.parse("[1, 2, 3, \"four\", false, null]")
 print(arr.length == 6)
 print(arr[0] == 1)
 print(arr[3] == "four")
@@ -19,55 +19,55 @@ print(arr[4] == false)
 print(arr[5] == null)
 
 # Nested
-var nested = JSON.parse("{\"a\": {\"b\": [1, 2]}, \"c\": [3, 4]}")
+var nested = json.parse("{\"a\": {\"b\": [1, 2]}, \"c\": [3, 4]}")
 print(nested.a.b[0] == 1)
 print(nested.c[1] == 4)
 
 # Empty structures
-var empty_obj = JSON.parse("{}")
+var empty_obj = json.parse("{}")
 print(empty_obj.length() == 0)
-var empty_arr = JSON.parse("[]")
+var empty_arr = json.parse("[]")
 print(empty_arr.length == 0)
 
 # String escapes
-var esc = JSON.parse("{\"s\": \"hello\\nworld\\ttab\"}")
+var esc = json.parse("{\"s\": \"hello\\nworld\\ttab\"}")
 print(esc.s == "hello\nworld\ttab")
 
 # Large integer -> int64
-var big = JSON.parse("{\"x\": 2147483648}")
+var big = json.parse("{\"x\": 2147483648}")
 print(big.x == 2147483648)
 
 # Encode tests
 
 # Roundtrip
 var original = {"name": "Zim", "hp": 100, "active": true, "tags": ["fire", "ice"]}
-var encoded = JSON.encode(original)
-var decoded = JSON.parse(encoded)
+var encoded = json.encode(original)
+var decoded = json.parse(encoded)
 print(decoded.name == "Zim")
 print(decoded.hp == 100)
 print(decoded.active == true)
 print(decoded.tags[0] == "fire")
 
 # Encode basic types
-print(JSON.encode(42) == "42")
-print(JSON.encode(true) == "true")
-print(JSON.encode(null) == "null")
+print(json.encode(42) == "42")
+print(json.encode(true) == "true")
+print(json.encode(null) == "null")
 
 # Encode string
-print(JSON.encode("hello") == "\"hello\"")
+print(json.encode("hello") == "\"hello\"")
 
 # Encode array
 var list = [1, 2, 3]
-print(JSON.encode(list) == "[1,2,3]")
+print(json.encode(list) == "[1,2,3]")
 
 # Encode empty
-print(JSON.encode({}) == "{}")
-print(JSON.encode([]) == "[]")
+print(json.encode({}) == "{}")
+print(json.encode([]) == "[]")
 
 # Encode int64
 var large = 2147483648
-print(JSON.encode(large) == "2147483648")
+print(json.encode(large) == "2147483648")
 
 # Encode with escapes
 var with_newline = "hello\nworld"
-print(JSON.encode(with_newline) == "\"hello\\nworld\"")
+print(json.encode(with_newline) == "\"hello\\nworld\"")

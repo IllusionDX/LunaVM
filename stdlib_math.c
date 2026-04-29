@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include "stdlib_math.h"
 #include "value.h"
 
@@ -215,57 +214,7 @@ static Value math_rad_to_deg(VM *vm, Value *args, int n) {
     return make_double(r * (180.0 / 3.14159265358979323846));
 }
 
-/* ============================================================ */
-/* Random (Lua-style overloads)                                */
-/* ============================================================ */
 
-static Value math_random(VM *vm, Value *args, int n) {
-    if (n == 0) {
-        return make_double((double)rand() / (double)RAND_MAX);
-    }
-    if (n == 1) {
-        if (!is_num(args[0])) {
-            luna_throw(vm, vm->type_error_class,
-                "random() argument must be a number");
-        }
-        int mx = IS_INT(args[0]) ? AS_INT(args[0]) : (int)as_int64(args[0]);
-        if (mx < 1) {
-            luna_throw(vm, vm->value_error_class,
-                "random() argument must be >= 1");
-        }
-        return make_int(1 + rand() % mx);
-    }
-    if (n == 2) {
-        if (!is_num(args[0]) || !is_num(args[1])) {
-            luna_throw(vm, vm->type_error_class,
-                "random() arguments must be numbers");
-        }
-        int mn = IS_INT(args[0]) ? AS_INT(args[0]) : (int)as_int64(args[0]);
-        int mx = IS_INT(args[1]) ? AS_INT(args[1]) : (int)as_int64(args[1]);
-        if (mn > mx) { int t = mn; mn = mx; mx = t; }
-        return make_int(mn + rand() % (mx - mn + 1));
-    }
-    luna_throw(vm, vm->argument_error_class,
-        "random() expects 0 to 2 arguments, got %d", n);
-    return make_null(); /* unreachable */
-}
-
-static Value math_randomseed(VM *vm, Value *args, int n) {
-    if (n > 1) {
-        luna_throw(vm, vm->argument_error_class,
-            "randomseed() expects 0 or 1 arguments, got %d", n);
-    }
-    if (n == 1) {
-        if (!is_num(args[0])) {
-            luna_throw(vm, vm->type_error_class,
-                "randomseed() argument must be a number");
-        }
-        srand((unsigned int)value_to_double(args[0]));
-    } else {
-        srand((unsigned int)time(NULL));
-    }
-    return make_null();
-}
 
 /* ============================================================ */
 /* Module registration                                         */
@@ -310,10 +259,6 @@ void vm_register_math_module(VM *vm) {
     math_add_fn(vm, mod->exports, "sign",       math_sign);
     math_add_fn(vm, mod->exports, "deg_to_rad", math_deg_to_rad);
     math_add_fn(vm, mod->exports, "rad_to_deg", math_rad_to_deg);
-
-    /* Random */
-    math_add_fn(vm, mod->exports, "random",      math_random);
-    math_add_fn(vm, mod->exports, "randomseed",  math_randomseed);
 
     /* Constants */
     math_add_const(mod->exports, "pi",       3.14159265358979323846);

@@ -1,21 +1,21 @@
-import io
+import os
 
 var path = "tests/_io_tmp.txt"
 
 # write_file / read_file / exists
-io.write_file(path, "hello\nworld\n")
-print(io.exists(path))
+os.write_file(path, "hello\nworld\n")
+print(os.exists(path))
 
-var read_back = io.read_file(path)
+var read_back = os.read_file(path)
 print(read_back == "hello\nworld\n")
 
 # append_file
-io.append_file(path, "appended")
-var after_append = io.read_file(path)
+os.append_file(path, "appended")
+var after_append = os.read_file(path)
 print(after_append == "hello\nworld\nappended")
 
 # open / read_line
-var f = io.open(path, "r")
+var f = os.open(path, "r")
 var line1 = f.read_line()
 print(line1 == "hello")
 
@@ -31,35 +31,35 @@ print(line4 == null)
 f.close()
 
 # open / read_all
-var f2 = io.open(path, "r")
+var f2 = os.open(path, "r")
 var all = f2.read_all()
 print(all == "hello\nworld\nappended")
 f2.close()
 
 # open / write
-var f3 = io.open(path, "w")
+var f3 = os.open(path, "w")
 f3.write("abc")
 f3.close()
 
-var f4 = io.open(path, "r")
+var f4 = os.open(path, "r")
 var w = f4.read_all()
 print(w == "abc")
 f4.close()
 
 # remove
-print(io.remove(path))
-print(io.exists(path) == false)
+os.remove(path)
+print(os.exists(path) == false)
 
 # File constructor alias
-var f5 = io.File(path, "w")
+var f5 = os.File(path, "w")
 f5.write("from ctor")
 f5.close()
 
-var f6 = io.File(path, "r")
+var f6 = os.File(path, "r")
 print(f6.read_all() == "from ctor")
 f6.close()
 
-io.remove(path)
+os.remove(path)
 
 # exists false
-print(io.exists("tests/_nonexistent_file_xyz.luna") == false)
+print(os.exists("tests/_nonexistent_file_xyz.luna") == false)
