@@ -15,6 +15,8 @@ typedef struct Parser {
     TokenList *tokens;
     Token *current;
     int had_error;
+    const char *source;
+    const char *filepath;
 } Parser;
 
 /* Snapshot used by save_state / restore_state for backtracking */
@@ -26,7 +28,7 @@ typedef struct {
 /* ============== Public API ============== */
 
 /* Create a new parser */
-Parser *parser_new(TokenList *tokens);
+Parser *parser_new(TokenList *tokens, const char *source, const char *filepath);
 
 /* Free parser resources */
 void parser_free(Parser *parser);

@@ -44,7 +44,7 @@ static Expr *append_fstring_part(Expr *current, Expr *part) {
 static Expr *parse_sub_expression(const char *source) {
     Lexer *sub_lexer = lexer_new(source);
     TokenList *sub_tokens = lexer_tokenize(sub_lexer);
-    Parser *sub_parser = parser_new(sub_tokens);
+    Parser *sub_parser = parser_new(sub_tokens, source, NULL);
     Program *sub_program = parser_parse(sub_parser);
 
     Expr *result = NULL;

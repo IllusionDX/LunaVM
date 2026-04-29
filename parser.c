@@ -232,12 +232,14 @@ bool is_valid_pattern(Expr *expr) {
 
 /* ============== Public API ============== */
 
-Parser *parser_new(TokenList *tokens) {
+Parser *parser_new(TokenList *tokens, const char *source, const char *filepath) {
     Parser *parser = (Parser *)malloc(sizeof(Parser));
     if (!parser) return NULL;
     parser->tokens = tokens;
     parser->current = tokens->head;
     parser->had_error = 0;
+    parser->source = source;
+    parser->filepath = filepath;
     return parser;
 }
 
@@ -246,12 +248,39 @@ void parser_free(Parser *parser) {
 }
 
 void parser_error(Parser *parser, const char *fmt, ...) {
-    fprintf(stderr, "Parse error at line %d: ", peek(parser)->line);
+    Token *tok = peek(parser);
+    int line = tok ? tok->line : 0;
+    int col = tok ? tok->column : 0;
+    const char *file = parser->filepath ? parser->filepath : "<unknown>";
+
+    fprintf(stderr, "%s:%d:%d: error: ", file, line, col);
     va_list args;
     va_start(args, fmt);
     vfprintf(stderr, fmt, args);
     va_end(args);
     fprintf(stderr, "\n");
+
+    if (parser->source && line > 0) {
+        const char *line_start = parser->source;
+        for (int i = 1; i < line && *line_start; i++) {
+            while (*line_start && *line_start != '\n') line_start++;
+            if (*line_start == '\n') line_start++;
+        }
+        const char *line_end = line_start;
+        while (*line_end && *line_end != '\n') line_end++;
+
+        int line_len = (int)(line_end - line_start);
+        fprintf(stderr, "    ");
+        fwrite(line_start, 1, line_len, stderr);
+        fprintf(stderr, "\n");
+
+        fprintf(stderr, "    ");
+        for (int i = 0; i < col && i < line_len; i++) {
+            fputc(line_start[i] == '\t' ? '\t' : ' ', stderr);
+        }
+        fprintf(stderr, "^\n");
+    }
+
     parser->had_error = 1;
 }
 

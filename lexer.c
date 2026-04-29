@@ -406,7 +406,9 @@ static Token *scan_token(Lexer *lexer) {
                     lexer->indent_stack = (int *)realloc(lexer->indent_stack, sizeof(int) * lexer->indent_stack_capacity);
                 }
                 lexer->indent_stack[lexer->indent_stack_size++] = indent;
-                return make_token(lexer, TOK_INDENT, lexer->current, 0);
+                Token *tk = make_token(lexer, TOK_INDENT, lexer->current, 0);
+                tk->column = indent;
+                return tk;
             } else if (indent < current_indent) {
                 Token *head = NULL;
                 Token *tail = NULL;
@@ -459,6 +461,7 @@ static Token *scan_token(Lexer *lexer) {
     if (c == '\n' || c == '\r') {
         lexer->at_line_start = true;
         int save_line = lexer->line;
+        int save_col = lexer->column;
         if (c == '\r' && peek_next(lexer) == '\n') {
             advance(lexer); /* consume \r */
             advance(lexer); /* consume \n */
@@ -467,6 +470,7 @@ static Token *scan_token(Lexer *lexer) {
         }
         Token *tok = make_token(lexer, TOK_NEWLINE, "\\n", 1);
         tok->line = save_line;
+        tok->column = save_col;
         return tok;
     }
     

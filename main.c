@@ -81,7 +81,7 @@ static int execute_native_program(const char *source, const char *filepath, int 
         t = t->next;
     }
 
-    Parser *parser = parser_new(tokens);
+    Parser *parser = parser_new(tokens, source, filepath);
     Program *program = parser_parse(parser);
 
     if (!program || parser->had_error) {
@@ -157,7 +157,7 @@ static int execute_repl_line(VM *vm, const char *source) {
         return 1;
     }
 
-    Parser *parser = parser_new(tokens);
+    Parser *parser = parser_new(tokens, source, NULL);
     Program *program = parser_parse(parser);
 
     if (!program || parser->had_error) {

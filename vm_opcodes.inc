@@ -2104,7 +2104,6 @@
 
         Lexer *lexer = lexer_new(source);
         TokenList *tokens = lexer_tokenize(lexer);
-        free(source);
 
         bool had_lex_errors = false;
         for (Token *t = tokens->head; t; t = t->next) {
@@ -2117,6 +2116,7 @@
         if (had_lex_errors) {
             token_list_free(tokens);
             lexer_free(lexer);
+            free(source);
             char buf[256];
             snprintf(buf, sizeof(buf), "import: lexer errors in '%s'", mod_name);
             release_value(_exc);
@@ -2124,13 +2124,15 @@
             goto op_throw;
         }
 
-        Parser *parser = parser_new(tokens);
+        Parser *parser = parser_new(tokens, source, filepath);
         Program *program = parser_parse(parser);
 
         if (parser->had_error) {
             parser_free(parser);
             token_list_free(tokens);
             lexer_free(lexer);
+            free(source);
+            free(filepath);
             char buf[256];
             snprintf(buf, sizeof(buf), "import: parser errors in '%s'", mod_name);
             release_value(_exc);
@@ -2158,6 +2160,7 @@
         parser_free(parser);
         token_list_free(tokens);
         lexer_free(lexer);
+        free(source);
 
         /* Create ObjFunction wrapper for the module chunk */
         ObjFunction *mod_fn = new_function(mod_name);
