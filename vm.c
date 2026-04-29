@@ -781,11 +781,6 @@ static void path_dirname(const char *path, char *buf, size_t buf_size) {
 #define FRAME       vm->frames[vm->frame_count-1]
 #define CHUNK       (FRAME.chunk)
 #define IP          (FRAME.ip)
-#define RA          (A)
-#define RB          (B)
-#define RC          (C)
-#define RKB         (ISK(B) ? CONST(Bx & 0xFF) : REG(B))
-#define RKC         (ISK(C) ? CONST(Bx & 0xFF) : REG(C))
 #define REG(i)      (vm->stack[FRAME.base + (i)])
 #define SET_REG(i, v) do { \
     Value _new = (v); \
@@ -903,22 +898,22 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     (void)chunk;
 
     uint32_t instr;
-    uint8_t  A, B, C;
-    uint16_t Bx;
-    int      sBx;
     volatile Value _exc = make_null();
 
+#define DECODE do { instr = CHUNK->code[IP++]; } while (0)
 
-#define DECODE \
-    do { \
-        instr = CHUNK->code[IP++]; \
-        A   = DECODE_A(instr); \
-        B   = DECODE_B(instr); \
-        C   = DECODE_C(instr); \
-        Bx  = DECODE_Bx(instr); \
-        sBx = DECODE_sBx(instr); \
-    } while (0)
-    
+#define A        DECODE_A(instr)
+#define B        DECODE_B(instr)
+#define C        DECODE_C(instr)
+#define Bx       DECODE_Bx(instr)
+#define sBx      DECODE_sBx(instr)
+
+#define RA       (A)
+#define RB       (B)
+#define RC       (C)
+#define RKB      REG(B)
+#define RKC      REG(C)
+
 #define CHECK_GC \
     do { \
         if (LUNA_UNLIKELY(bytes_allocated > next_gc_threshold)) mark_and_sweep(vm); \
@@ -927,7 +922,6 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 #define OP(inst) DECODE_OP(inst)
 #define BX       Bx
 #define SBX      sBx
-#define ISK(x)   ((x) & 0x100)
 
     static const void *op_labels[] = {
         &&op_loadk,         // 0  OP_LOADK
