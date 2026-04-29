@@ -262,36 +262,10 @@
                 if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
-            } else {
-                if (vm->frame_count >= MAX_FRAMES) {
-                    release_value(_exc);
-                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
-                    goto op_throw;
-                }
-                CallFrame *caller = &FRAME;
-                CallFrame *callee = &vm->frames[vm->frame_count];
-                callee->chunk = fn->chunk;
-                callee->ip = 0;
-                callee->base = caller->base + fn_reg + 1;
-                callee->ret_reg = ret_reg;
-                callee->nargs = nargs;
-                callee->kw_args = make_null();
-                frame_set_refs(callee, NULL, fn);
-                callee->saved_globals = NULL;
-                int needed = callee->base + fn->chunk->max_registers;
-                if (needed > vm->stack_cap) {
-                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                }
-                for (int i = nargs; i < fn->chunk->max_registers; i++)
-                    vm->stack[callee->base + i] = make_null();
-                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
-                vm->frame_count++;
-                CHUNK = callee->chunk;
-                IP = 0;
-                DECODE;
-                goto *op_labels[OP(instr)];
             }
+            PUSH_FRAME(fn, NULL, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
+            DECODE;
+            goto *op_labels[OP(instr)];
         } else if (IS_CLOSURE(fn_val)) {
             ObjClosure *cl = (ObjClosure *)AS_OBJ(fn_val);
             ObjFunction *fn = cl->function;
@@ -302,36 +276,10 @@
                 if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
-            } else {
-                if (vm->frame_count >= MAX_FRAMES) {
-                    release_value(_exc);
-                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
-                    goto op_throw;
-                }
-                CallFrame *caller = &FRAME;
-                CallFrame *callee = &vm->frames[vm->frame_count];
-                callee->chunk = fn->chunk;
-                callee->ip = 0;
-                callee->base = caller->base + fn_reg + 1;
-                callee->ret_reg = ret_reg;
-                callee->nargs = nargs;
-                callee->kw_args = make_null();
-                frame_set_refs(callee, cl, fn);
-                callee->saved_globals = NULL;
-                int needed = callee->base + fn->chunk->max_registers;
-                if (needed > vm->stack_cap) {
-                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                }
-                for (int i = nargs; i < fn->chunk->max_registers; i++)
-                    vm->stack[callee->base + i] = make_null();
-                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
-                vm->frame_count++;
-                CHUNK = callee->chunk;
-                IP = 0;
-                DECODE;
-                goto *op_labels[OP(instr)];
             }
+            PUSH_FRAME(fn, cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
+            DECODE;
+            goto *op_labels[OP(instr)];
         } else if (IS_BOUND_METHOD(fn_val)) {
             ObjBoundMethod *bm = (ObjBoundMethod *)AS_OBJ(fn_val);
             ObjFunction *fn = bm->fn;
@@ -343,39 +291,11 @@
                 if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
-            } else {
-                if (vm->frame_count >= MAX_FRAMES) {
-                    release_value(_exc);
-                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
-                    goto op_throw;
-                }
-                CallFrame *caller = &FRAME;
-                CallFrame *callee = &vm->frames[vm->frame_count];
-                callee->chunk = fn->chunk;
-                callee->ip = 0;
-                /* Overwrite bound method slot with self; base points there so reg 0 = self */
-                SET_REG(fn_reg, bm->self);
-                callee->base = caller->base + fn_reg;
-                callee->ret_reg = ret_reg;
-                callee->nargs = nargs;
-                callee->kw_args = make_null();
-                frame_set_refs(callee, NULL, fn);
-                callee->saved_globals = NULL;
-                int needed = callee->base + fn->chunk->max_registers;
-                if (needed > vm->stack_cap) {
-                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                }
-                /* nargs+1 because self occupies reg 0 */
-                for (int i = nargs + 1; i < fn->chunk->max_registers; i++)
-                    vm->stack[callee->base + i] = make_null();
-                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
-                vm->frame_count++;
-                CHUNK = callee->chunk;
-                IP = 0;
-                DECODE;
-                goto *op_labels[OP(instr)];
             }
+            SET_REG(fn_reg, bm->self);
+            PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
+            DECODE;
+            goto *op_labels[OP(instr)];
         } else if (IS_INSTANCE(fn_val)) {
             ObjInstance *inst = (ObjInstance *)AS_OBJ(fn_val);
             int mi = -1;
@@ -394,39 +314,10 @@
                     if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
                     SET_REG(ret_reg, result);
                     DECODE; goto *op_labels[OP(instr)];
-                } else {
-                    if (vm->frame_count >= MAX_FRAMES) {
-                        release_value(_exc);
-                        _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
-                        goto op_throw;
-                    }
-                    CallFrame *caller = &FRAME;
-                    CallFrame *callee = &vm->frames[vm->frame_count];
-                    callee->chunk = fn->chunk;
-                    callee->ip = 0;
-                    /* Overwrite instance slot with self; base points there so reg 0 = self */
-                    SET_REG(fn_reg, fn_val);
-                    callee->base = caller->base + fn_reg;
-                    callee->ret_reg = ret_reg;
-                    callee->nargs = nargs;
-                    callee->kw_args = make_null();
-                    frame_set_refs(callee, NULL, fn);
-                    callee->saved_globals = NULL;
-                    int needed = callee->base + fn->chunk->max_registers;
-                    if (needed > vm->stack_cap) {
-                        vm->stack_cap = needed < 64 ? 64 : needed * 2;
-                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                    }
-                    /* nargs+1 because self occupies reg 0 */
-                    for (int i = nargs + 1; i < fn->chunk->max_registers; i++)
-                        vm->stack[callee->base + i] = make_null();
-                    vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
-                    vm->frame_count++;
-                    CHUNK = callee->chunk;
-                    IP = 0;
-                    DECODE;
-                    goto *op_labels[OP(instr)];
                 }
+                PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
+                DECODE;
+                goto *op_labels[OP(instr)];
             } else {
                 char buf[256];
                 snprintf(buf, sizeof(buf), "vm: attempt to call instance of '%s' (no _call method)", inst->klass ? inst->klass->name : "?");
@@ -457,8 +348,12 @@
         if (IS_OBJ(retval) && AS_OBJ(retval)) retain_obj(AS_OBJ(retval));
 
         if (vm->frame_count <= 1) {
-            close_upvalues(vm, 0);
-            for (int i = 0; i < FRAME.chunk->max_registers; i++) SET_REG(i, make_null());
+            if (LUNA_UNLIKELY(vm->open_upvalues)) close_upvalues(vm, 0);
+            for (int i = 0; i < FRAME.chunk->max_registers; i++) {
+                Value _old = vm->stack[FRAME.base + i];
+                vm->stack[FRAME.base + i] = make_null();
+                release_value(_old);
+            }
             vm->stack_count = 0;
             vm->frame_count = 0;
             if (IS_OBJ(retval) && AS_OBJ(retval)) release_obj(AS_OBJ(retval));
@@ -468,7 +363,7 @@
         int old_base = callee->base;
         release_value(callee->kw_args);
         callee->kw_args = make_null();
-        close_upvalues(vm, vm->frame_count);
+        if (LUNA_UNLIKELY(vm->open_upvalues)) close_upvalues(vm, vm->frame_count);
 
         /* Module import cleanup: capture exports before destroying globals */
         if (callee->saved_globals) {
@@ -488,7 +383,11 @@
             free(captured_name);
         }
 
-        for (int i = 0; i < callee->chunk->max_registers; i++) SET_REG(i, make_null());
+        for (int i = 0; i < callee->chunk->max_registers; i++) {
+            Value _old = vm->stack[callee->base + i];
+            vm->stack[callee->base + i] = make_null();
+            release_value(_old);
+        }
         
         vm_pop_try_frames(vm, vm->frame_count - 1);
         vm->frame_count--;

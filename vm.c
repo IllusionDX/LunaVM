@@ -1009,9 +1009,43 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     goto *op_labels[OP(instr)];
 
 
+#define CHECK_FRAME_OVERFLOW() do { \
+    if (LUNA_UNLIKELY((vm)->frame_count >= MAX_FRAMES)) { \
+        release_value(_exc); \
+        _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow"); \
+        goto op_throw; \
+    } \
+} while (0)
+
+#define PUSH_FRAME(fn, cl, base_reg, retreg, n, extra) do { \
+    CHECK_FRAME_OVERFLOW(); \
+    CallFrame *_c = &(vm)->frames[(vm)->frame_count]; \
+    _c->chunk = (fn)->chunk; \
+    _c->ip = 0; \
+    _c->base = (base_reg); \
+    _c->ret_reg = (retreg); \
+    _c->nargs = (n); \
+    _c->kw_args = make_null(); \
+    frame_set_refs(_c, (cl), (fn)); \
+    _c->saved_globals = NULL; \
+    int _needed = _c->base + (fn)->chunk->max_registers; \
+    if (_needed > (vm)->stack_cap) { \
+        (vm)->stack_cap = _needed < 64 ? 64 : _needed * 2; \
+        (vm)->stack = realloc((vm)->stack, (vm)->stack_cap * sizeof(Value)); \
+    } \
+    for (int _i = (n) + (extra); _i < (fn)->chunk->max_registers; _i++) \
+        (vm)->stack[_c->base + _i] = make_null(); \
+    (vm)->stack_count = _needed > (vm)->stack_count ? _needed : (vm)->stack_count; \
+    (vm)->frame_count++; \
+    CHUNK = _c->chunk; \
+    IP = 0; \
+} while (0)
+
 #include "vm_opcodes.inc"
 
     
+#undef PUSH_FRAME
+#undef CHECK_FRAME_OVERFLOW
 #undef DECODE
 #undef FRAME
 #undef CHUNK
