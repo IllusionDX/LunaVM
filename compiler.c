@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <math.h>
 #include "compiler.h"
 #include "opcode.h"
 #include "value.h"
@@ -440,6 +441,104 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             break;
         }
 
+        /* ============================================================ */
+        /* Constant folding: evaluate at compile time if both operands  */
+        /* are literals instead of emitting runtime opcodes.            */
+        /* ============================================================ */
+        {
+            Expr *l = expr->data.binary.left;
+            Expr *r = expr->data.binary.right;
+            bool folded = false;
+
+            /* int op int */
+            if (l->kind == EXPR_INTEGER && r->kind == EXPR_INTEGER) {
+                int64_t li = (int64_t)atoll(l->data.integer.value);
+                int64_t ri = (int64_t)atoll(r->data.integer.value);
+                int64_t result = 0;
+                bool valid = true;
+
+                if (strcmp(op_str, "+") == 0) result = li + ri;
+                else if (strcmp(op_str, "-") == 0) result = li - ri;
+                else if (strcmp(op_str, "*") == 0) result = li * ri;
+                else if (strcmp(op_str, "/") == 0) { if (ri == 0) valid = false; else result = li / ri; }
+                else if (strcmp(op_str, "%") == 0) { if (ri == 0) valid = false; else result = li % ri; }
+                else if (strcmp(op_str, "<")  == 0) { emit_loadbool(c, (uint8_t)target, li <  ri); folded = true; }
+                else if (strcmp(op_str, "<=") == 0) { emit_loadbool(c, (uint8_t)target, li <= ri); folded = true; }
+                else if (strcmp(op_str, ">")  == 0) { emit_loadbool(c, (uint8_t)target, li >  ri); folded = true; }
+                else if (strcmp(op_str, ">=") == 0) { emit_loadbool(c, (uint8_t)target, li >= ri); folded = true; }
+                else if (strcmp(op_str, "==") == 0) { emit_loadbool(c, (uint8_t)target, li == ri); folded = true; }
+                else if (strcmp(op_str, "!=") == 0) { emit_loadbool(c, (uint8_t)target, li != ri); folded = true; }
+                else valid = false;
+
+                if (!folded && valid) {
+                    if (result >= -32767 && result <= 32768)
+                        emit_AsBx(c, OP_LOADI, (uint8_t)target, (int32_t)result);
+                    else if (result >= INT32_MIN && result <= INT32_MAX)
+                        emit_loadi(c, (uint8_t)target, (int32_t)result);
+                    else {
+                        int k = chunk_add_const(c->chunk, make_int64(result));
+                        emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+                    }
+                    folded = true;
+                }
+            }
+            /* float op float  /  int op float  /  float op int */
+            else if ((l->kind == EXPR_FLOAT || l->kind == EXPR_INTEGER) &&
+                     (r->kind == EXPR_FLOAT || r->kind == EXPR_INTEGER) &&
+                     (l->kind == EXPR_FLOAT || r->kind == EXPR_FLOAT)) {
+                double ld = (l->kind == EXPR_FLOAT) ? atof(l->data.float_lit.value)
+                                                    : (double)atoll(l->data.integer.value);
+                double rd = (r->kind == EXPR_FLOAT) ? atof(r->data.float_lit.value)
+                                                    : (double)atoll(r->data.integer.value);
+                double result = 0.0;
+                bool valid = true;
+
+                if (strcmp(op_str, "+") == 0) result = ld + rd;
+                else if (strcmp(op_str, "-") == 0) result = ld - rd;
+                else if (strcmp(op_str, "*") == 0) result = ld * rd;
+                else if (strcmp(op_str, "/") == 0) result = ld / rd;  /* Inf/NaN ok */
+                else if (strcmp(op_str, "%") == 0) result = fmod(ld, rd);
+                else if (strcmp(op_str, "<")  == 0) { emit_loadbool(c, (uint8_t)target, ld <  rd); folded = true; }
+                else if (strcmp(op_str, "<=") == 0) { emit_loadbool(c, (uint8_t)target, ld <= rd); folded = true; }
+                else if (strcmp(op_str, ">")  == 0) { emit_loadbool(c, (uint8_t)target, ld >  rd); folded = true; }
+                else if (strcmp(op_str, ">=") == 0) { emit_loadbool(c, (uint8_t)target, ld >= rd); folded = true; }
+                else if (strcmp(op_str, "==") == 0) { emit_loadbool(c, (uint8_t)target, ld == rd); folded = true; }
+                else if (strcmp(op_str, "!=") == 0) { emit_loadbool(c, (uint8_t)target, ld != rd); folded = true; }
+                else valid = false;
+
+                if (!folded && valid) {
+                    int k = chunk_add_const(c->chunk, make_double(result));
+                    emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+                    folded = true;
+                }
+            }
+            /* string + string */
+            else if (l->kind == EXPR_STRING && r->kind == EXPR_STRING &&
+                     strcmp(op_str, "+") == 0) {
+                int len = l->data.string.length + r->data.string.length;
+                char *buf = malloc(len + 1);
+                memcpy(buf, l->data.string.value, l->data.string.length);
+                memcpy(buf + l->data.string.length, r->data.string.value, r->data.string.length + 1);
+                int k = chunk_add_string(c->chunk, buf);
+                emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+                free(buf);
+                folded = true;
+            }
+            /* null comparison */
+            else if (l->kind == EXPR_NULL && r->kind == EXPR_NULL) {
+                if (strcmp(op_str, "==") == 0) { emit_loadbool(c, (uint8_t)target, true); folded = true; }
+                else if (strcmp(op_str, "!=") == 0) { emit_loadbool(c, (uint8_t)target, false); folded = true; }
+            }
+            /* int/float op null / null op int/float (never equal) */
+            else if ((l->kind == EXPR_NULL && (r->kind == EXPR_INTEGER || r->kind == EXPR_FLOAT)) ||
+                     (r->kind == EXPR_NULL && (l->kind == EXPR_INTEGER || l->kind == EXPR_FLOAT))) {
+                if (strcmp(op_str, "==") == 0) { emit_loadbool(c, (uint8_t)target, false); folded = true; }
+                else if (strcmp(op_str, "!=") == 0) { emit_loadbool(c, (uint8_t)target, true); folded = true; }
+            }
+
+            if (folded) break;
+        }
+
         /* Not short-circuit: evaluate both sides eagerly */
 
         /* ADDI/SUBI fast path: x +/- small_literal  →  single imm instruction,
@@ -487,8 +586,50 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_UNARY: {
-        compile_expr_into(c, expr->data.unary.operand, target);
         const char *op_str = expr->data.unary.operator;
+        Expr *operand = expr->data.unary.operand;
+
+        /* Constant folding for unary minus on integers */
+        if (strcmp(op_str, "-") == 0 && operand->kind == EXPR_INTEGER) {
+            int64_t v = (int64_t)atoll(operand->data.integer.value);
+            v = -v;
+            if (v >= -32767 && v <= 32768)
+                emit_AsBx(c, OP_LOADI, (uint8_t)target, (int32_t)v);
+            else if (v >= INT32_MIN && v <= INT32_MAX)
+                emit_loadi(c, (uint8_t)target, (int32_t)v);
+            else {
+                int k = chunk_add_const(c->chunk, make_int64(v));
+                emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+            }
+            break;
+        }
+        /* Constant folding for unary minus on floats */
+        if (strcmp(op_str, "-") == 0 && operand->kind == EXPR_FLOAT) {
+            double v = -atof(operand->data.float_lit.value);
+            int k = chunk_add_const(c->chunk, make_double(v));
+            emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+            break;
+        }
+        /* Constant folding for logical NOT on booleans */
+        if (strcmp(op_str, "!") == 0 && operand->kind == EXPR_BOOL) {
+            emit_loadbool(c, (uint8_t)target, !operand->data.boolean.value);
+            break;
+        }
+        /* Constant folding for bitwise NOT on integers */
+        if (strcmp(op_str, "~") == 0 && operand->kind == EXPR_INTEGER) {
+            int64_t v = ~((int64_t)atoll(operand->data.integer.value));
+            if (v >= -32767 && v <= 32768)
+                emit_AsBx(c, OP_LOADI, (uint8_t)target, (int32_t)v);
+            else if (v >= INT32_MIN && v <= INT32_MAX)
+                emit_loadi(c, (uint8_t)target, (int32_t)v);
+            else {
+                int k = chunk_add_const(c->chunk, make_int64(v));
+                emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+            }
+            break;
+        }
+
+        compile_expr_into(c, operand, target);
         if (strcmp(op_str, "-") == 0) {
             emit_ABC(c, OP_NEG, (uint8_t)target, (uint8_t)target, 0);
         } else if (strcmp(op_str, "!") == 0) {
