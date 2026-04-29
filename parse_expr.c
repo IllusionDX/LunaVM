@@ -203,6 +203,22 @@ static Expr *parse_primary(Parser *parser) {
     case TOK_NEW: {
         advance(parser);
         Token *class_tok = expect(parser, TOK_IDENTIFIER, "Expected class name after 'new'");
+        /* Build qualified name (e.g. net.Socket) */
+        int name_len = (int)strlen(class_tok->value);
+        char *name = (char*)malloc(name_len + 1);
+        memcpy(name, class_tok->value, name_len + 1);
+        while (match(parser, TOK_DOT)) {
+            advance(parser);
+            Token *next = expect(parser, TOK_IDENTIFIER, "Expected identifier after '.'");
+            int next_len = (int)strlen(next->value);
+            char *new_name = (char*)malloc(name_len + 1 + next_len + 1);
+            memcpy(new_name, name, name_len);
+            new_name[name_len] = '.';
+            memcpy(new_name + name_len + 1, next->value, next_len + 1);
+            free(name);
+            name = new_name;
+            name_len = name_len + 1 + next_len;
+        }
         if (match(parser, TOK_LT)) {
             advance(parser);
             int depth = 1;
@@ -227,7 +243,7 @@ static Expr *parse_primary(Parser *parser) {
         expect(parser, TOK_RPAREN, "Expected ')' after arguments");
 
         Expr *expr = make_expr(EXPR_NEW, peek(parser)->line);
-        expr->data.new_expr.class_name = strdup(class_tok->value);
+        expr->data.new_expr.class_name = name;
         expr->data.new_expr.arguments = args;
         expr->data.new_expr.arg_count = arg_count;
         return expr;

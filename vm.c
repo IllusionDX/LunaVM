@@ -993,7 +993,8 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_indexget_safe, // 64 OP_INDEXGET_SAFE
         &&op_slice_safe,    // 65 OP_SLICE_SAFE
         &&op_import,        // 66 OP_IMPORT
-        &&op_halt           // 67 OP_HALT
+        &&op_tryinit,       // 67 OP_TRYINIT
+        &&op_halt           // 68 OP_HALT
     };
 
     DECODE;

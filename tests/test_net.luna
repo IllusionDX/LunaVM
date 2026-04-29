@@ -1,17 +1,33 @@
 import net
 
-var tcp_sock = net.tcp()
-print(tcp_sock != null)
+# Test listen creates a listening socket
+var listener = net.listen("tcp", 54321)
+print(listener != null)
 
-print(net.AF_INET > 0)
-print(net.SOCK_STREAM > 0)
-print(net.SOCK_DGRAM > 0)
+# Test dial creates a connected socket
+var conn = net.dial("tcp", "127.0.0.1", 54321)
+print(conn != null)
+print(conn.is_connected())
 
-print(net.Socket(net.AF_INET, net.SOCK_STREAM) != null)
+conn.close()
+listener.close()
 
-var udp_sock = net.udp()
-print(udp_sock != null)
-print(udp_sock.is_connected() == false)
+# Test clean constants
+print(net.IPV4 > 0)
+print(net.TCP > 0)
+print(net.UDP > 0)
 
+# Test raw Socket with new syntax
+var raw = new net.Socket(net.IPV4, net.TCP)
+print(raw != null)
+print(raw.is_connected() == false)
+raw.close()
+
+# Test UDP socket creation
+var udp = net.dial("udp", "127.0.0.1", 54322)
+print(udp != null)
+udp.close()
+
+# Test resolve
 var addr = net.resolve("localhost")
 print(addr == "127.0.0.1")

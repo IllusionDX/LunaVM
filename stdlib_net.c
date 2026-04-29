@@ -176,24 +176,15 @@ static void clear_socket_handle(ObjInstance *inst) {
  * Socket instance creation
  * ================================================================== */
 
-static Value create_socket_instance(VM *vm, int family, int type) {
-    if (ensure_winsock() != 0) {
-        luna_throw(vm, vm->runtime_error_class,
-            "net: failed to initialize networking");
-    }
+static void setup_socket_handle(ObjInstance *inst, int family, int type) {
+    if (ensure_winsock() != 0) return;
 
 #ifdef _WIN32
     SOCKET fd = socket(family, type, 0);
-    if (fd == INVALID_SOCKET) {
-        luna_throw(vm, vm->runtime_error_class,
-            "net: socket() failed: %d", socket_error());
-    }
+    if (fd == INVALID_SOCKET) return;
 #else
     int fd = socket(family, type, 0);
-    if (fd < 0) {
-        luna_throw(vm, vm->runtime_error_class,
-            "net: socket() failed: %s", strerror(errno));
-    }
+    if (fd < 0) return;
 #endif
 
     LunaSocket *sock = (LunaSocket*)malloc(sizeof(LunaSocket));
@@ -203,7 +194,7 @@ static Value create_socket_instance(VM *vm, int family, int type) {
 #else
         close(fd);
 #endif
-        luna_throw(vm, vm->runtime_error_class, "net: out of memory");
+        return;
     }
 
     sock->fd = fd;
@@ -215,11 +206,29 @@ static Value create_socket_instance(VM *vm, int family, int type) {
     sock->blocking = 1;
 
     ObjUserdata *ud = new_userdata_tagged("net.Socket", sock, socket_finalizer);
-
-    ObjInstance *inst = new_instance(socket_class, 4);
     instance_set_field(inst, "_handle", make_obj((Object*)ud));
+}
 
-    return make_obj((Object*)inst);
+static Value socket_init(VM *vm, Value *args, int n) {
+    if (n < 3) {
+        luna_throw(vm, vm->argument_error_class,
+            "Socket._init() requires family and type arguments");
+    }
+    if (!IS_INSTANCE(args[0])) {
+        luna_throw(vm, vm->type_error_class,
+            "Socket._init() must be called on an instance");
+    }
+    int family = as_int_checked(vm, args[1], "Socket._init", 1);
+    int type   = as_int_checked(vm, args[2], "Socket._init", 2);
+
+    if (ensure_winsock() != 0) {
+        luna_throw(vm, vm->runtime_error_class,
+            "net: failed to initialize networking");
+    }
+
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
+    setup_socket_handle(inst, family, type);
+    return args[0];
 }
 
 /* ==================================================================
@@ -582,30 +591,120 @@ static Value socket_get_address(VM *vm, Value *args, int n) {
  * Module-level functions
  * ================================================================== */
 
-static Value net_tcp(VM *vm, Value *args, int n) {
-    (void)args;
-    if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "net.tcp() takes no arguments");
+static Value net_dial(VM *vm, Value *args, int n) {
+    if (n < 3) {
+        luna_throw(vm, vm->argument_error_class,
+            "net.dial() requires protocol, host and port arguments");
     }
-    return create_socket_instance(vm, AF_INET, SOCK_STREAM);
+    require_string(vm, args[0], "dial", 1);
+    require_string(vm, args[1], "dial", 2);
+    int port = as_int_checked(vm, args[2], "dial", 3);
+
+    const char *protocol = as_cstring(args[0]);
+    int family = AF_INET;
+    int type = SOCK_STREAM; /* default = tcp */
+
+    if (strcmp(protocol, "tcp") == 0) {
+        type = SOCK_STREAM;
+    } else if (strcmp(protocol, "udp") == 0) {
+        type = SOCK_DGRAM;
+    } else {
+        luna_throw(vm, vm->argument_error_class,
+            "net.dial() protocol must be 'tcp' or 'udp'");
+    }
+
+    ObjInstance *inst = new_instance(socket_class, 4);
+    setup_socket_handle(inst, family, type);
+    Value sock_val = make_obj((Object*)inst);
+    LunaSocket *s = socket_handle_from_instance(vm, sock_val, "dial");
+
+    const char *host = as_cstring(args[1]);
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = (short)family;
+    addr.sin_port = htons((unsigned short)port);
+
+    if (inet_pton(family, host, &addr.sin_addr) <= 0) {
+        struct hostent *he = gethostbyname(host);
+        if (!he || !he->h_addr_list[0]) {
+            luna_throw(vm, vm->runtime_error_class,
+                "dial(): could not resolve host '%s'", host);
+        }
+        memcpy(&addr.sin_addr, he->h_addr_list[0], (size_t)he->h_length);
+    }
+
+    int rc = connect(s->fd, (struct sockaddr*)&addr, sizeof(addr));
+    if (rc != 0) {
+        int err = socket_error();
+        if (!is_wouldblock(err)) {
+            luna_throw(vm, vm->runtime_error_class,
+                "dial() failed: %d", err);
+        }
+    }
+
+    s->connected = 1;
+    return sock_val;
 }
 
-static Value net_udp(VM *vm, Value *args, int n) {
-    (void)args;
-    if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "net.udp() takes no arguments");
-    }
-    return create_socket_instance(vm, AF_INET, SOCK_DGRAM);
-}
-
-static Value net_socket(VM *vm, Value *args, int n) {
+static Value net_listen(VM *vm, Value *args, int n) {
     if (n < 2) {
         luna_throw(vm, vm->argument_error_class,
-            "net.Socket() requires family and type arguments");
+            "net.listen() requires protocol and port arguments");
     }
-    int family = as_int_checked(vm, args[0], "Socket", 1);
-    int type   = as_int_checked(vm, args[1], "Socket", 2);
-    return create_socket_instance(vm, family, type);
+    require_string(vm, args[0], "listen", 1);
+    int port = as_int_checked(vm, args[1], "listen", 2);
+
+    const char *protocol = as_cstring(args[0]);
+    int family = AF_INET;
+    int type = SOCK_STREAM; /* default = tcp */
+
+    if (strcmp(protocol, "tcp") == 0) {
+        type = SOCK_STREAM;
+    } else if (strcmp(protocol, "udp") == 0) {
+        type = SOCK_DGRAM;
+    } else {
+        luna_throw(vm, vm->argument_error_class,
+            "net.listen() protocol must be 'tcp' or 'udp'");
+    }
+
+    ObjInstance *inst = new_instance(socket_class, 4);
+    setup_socket_handle(inst, family, type);
+    Value sock_val = make_obj((Object*)inst);
+    LunaSocket *s = socket_handle_from_instance(vm, sock_val, "listen");
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = (short)family;
+    addr.sin_port = htons((unsigned short)port);
+
+    if (inet_pton(family, "0.0.0.0", &addr.sin_addr) <= 0) {
+        luna_throw(vm, vm->runtime_error_class,
+            "listen(): invalid bind address");
+    }
+
+    int opt = 1;
+#ifdef _WIN32
+    setsockopt(s->fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+#else
+    setsockopt(s->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
+
+    if (bind(s->fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        luna_throw(vm, vm->runtime_error_class,
+            "listen() bind failed: %d", socket_error());
+    }
+
+    s->bound = 1;
+
+    if (type == SOCK_STREAM) {
+        if (listen(s->fd, 5) != 0) {
+            luna_throw(vm, vm->runtime_error_class,
+                "listen() failed: %d", socket_error());
+        }
+        s->listening = 1;
+    }
+
+    return sock_val;
 }
 
 static Value net_resolve(VM *vm, Value *args, int n) {
@@ -657,6 +756,7 @@ void vm_register_net_module(VM *vm) {
     socket_class = new_class("Socket", NULL);
     retain_obj((Object*)socket_class);
 
+    class_add_native_method(socket_class, "_init",         socket_init);
     class_add_native_method(socket_class, "connect",       socket_connect);
     class_add_native_method(socket_class, "bind",          socket_bind);
     class_add_native_method(socket_class, "listen",        socket_listen);
@@ -671,27 +771,29 @@ void vm_register_net_module(VM *vm) {
     /* Module */
     ObjModule *mod = new_module("net");
 
-    module_add_native(mod, "tcp",     net_tcp);
-    module_add_native(mod, "udp",     net_udp);
-    module_add_native(mod, "Socket",  net_socket);
+    module_add_native(mod, "dial",    net_dial);
+    module_add_native(mod, "listen",  net_listen);
     module_add_native(mod, "resolve", net_resolve);
 
-    /* Constants */
+    /* Socket class — exported directly so `new net.Socket(...)` works via OP_NEW */
+    Value socket_key = make_obj((Object*)new_string("Socket", 6));
+    Value socket_val = make_obj((Object*)socket_class);
+    dict_set(mod->exports, socket_key, socket_val);
+    retain_obj((Object*)socket_class);
+
+    /* Constants — clean names, not POSIX jargon */
     dict_set(mod->exports,
-             make_obj((Object*)new_string("AF_INET", 7)),
+             make_obj((Object*)new_string("IPV4", 4)),
              make_int(AF_INET));
     dict_set(mod->exports,
-             make_obj((Object*)new_string("AF_INET6", 8)),
+             make_obj((Object*)new_string("IPV6", 4)),
              make_int(AF_INET6));
     dict_set(mod->exports,
-             make_obj((Object*)new_string("SOCK_STREAM", 11)),
+             make_obj((Object*)new_string("TCP", 3)),
              make_int(SOCK_STREAM));
     dict_set(mod->exports,
-             make_obj((Object*)new_string("SOCK_DGRAM", 10)),
+             make_obj((Object*)new_string("UDP", 3)),
              make_int(SOCK_DGRAM));
-
-    /* Export Socket class constructor — net.Socket(family, type) */
-    module_add_native(mod, "Socket", net_socket);
 
     dict_set(vm->module_cache,
              make_obj((Object*)new_string("net", 3)),

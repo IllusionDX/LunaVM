@@ -978,29 +978,23 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         emit_ABx(c, OP_NEW, (uint8_t)target, (uint16_t)ck);
         int nargs = expr->data.new_expr.arg_count;
         int saved_base = c->temp_base;
-        /* INVOKE: method name at obj_reg+1 (target+1), args at obj_reg+2.., dest at target+nargs+1 */
         c->temp_base = target + nargs + 2;
         for (int i = 0; i < nargs; i++) {
             compile_expr_into(c, expr->data.new_expr.arguments[i], target + 2 + i);
         }
         c->temp_base = saved_base;
-        Value cls_val;
-        bool has_init = false;
-        if (vm_get_global(c->vm, expr->data.new_expr.class_name, &cls_val) && IS_CLASS(cls_val)) {
-            ObjClass *cls = (ObjClass*)AS_OBJ(cls_val);
-            for (int i = 0; i < cls->method_count; i++) {
-                if (cls->method_names[i] && strcmp(cls->method_names[i], "_init") == 0) {
-                    has_init = true;
-                    break;
-                }
-            }
-        }
-        /* `_init` is optional: only emit the call if the class defines it. */
-        if (has_init) {
-            int mk = chunk_add_string(c->chunk, "_init");
-            emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
-            emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
-        }
+        /*
+         * Always emit OP_INVOKE("_init") — don't peek at runtime state.
+         * OP_INVOKE already handles missing _init (returns nil, see
+         * vm_opcodes.inc strcmp("_init")==0 branch).
+         *
+         * Register layout: r_target=instance, r_target+1="_init",
+         * r_target+2..=args, r_target+nargs+1=scratch (nil return lands here,
+         * NOT on the instance).
+         */
+        int mk = chunk_add_string(c->chunk, "_init");
+        emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
+        emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
         break;
     }
 

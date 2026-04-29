@@ -535,16 +535,64 @@
     }
 
     /* ---- Object Ops ---- */
+    /*
+     * OBJECT CREATION CONVENTIONS
+     *
+     * Two class flavors:
+     *   1. Luna-class (script-defined, e.g. "Player"):
+     *      Constructor is `def _init(self, ...):`.  Compiler emits OP_NEW
+     *      then OP_INVOKE("_init", args).  OP_INVOKE natively handles
+     *      missing _init (returns nil, see strcmp("_init") at ~line 1570).
+     *
+     *   2. Native class (stdlib, e.g. "net.Socket"):
+     *      OP_NEW resolves qualified names by lookup: module->exports[class].
+     *      Must export the ObjClass itself, not just a factory function.
+     *
+     * NIL-RETURN TRAP
+     *   Luna _init returns nil if there's no explicit `return self`.
+     *   Never set ret_reg = obj_reg — _init's nil will clobber the instance.
+     *   Always route _init's return to a scratch register (obj_reg + nargs + 1).
+     */
+
     /* 41. OP_NEW */
     op_new: {
         ObjString *cls_str = KSTROBJ(BX);
         if (!cls_str) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
         const char *cls_name = cls_str->chars;
         Value cls_val;
-        if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
-            release_value(_exc);
-            _exc = make_exception_instance(vm, vm->exception_class, "vm: class not found for new");
-            goto op_throw;
+        char *dot = strchr(cls_name, '.');
+        if (dot) {
+            char mod_name[128];
+            int len = (int)(dot - cls_name);
+            if (len >= 128) len = 127;
+            memcpy(mod_name, cls_name, len);
+            mod_name[len] = '\0';
+            Value mod_val;
+            if (!vm_get_global(vm, mod_name, &mod_val) || !IS_MODULE(mod_val)) {
+                release_value(_exc);
+                char buf[256];
+                snprintf(buf, sizeof(buf), "vm: module '%s' not found for new", mod_name);
+                _exc = make_exception_instance(vm, vm->exception_class, buf);
+                goto op_throw;
+            }
+            ObjModule *mod = (ObjModule*)AS_OBJ(mod_val);
+            ObjString *field = new_string(dot + 1, (int)strlen(dot + 1));
+            cls_val = dict_get(mod->exports, make_obj((Object*)field));
+            if (!IS_CLASS(cls_val)) {
+                release_value(_exc);
+                char buf[256];
+                snprintf(buf, sizeof(buf), "vm: class '%s' not found in module '%s'", dot + 1, mod_name);
+                _exc = make_exception_instance(vm, vm->exception_class, buf);
+                goto op_throw;
+            }
+        } else {
+            if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
+                release_value(_exc);
+                char buf[256];
+                snprintf(buf, sizeof(buf), "vm: class '%s' not found for new", cls_name);
+                _exc = make_exception_instance(vm, vm->exception_class, buf);
+                goto op_throw;
+            }
         }
         ObjClass *cls = (ObjClass*)AS_OBJ(cls_val);
         ObjInstance *new_inst = new_instance(cls, 4);
@@ -2203,7 +2251,78 @@
         goto *op_labels[OP(instr)];
     }
 
-    /* 67. OP_HALT */
+    /* 67. OP_TRYINIT */
+    op_tryinit: {
+        uint8_t obj_reg = RA;
+        uint8_t nargs   = C;
+        Value obj = REG(obj_reg);
+        if (!IS_INSTANCE(obj)) {
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: tryinit on non-instance");
+            goto op_throw;
+        }
+        ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
+        ObjClass *cls = inst->klass;
+        int mi = -1;
+        if (cls) {
+            for (int i = 0; i < cls->method_count; i++) {
+                if (cls->method_names[i] && strcmp(cls->method_names[i], "_init") == 0) { mi = i; break; }
+            }
+        }
+        if (mi < 0) {
+            if (nargs == 0) {
+                DECODE; goto *op_labels[OP(instr)];
+            }
+            release_value(_exc);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "RuntimeError: class '%s' has no _init constructor but %d argument(s) were provided",
+                     cls ? cls->name : "?", nargs);
+            _exc = make_exception_instance(vm, vm->runtime_error_class, buf);
+            goto op_throw;
+        }
+        ObjFunction *fn = cls->methods[mi];
+        if (fn->is_native) {
+            Value scratch[256];
+            scratch[0] = obj;
+            for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(obj_reg + 2 + i);
+            Value result;
+            if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+        } else if (vm->frame_count < MAX_FRAMES) {
+            CallFrame *caller = &FRAME;
+            CallFrame *callee = &vm->frames[vm->frame_count];
+            callee->chunk = fn->chunk;
+            callee->ip = 0;
+            callee->base = caller->base + obj_reg + 1;
+            /* Use a dummy ret_reg past the args so _init's nil return
+             * doesn't overwrite the instance at obj_reg. */
+            callee->ret_reg = (uint8_t)(obj_reg + nargs + 1);
+            callee->nargs = nargs;
+            callee->kw_args = make_null();
+            frame_set_refs(callee, NULL, fn);
+            callee->saved_globals = NULL;
+            int need = callee->base + fn->chunk->max_registers;
+            if (need > vm->stack_cap) {
+                vm->stack_cap = need < 64 ? 64 : need * 2;
+                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+            }
+            vm->stack[callee->base] = obj;
+            for (int j = 1 + nargs; j < fn->chunk->max_registers; j++)
+                vm->stack[callee->base + j] = make_null();
+            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+            vm->frame_count++;
+            CHUNK = callee->chunk;
+            IP = 0;
+            DECODE;
+            goto *op_labels[OP(instr)];
+        } else {
+            release_value(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
+            goto op_throw;
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 68. OP_HALT */
     op_halt: {
         CallFrame *frame = &FRAME;
         close_upvalues(vm, 0);

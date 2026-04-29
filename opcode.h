@@ -157,6 +157,9 @@ typedef enum {
     /* ---- Module import ---- */
     OP_IMPORT,      /* ABx  : A = import(module=constants[Bx])              */
 
+    /* ---- Safe constructor invocation ---- */
+    OP_TRYINIT,     /* ABC  : if obj has _init, call it with nargs=C (args at A+2..), else no-op if C==0 else error */
+
     OP_HALT,        /* ABC  : stop VM (A,B,C unused)                     */
 
     OP_COUNT        /* sentinel — total opcode count                       */
