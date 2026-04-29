@@ -1388,10 +1388,36 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
     }
 
     case STMT_IF: {
-        int cond = alloc_reg(c);
-        compile_expr_into(c, stmt->data.if_stmt.condition, cond);
-        int jz = emit_jump(c, OP_JZ, (uint8_t)cond);
-        free_reg(c);
+        Expr *cond = stmt->data.if_stmt.condition;
+        int jz = -1;
+        bool fused = false;
+
+        if (cond->kind == EXPR_BINARY) {
+            const char *op_str = cond->data.binary.operator;
+            OpCode cmp_op = -1;
+            if (strcmp(op_str, "<") == 0) cmp_op = OP_LT_JZ;
+            else if (strcmp(op_str, "<=") == 0) cmp_op = OP_LE_JZ;
+            else if (strcmp(op_str, ">") == 0) cmp_op = OP_GT_JZ;
+            else if (strcmp(op_str, ">=") == 0) cmp_op = OP_GE_JZ;
+
+            if (cmp_op != (OpCode)-1) {
+                int right = alloc_reg(c);
+                compile_expr_into(c, cond->data.binary.right, right);
+                int left = alloc_reg(c);
+                compile_expr_into(c, cond->data.binary.left, left);
+                jz = chunk_emit_ABC(c->chunk, c->line, cmp_op, (uint8_t)left, (uint8_t)right, 0);
+                free_reg(c);
+                free_reg(c);
+                fused = true;
+            }
+        }
+
+        if (!fused) {
+            int condreg = alloc_reg(c);
+            compile_expr_into(c, cond, condreg);
+            jz = emit_jump(c, OP_JZ, (uint8_t)condreg);
+            free_reg(c);
+        }
 
         scope_enter(c);
         for (int i = 0; i < stmt->data.if_stmt.then_count; i++)
@@ -1400,14 +1426,26 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
 
         if (stmt->data.if_stmt.else_count > 0) {
             int j = emit_jump(c, OP_JMP, 0);
-            patch_jump(c, jz);
+            if (fused) {
+                int off = c->chunk->count - (jz + 1);
+                if (off >= 0 && off <= 255)
+                    c->chunk->code[jz] = (c->chunk->code[jz] & 0x00FFFFFF) | ((uint32_t)off << 24);
+            } else {
+                patch_jump(c, jz);
+            }
             scope_enter(c);
             for (int i = 0; i < stmt->data.if_stmt.else_count; i++)
                 compile_stmt(c, stmt->data.if_stmt.else_body[i]);
             scope_exit(c);
             patch_jump(c, j);
         } else {
-            patch_jump(c, jz);
+            if (fused) {
+                int off = c->chunk->count - (jz + 1);
+                if (off >= 0 && off <= 255)
+                    c->chunk->code[jz] = (c->chunk->code[jz] & 0x00FFFFFF) | ((uint32_t)off << 24);
+            } else {
+                patch_jump(c, jz);
+            }
         }
         break;
     }

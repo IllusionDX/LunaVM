@@ -23,6 +23,7 @@ static void print_usage(const char *program) {
     fprintf(stderr, "       %s            # Run interactive REPL\n", program);
     fprintf(stderr, "\nOptions:\n");
     fprintf(stderr, "  -u          Unbuffered stdout/stderr\n");
+    fprintf(stderr, "  --dump-bytecode  Print disassembled bytecode\n");
     fprintf(stderr, "  --version   Show version information\n");
     fprintf(stderr, "  --help      Show this help message\n");
     fprintf(stderr, "\nExamples:\n");
@@ -56,7 +57,7 @@ static char *read_file(const char *path) {
     return buffer;
 }
 
-static int execute_native_program(const char *source, const char *filepath, int argc, char *argv[]) {
+static int execute_native_program(const char *source, const char *filepath, int argc, char *argv[], bool dump_bytecode) {
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: execute_native_program start\n");
 #endif
@@ -114,6 +115,7 @@ static int execute_native_program(const char *source, const char *filepath, int 
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: about to run chunk\n");
 #endif
+    if (dump_bytecode) chunk_disassemble(&chunk);
     VMResult result = vm_run_chunk(&vm, &chunk);
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: vm_run_chunk returned %d\n", result);
@@ -310,11 +312,16 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "DEBUG: main start\n");
 #endif
     int unbuffered = 0;
+    int dump_bytecode = 0;
     int file_idx = -1;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-u") == 0) {
             unbuffered = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--dump-bytecode") == 0) {
+            dump_bytecode = 1;
             continue;
         }
         if (file_idx < 0 && argv[i][0] != '-') {
@@ -368,7 +375,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "DEBUG: read_file succeeded, calling execute_native_program\n");
 #endif
 
-    int result = execute_native_program(source, argv[file_idx], argc, argv);
+    int result = execute_native_program(source, argv[file_idx], argc, argv, dump_bytecode);
     free(source);
     return result;
 }

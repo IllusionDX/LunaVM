@@ -63,4 +63,7 @@ int  chunk_add_string_len(Chunk *chunk, const char *chars, int length);
 /* ---- Patch helpers (for back-patching jump targets) ---- */
 void chunk_patch_sBx(Chunk *chunk, int at, int32_t sbx);
 
+/* ---- Disassembly ---- */
+void chunk_disassemble(Chunk *chunk);
+
 #endif /* LUNA_CHUNK_H */
