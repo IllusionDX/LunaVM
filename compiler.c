@@ -193,8 +193,8 @@ static void patch_jump(Compiler *c, int jump_idx) {
     chunk_patch_sBx(c->chunk, jump_idx, sbx);
 }
 
-static void emit_move(Compiler *c, uint8_t dst, uint8_t src) {
-    emit_ABC(c, OP_MOVE, dst, src, 0);
+static void emit_ret(Compiler *c, uint8_t reg) {
+    emit_ABC(c, OP_RET, reg, 0, 0);
 }
 
 static void emit_loadi(Compiler *c, uint8_t dst, int32_t v) {
@@ -205,31 +205,23 @@ static void emit_loadi(Compiler *c, uint8_t dst, int32_t v) {
         emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
     }
 }
-
 static void emit_loadbool(Compiler *c, uint8_t dst, bool v) {
     emit_ABC(c, v ? OP_LOADTRUE : OP_LOADFALSE, dst, 0, 0);
 }
-
 static void emit_loadnull(Compiler *c, uint8_t dst) {
     emit_ABC(c, OP_LOADNULL, dst, 0, 0);
 }
-
 static void emit_loadstring(Compiler *c, uint8_t dst, const char *s) {
     int k = chunk_add_string(c->chunk, s);
     emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
 }
-
 static void emit_loadstring_len(Compiler *c, uint8_t dst, const char *s, int length) {
     int k = chunk_add_string_len(c->chunk, s, length);
     emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
 }
 
-static void emit_ret(Compiler *c, uint8_t reg) {
-    emit_ABC(c, OP_RET, reg, 0, 0);
-}
-
-static void emit_enter(Compiler *c, uint16_t nlocals) {
-    emit_ABx(c, OP_ENTER, 0, nlocals);
+static void emit_move(Compiler *c, uint8_t dst, uint8_t src) {
+    emit_ABC(c, OP_MOVE, dst, src, 0);
 }
 
 /* ============================================================ */
@@ -1757,7 +1749,6 @@ static int compile_function_value(Compiler *c, const char *name,
     };
 
     scope_enter(&sub);
-    emit_enter(&sub, (uint16_t)param_count);
 
     for (int i = 0; i < param_count; i++) {
         add_local(&sub, params[i].name, i);
@@ -1777,7 +1768,8 @@ static int compile_function_value(Compiler *c, const char *name,
         }
     }
     /* Emit kwargs remapping (populates params from kwargs dict) */
-    emit_ABC(&sub, OP_KWARGS, 0, 0, 0);
+    if (param_count > 0)
+        emit_ABC(&sub, OP_KWARGS, 0, 0, 0);
 
     for (int i = 0; i < body_count; i++) {
         compile_stmt(&sub, body[i]);
@@ -1905,7 +1897,6 @@ static void compile_class(Compiler *c, Decl *decl) {
             .loop        = NULL
         };
         scope_enter(&sub);
-        emit_enter(&sub, (uint16_t)(m->data.function.param_count + 1));
         /* self in reg 0, params in 1..n */
         add_local(&sub, "self", 0);
         for (int j = 0; j < m->data.function.param_count; j++) {
