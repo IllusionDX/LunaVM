@@ -55,9 +55,8 @@ typedef uint64_t Value;
 #define TAG_EMPTY    5  /* 0x101 (internal tombstone) */
 
 #define IS_DOUBLE(v) LUNA_LIKELY( \
-    (((v) & 0x7FF0000000000000ULL) != 0x7FF0000000000000ULL) || \
-    ((v) == 0x7FF800000000000AULL) || \
-    (((v) & 0x000FFFFFFFFFFFFFULL) == 0) \
+    (((v) & 0x7FF8000000000000ULL) != 0x7FF8000000000000ULL) || \
+    ((v) == 0x7FF800000000000AULL) \
 )
 /*
  * IS_OBJ must stay signature-based, not just "!IS_DOUBLE".
