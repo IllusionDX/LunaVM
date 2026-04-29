@@ -1783,8 +1783,11 @@ static int compile_function_value(Compiler *c, const char *name,
         compile_stmt(&sub, body[i]);
     }
 
-    emit_loadnull(&sub, 0);
-    emit_ret(&sub, 0);
+    bool last_is_return = body_count > 0 && body[body_count - 1]->kind == STMT_RETURN;
+    if (!last_is_return) {
+        emit_loadnull(&sub, 0);
+        emit_ret(&sub, 0);
+    }
 
     scope_exit(&sub);
 
