@@ -1180,7 +1180,7 @@ bool vm_call_native(VM *vm, NativeFn fn, Value *args, int arg_count, Value *out)
     return ok;
 }
 
-void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size) {
+void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error_msg) {
     /* Find the innermost frame that has a source_path */
     const char *fallback_source = NULL;
     for (int j = vm->frame_count - 1; j >= 0; j--) {
@@ -1190,31 +1190,43 @@ void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size) {
         }
     }
     int pos = 0;
+    /* Top frame = the one that threw */
     int top_line = 0;
-    for (int i = 0; i < vm->frame_count && pos < (int)buf_size - 1; i++) {
-        CallFrame *f = &vm->frames[i];
-        if (!f->chunk) continue;
-        int line = 0;
-        int ip = f->ip;
-        if (ip > 0 && ip <= f->chunk->count) {
-            line = f->chunk->lines[ip - 1];
-        }
-        const char *fn_name = f->chunk->name ? f->chunk->name : "<unknown>";
-        const char *source = f->chunk->source_path ? f->chunk->source_path : (fallback_source ? fallback_source : NULL);
-        int n = snprintf(buf + pos, buf_size - pos, "\n  File \"%s\", line %d, in %s", source ? source : "?", line, fn_name);
-        if (n > 0) pos += n;
-        top_line = line;
-    }
-    /* Try to show source context for the top frame */
-    const char *src_path = NULL;
-    for (int j = vm->frame_count - 1; j >= 0; j--) {
-        if (vm->frames[j].chunk && vm->frames[j].chunk->source_path) {
-            src_path = vm->frames[j].chunk->source_path;
-            break;
+    const char *top_source = NULL;
+    if (vm->frame_count > 0) {
+        CallFrame *f = &vm->frames[vm->frame_count - 1];
+        if (f->chunk) {
+            int ip = f->ip;
+            if (ip > 0 && ip <= f->chunk->count) top_line = f->chunk->lines[ip - 1];
+            top_source = f->chunk->source_path ? f->chunk->source_path : fallback_source;
         }
     }
-    if (src_path && top_line > 0) {
-        FILE *f = fopen(src_path, "r");
+    /* Get exception class name */
+    const char *class_name = "Error";
+    if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception)) {
+        Object *obj = AS_OBJ(vm->last_exception);
+        if (obj->type == OBJ_INSTANCE) {
+            ObjInstance *inst = (ObjInstance*)obj;
+            class_name = inst->class_name ? inst->class_name : "Error";
+        }
+    }
+    /* Get the raw message from the exception instance (not value_to_string which wraps in <>) */
+    const char *raw_msg = error_msg;
+    if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception)) {
+        Object *obj = AS_OBJ(vm->last_exception);
+        if (obj->type == OBJ_INSTANCE) {
+            Value msgv = instance_get_field((ObjInstance*)obj, "message");
+            if (IS_STRING(msgv)) raw_msg = ((ObjString*)AS_OBJ(msgv))->chars;
+        }
+    }
+    /* GCC-style: file:line: error: ClassName: message */
+    int n = snprintf(buf + pos, buf_size - pos, "%s:%d: error: %s: %s",
+                     top_source ? top_source : "?", top_line, class_name,
+                     raw_msg ? raw_msg : "?");
+    if (n > 0) pos += n;
+    /* Source context (3 lines, GCC-style with line numbers) */
+    if (top_source && top_line > 0) {
+        FILE *f = fopen(top_source, "r");
         if (f) {
             char line_buf[512];
             int current = 1;
@@ -1222,13 +1234,27 @@ void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size) {
                 size_t len = strlen(line_buf);
                 if (len > 0 && line_buf[len-1] == '\n') line_buf[len-1] = '\0';
                 if (current >= top_line - 1 && current <= top_line + 1) {
-                    int n = snprintf(buf + pos, buf_size - pos, "\n%s %s", current == top_line ? " >" : "  ", line_buf);
+                    n = snprintf(buf + pos, buf_size - pos, "\n%5d | %s%s",
+                                 current, line_buf,
+                                 current == top_line ? "  <-- HERE" : "");
                     if (n > 0) pos += n;
                 }
                 current++;
             }
             fclose(f);
         }
+    }
+    /* Backtrace (all frames, top to bottom) */
+    for (int i = 0; i < vm->frame_count && pos < (int)buf_size - 1; i++) {
+        CallFrame *f = &vm->frames[i];
+        if (!f->chunk) continue;
+        int line = 0;
+        int ip = f->ip;
+        if (ip > 0 && ip <= f->chunk->count) line = f->chunk->lines[ip - 1];
+        const char *fn_name = f->chunk->name ? f->chunk->name : "<unknown>";
+        const char *source = f->chunk->source_path ? f->chunk->source_path : (fallback_source ? fallback_source : NULL);
+        n = snprintf(buf + pos, buf_size - pos, "\n  %s:%d: in %s", source ? source : "?", line, fn_name);
+        if (n > 0) pos += n;
     }
     buf[pos] = '\0';
 }

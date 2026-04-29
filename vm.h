@@ -148,8 +148,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk);
 void luna_throw(VM *vm, struct ObjClass *error_class, const char *format, ...);
 bool vm_call_native(VM *vm, NativeFn fn, Value *args, int arg_count, Value *out);
 
-/* Stack trace — formats the call stack into a string buffer */
-void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size);
+/* Stack trace — formats the call stack into a string buffer (GCC-style) */
+void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error_msg);
 
 /* Upvalue capture — declared here because vm.c defines it after vm_run_chunk */
 ObjUpvalue *capture_upvalue(VM *vm, int stack_idx);
