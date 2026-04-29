@@ -2,8 +2,8 @@
 # Supports: Linux, macOS, Windows (MinGW)
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG
-LDFLAGS = -lm
+CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto
+LDFLAGS = -lm -flto
 
 # Platform detection
 ifeq ($(OS),Windows_NT)
