@@ -351,31 +351,86 @@ static Value dict_method_length(VM *vm, Value *args, int nargs) {
     return make_int(dict_length((ObjDict*)AS_OBJ(args[0])));
 }
 
-/* Lookup table mapping method name -> pre-created ObjFunction */
-typedef struct {
-    const char  *name;
-    int          len;
-    ObjFunction *fn;
-} DictMethodEntry;
+/* ============================================================ */
+/* List method native functions — args[0] = list (self)        */
+/* ============================================================ */
 
-static DictMethodEntry dict_method_table[] = {
-    {"keys",   4, NULL},
-    {"has",    3, NULL},
-    {"remove", 6, NULL},
-    {"values", 6, NULL},
-    {"clear",  5, NULL},
-    {"length", 6, NULL},
-};
-#define DICT_METHOD_COUNT (sizeof(dict_method_table) / sizeof(dict_method_table[0]))
+static Value list_method_add(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 2 || !IS_LIST(args[0])) return make_null();
+    list_add((ObjList*)AS_OBJ(args[0]), args[1]); return make_null();
+}
+static Value list_method_insert(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 3 || !IS_LIST(args[0]) || !IS_INT(args[1])) return make_null();
+    list_insert((ObjList*)AS_OBJ(args[0]), AS_INT(args[1]), args[2]); return make_null();
+}
+static Value list_method_remove(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 2 || !IS_LIST(args[0]) || !IS_INT(args[1])) return make_null();
+    return list_remove((ObjList*)AS_OBJ(args[0]), AS_INT(args[1]));
+}
+static Value list_method_pop(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 1 || !IS_LIST(args[0])) return make_null();
+    return list_pop((ObjList*)AS_OBJ(args[0]));
+}
+static Value list_method_clear(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 1 || !IS_LIST(args[0])) return make_null();
+    list_clear((ObjList*)AS_OBJ(args[0])); return make_null();
+}
+static Value list_method_length(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 1 || !IS_LIST(args[0])) return make_null();
+    return make_int(list_length((ObjList*)AS_OBJ(args[0])));
+}
 
-ObjFunction *vm_dict_method_lookup(const char *name, int len) {
-    for (int i = 0; i < (int)DICT_METHOD_COUNT; i++) {
-        if (dict_method_table[i].len == len &&
-            memcmp(dict_method_table[i].name, name, len) == 0) {
-            return dict_method_table[i].fn;
-        }
+/* ============================================================ */
+/* Enum method native functions — args[0] = enum (self)        */
+/* ============================================================ */
+
+static Value enum_method_values(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 1 || !IS_ENUM(args[0])) return make_null();
+    ObjEnum *e = (ObjEnum*)AS_OBJ(args[0]);
+    ObjList *lst = new_list(e->count);
+    for (int i = 0; i < e->count; i++) list_add(lst, make_int(e->values[i]));
+    return make_obj((Object*)lst);
+}
+static Value enum_method_keys(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 1 || !IS_ENUM(args[0])) return make_null();
+    ObjEnum *e = (ObjEnum*)AS_OBJ(args[0]);
+    ObjList *lst = new_list(e->count);
+    for (int i = 0; i < e->count; i++)
+        list_add(lst, make_obj((Object*)new_string(e->names[i], (int)strlen(e->names[i]))));
+    return make_obj((Object*)lst);
+}
+static Value enum_method_count(VM *vm, Value *args, int nargs) {
+    (void)vm; if (nargs < 1 || !IS_ENUM(args[0])) return make_null();
+    return make_int(((ObjEnum*)AS_OBJ(args[0]))->count);
+}
+
+/* ============================================================ */
+/* String method native functions — args[0] = string (self)    */
+/* ============================================================ */
+
+static Value string_method_to_buffer(VM *vm, Value *args, int nargs) {
+    if (nargs < 1 || !IS_STRING(args[0])) return make_null();
+    if (nargs != 1) { luna_throw(vm, vm->argument_error_class, "string.to_buffer() takes no arguments"); return make_null(); }
+    ObjString *str = (ObjString*)AS_OBJ(args[0]);
+    ObjBuffer *buf = new_buffer((size_t)str->length);
+    buffer_append_data(buf, (const uint8_t*)str->chars, (size_t)str->length);
+    return make_obj((Object*)buf);
+}
+static Value string_method_byte_at(VM *vm, Value *args, int nargs) {
+    if (nargs < 1 || !IS_STRING(args[0])) return make_null();
+    if (nargs < 2 || (!IS_INT(args[1]) && !IS_INT64(args[1]))) {
+        luna_throw(vm, vm->type_error_class, "string.byte_at() expects an integer index"); return make_null();
     }
-    return NULL;
+    ObjString *str = (ObjString*)AS_OBJ(args[0]);
+    int64_t idx64 = as_int64(args[1]);
+    if (idx64 < 0 || idx64 >= str->length) {
+        luna_throw(vm, vm->index_error_class, "string.byte_at() index out of range"); return make_null();
+    }
+    return make_int((uint8_t)str->chars[idx64]);
+}
+static Value string_method_length(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs; if (!IS_STRING(args[0])) return make_null();
+    return make_int(((ObjString*)AS_OBJ(args[0]))->length);
 }
 
 void vm_register_builtins(VM *vm) {
@@ -396,61 +451,58 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "vec3",  bn_vec3);
     vm_define_native(vm, "vec4",  bn_vec4);
     vm_define_native(vm, "mat4",  bn_mat4);
-
-    /* Pre-create dict method native function objects (live for process lifetime) */
-    dict_method_table[0].fn = new_native_function("dict.keys",   dict_method_keys);
-    dict_method_table[1].fn = new_native_function("dict.has",    dict_method_has);
-    dict_method_table[2].fn = new_native_function("dict.remove", dict_method_remove);
-    dict_method_table[3].fn = new_native_function("dict.values", dict_method_values);
-    dict_method_table[4].fn = new_native_function("dict.clear",  dict_method_clear);
-    dict_method_table[5].fn = new_native_function("dict.length", dict_method_length);
 }
 
 /* ============================================================ */
-/* Collection method dispatch                                    */
+/* Canonical class registration                                 */
 /* ============================================================ */
 
-bool vm_invoke_list(VM *vm, ObjList *list, const char *method,
-                    Value *args, int nargs, Value *result) {
-    (void)vm;
-    if ((!strcmp(method,"add") || !strcmp(method,"append")) && nargs>=1) { list_add(list,args[0]); *result=make_null(); return true; }
-    if (!strcmp(method,"insert") && nargs>=2 && IS_INT(args[0])) { list_insert(list, AS_INT(args[0]), args[1]); *result=make_null(); return true; }
-    if (!strcmp(method,"remove") && nargs>=1 && IS_INT(args[0])) { *result=list_remove(list, AS_INT(args[0])); return true; }
-    if (!strcmp(method,"pop"))   { *result=list_pop(list);    return true; }
-    if (!strcmp(method,"clear")) { list_clear(list); *result=make_null(); return true; }
-    if (!strcmp(method,"length") || !strcmp(method,"size")) { *result=make_int(list_length(list)); return true; }
-    return false;
+void vm_register_canonical_classes(VM *vm) {
+    /* String canonical class */
+    vm->string_class = new_class("String", NULL);
+    class_add_native_method(vm->string_class, "to_buffer", string_method_to_buffer);
+    class_add_native_method(vm->string_class, "byte_at", string_method_byte_at);
+    class_add_native_method(vm->string_class, "length", string_method_length);
+    class_add_native_method(vm->string_class, "size", string_method_length);
+
+    /* List canonical class */
+    vm->list_class = new_class("List", NULL);
+    class_add_native_method(vm->list_class, "add", list_method_add);
+    class_add_native_method(vm->list_class, "append", list_method_add);
+    class_add_native_method(vm->list_class, "insert", list_method_insert);
+    class_add_native_method(vm->list_class, "remove", list_method_remove);
+    class_add_native_method(vm->list_class, "pop", list_method_pop);
+    class_add_native_method(vm->list_class, "clear", list_method_clear);
+    class_add_native_method(vm->list_class, "length", list_method_length);
+    class_add_native_method(vm->list_class, "size", list_method_length);
+
+    /* Dict canonical class */
+    vm->dict_class = new_class("Dict", NULL);
+    class_add_native_method(vm->dict_class, "keys", dict_method_keys);
+    class_add_native_method(vm->dict_class, "has", dict_method_has);
+    class_add_native_method(vm->dict_class, "remove", dict_method_remove);
+    class_add_native_method(vm->dict_class, "values", dict_method_values);
+    class_add_native_method(vm->dict_class, "clear", dict_method_clear);
+    class_add_native_method(vm->dict_class, "length", dict_method_length);
+
+    /* Enum canonical class */
+    vm->enum_class = new_class("Enum", NULL);
+    class_add_native_method(vm->enum_class, "values", enum_method_values);
+    class_add_native_method(vm->enum_class, "keys", enum_method_keys);
+    class_add_native_method(vm->enum_class, "count", enum_method_count);
+    class_add_native_method(vm->enum_class, "length", enum_method_count);
+    class_add_native_method(vm->enum_class, "size", enum_method_count);
+
+    /* Remaining canonical classes (no methods yet, needed by get_class) */
+    vm->buffer_class = new_class("Buffer", NULL);
+    vm->vector_class = new_class("Vector", NULL);
+    vm->matrix_class = new_class("Matrix", NULL);
+    vm->function_class = new_class("Function", NULL);
+    vm->closure_class = new_class("Closure", NULL);
+    vm->bound_method_class = new_class("BoundMethod", NULL);
+    vm->class_class = new_class("Class", NULL);
+    vm->module_class = new_class("Module", NULL);
+    vm->userdata_class = new_class("Userdata", NULL);
 }
 
-bool vm_invoke_dict(VM *vm, ObjDict *dict, const char *method,
-                    Value *args, int nargs, Value *result) {
-    ObjFunction *fn = vm_dict_method_lookup(method, (int)strlen(method));
-    if (!fn) return false;
-    Value scratch[256];
-    scratch[0] = make_obj((Object*)dict);
-    for (int i = 0; i < nargs; i++) scratch[i + 1] = args[i];
-    return vm_call_native(vm, fn->native_fn, scratch, nargs + 1, result);
-}
 
-bool vm_invoke_enum(VM *vm, ObjEnum *enm, const char *method,
-                    Value *args, int nargs, Value *result) {
-    (void)vm; (void)args; (void)nargs;
-    if (!strcmp(method, "values")) {
-        ObjList *lst = new_list(enm->count);
-        for (int i = 0; i < enm->count; i++) list_add(lst, make_int(enm->values[i]));
-        *result = make_obj((Object*)lst);
-        return true;
-    }
-    if (!strcmp(method, "keys")) {
-        ObjList *lst = new_list(enm->count);
-        for (int i = 0; i < enm->count; i++)
-            list_add(lst, make_obj((Object*)new_string(enm->names[i], (int)strlen(enm->names[i]))));
-        *result = make_obj((Object*)lst);
-        return true;
-    }
-    if (!strcmp(method, "count") || !strcmp(method, "length") || !strcmp(method, "size")) {
-        *result = make_int(enm->count);
-        return true;
-    }
-    return false;
-}

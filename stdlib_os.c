@@ -326,19 +326,6 @@ static Value file_read_all(VM *vm, Value *args, int n) {
     return out;
 }
 
-static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn) {
-    if (cls->method_count >= cls->method_capacity) {
-        int new_cap = cls->method_capacity < 4 ? 4 : cls->method_capacity * 2;
-        cls->methods = realloc(cls->methods, sizeof(ObjFunction*) * new_cap);
-        cls->method_names = realloc(cls->method_names, sizeof(char*) * new_cap);
-        cls->method_capacity = new_cap;
-    }
-    ObjFunction *f = new_native_function(name, fn);
-    cls->methods[cls->method_count] = f;
-    cls->method_names[cls->method_count] = dup_cstr(name);
-    cls->method_count++;
-}
-
 /* Convenience functions */
 
 static Value os_open(VM *vm, Value *args, int n) {

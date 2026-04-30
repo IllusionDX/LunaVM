@@ -121,6 +121,21 @@ typedef struct VM {
     struct ObjClass *runtime_error_class;
     struct ObjClass *argument_error_class;
 
+    /* Canonical classes for built-in types (fast dispatch) */
+    struct ObjClass *string_class;
+    struct ObjClass *list_class;
+    struct ObjClass *dict_class;
+    struct ObjClass *enum_class;
+    struct ObjClass *buffer_class;
+    struct ObjClass *vector_class;
+    struct ObjClass *matrix_class;
+    struct ObjClass *function_class;
+    struct ObjClass *closure_class;
+    struct ObjClass *bound_method_class;
+    struct ObjClass *class_class;
+    struct ObjClass *module_class;
+    struct ObjClass *userdata_class;
+
     /* Native exception jump stack (for longjmp from C builtins) */
     LunaJump *native_jump;
 } VM;

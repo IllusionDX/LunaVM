@@ -1137,6 +1137,55 @@ Value dict_values(ObjDict *d) {
 }
 
 /* ============================================================ */
+/* Class method helpers                                           */
+/* ============================================================ */
+
+void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn) {
+    if (cls->method_count >= cls->method_capacity) {
+        int new_cap = cls->method_capacity < 8 ? 8 : cls->method_capacity * 2;
+        cls->methods      = realloc(cls->methods,      new_cap * sizeof(ObjFunction*));
+        cls->method_names = realloc(cls->method_names, new_cap * sizeof(char*));
+        cls->method_capacity = new_cap;
+    }
+    ObjFunction *f = new_native_function(name, fn);
+    cls->methods[cls->method_count] = f;
+    cls->method_names[cls->method_count] = strdup(name);
+    cls->method_count++;
+}
+
+struct ObjClass *get_class(VM *vm, Value val) {
+    if (!IS_OBJ(val) || !AS_OBJ(val)) return NULL;
+    switch (AS_OBJ(val)->type) {
+        case OBJ_STRING:       return vm->string_class;
+        case OBJ_LIST:         return vm->list_class;
+        case OBJ_DICT:         return vm->dict_class;
+        case OBJ_ENUM:         return vm->enum_class;
+        case OBJ_BUFFER:       return vm->buffer_class;
+        case OBJ_VECTOR:       return vm->vector_class;
+        case OBJ_MATRIX:       return vm->matrix_class;
+        case OBJ_FUNCTION:     return vm->function_class;
+        case OBJ_CLOSURE:      return vm->closure_class;
+        case OBJ_BOUND_METHOD: return vm->bound_method_class;
+        case OBJ_CLASS:        return vm->class_class;
+        case OBJ_MODULE:       return vm->module_class;
+        case OBJ_USERDATA:     return vm->userdata_class;
+        case OBJ_INSTANCE:     return ((ObjInstance*)AS_OBJ(val))->klass;
+        default:               return NULL;
+    }
+}
+
+struct ObjFunction *class_find_method(ObjClass *cls, const char *name) {
+    if (!cls) return NULL;
+    for (int i = 0; i < cls->method_count; i++) {
+        if (strcmp(cls->method_names[i], name) == 0) {
+            return cls->methods[i];
+        }
+    }
+    if (cls->base) return class_find_method(cls->base, name);
+    return NULL;
+}
+
+/* ============================================================ */
 /* Error helpers                                                 */
 /* ============================================================ */
 

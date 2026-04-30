@@ -466,7 +466,7 @@ static float voronoi_edge3d(uint32_t seed, float x, float y, float z, float cell
 /* Class helpers                                                 */
 /* ============================================================ */
 
-static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn) {
+static void noise_class_add_method(ObjClass *cls, const char *name, NativeFn fn) {
     ObjFunction *f = new_native_function(name, fn);
     if (cls->method_count >= cls->method_capacity) {
         int new_cap = cls->method_capacity < 4 ? 4 : cls->method_capacity * 2;
@@ -609,17 +609,17 @@ static Value voronoi_edge(VM *vm, Value *args, int n) {
 
 void vm_register_noise_module(VM *vm) {
     ObjClass *perlin_class = new_class("Perlin", NULL);
-    class_add_native_method(perlin_class, "_init",  perlin_init);
-    class_add_native_method(perlin_class, "sample", perlin_sample);
+    noise_class_add_method(perlin_class, "_init",  perlin_init);
+    noise_class_add_method(perlin_class, "sample", perlin_sample);
 
     ObjClass *simplex_class = new_class("Simplex", NULL);
-    class_add_native_method(simplex_class, "_init",  simplex_init);
-    class_add_native_method(simplex_class, "sample", simplex_sample);
+    noise_class_add_method(simplex_class, "_init",  simplex_init);
+    noise_class_add_method(simplex_class, "sample", simplex_sample);
 
     ObjClass *voronoi_class = new_class("Voronoi", NULL);
-    class_add_native_method(voronoi_class, "_init",  voronoi_init);
-    class_add_native_method(voronoi_class, "sample", voronoi_sample);
-    class_add_native_method(voronoi_class, "edge",   voronoi_edge);
+    noise_class_add_method(voronoi_class, "_init",  voronoi_init);
+    noise_class_add_method(voronoi_class, "sample", voronoi_sample);
+    noise_class_add_method(voronoi_class, "edge",   voronoi_edge);
 
     ObjModule *mod = new_module("noise");
 

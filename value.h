@@ -219,6 +219,16 @@ static inline Value make_obj(void *ptr) {
 #define IS_VECTOR(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_VECTOR))
 #define IS_MATRIX(v)       (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_MATRIX))
 
+/* Forward declaration for get_class */
+struct VM;
+struct ObjClass;
+
+/* ============================================================ */
+/* get_class — return canonical class for any value's type       */
+/* ============================================================ */
+
+struct ObjClass *get_class(struct VM *vm, Value val);
+
 /* ============================================================ */
 /* Native function signature                                     */
 /* ============================================================ */
@@ -509,6 +519,13 @@ Value dict_values(ObjDict *dict);   /* returns Value wrapping ObjList */
 
 Value instance_get_field(ObjInstance *inst, const char *name);
 void  instance_set_field(ObjInstance *inst, const char *name, Value value);
+
+/* ============================================================ */
+/* Class method helpers                                           */
+/* ============================================================ */
+
+void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn);
+struct ObjFunction *class_find_method(ObjClass *cls, const char *name);
 
 /* ============================================================ */
 /* Hashing                                                       */

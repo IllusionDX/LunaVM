@@ -113,7 +113,7 @@ static void rng_init(ObjList *state_list, RngAlgo algo, uint64_t seed) {
 /* Helpers                                                       */
 /* ============================================================ */
 
-static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn) {
+static void random_class_add_method(ObjClass *cls, const char *name, NativeFn fn) {
     if (cls->method_count >= cls->method_capacity) {
         int new_cap = cls->method_capacity < 4 ? 4 : cls->method_capacity * 2;
         cls->methods = realloc(cls->methods, sizeof(ObjFunction*) * new_cap);
@@ -359,12 +359,12 @@ static Value rng_shuffle(VM *vm, Value *args, int n) {
 void vm_register_random_module(VM *vm) {
     rng_class = new_class("Random", NULL);
 
-    class_add_native_method(rng_class, "int",    rng_int);
-    class_add_native_method(rng_class, "float",  rng_float);
-    class_add_native_method(rng_class, "seed",   rng_seed);
-    class_add_native_method(rng_class, "choice", rng_choice);
-    class_add_native_method(rng_class, "shuffle", rng_shuffle);
-    class_add_native_method(rng_class, "_call",  rng_call);
+    random_class_add_method(rng_class, "int",    rng_int);
+    random_class_add_method(rng_class, "float",  rng_float);
+    random_class_add_method(rng_class, "seed",   rng_seed);
+    random_class_add_method(rng_class, "choice", rng_choice);
+    random_class_add_method(rng_class, "shuffle", rng_shuffle);
+    random_class_add_method(rng_class, "_call",  rng_call);
 
     class_add_static(rng_class, "PCG", random_PCG);
     class_add_static(rng_class, "Xorshift", random_Xorshift);

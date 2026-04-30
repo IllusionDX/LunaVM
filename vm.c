@@ -41,10 +41,7 @@
 
 /* Declared in vm_builtins.c */
 void vm_register_builtins(VM *vm);
-bool vm_invoke_list(VM *vm, ObjList  *list, const char *method, Value *args, int nargs, Value *result);
-bool vm_invoke_dict(VM *vm, ObjDict  *dict, const char *method, Value *args, int nargs, Value *result);
-bool vm_invoke_enum(VM *vm, ObjEnum  *enm, const char *method, Value *args, int nargs, Value *result);
-ObjFunction *vm_dict_method_lookup(const char *name, int len);
+void vm_register_canonical_classes(VM *vm);
 
 /* ============================================================ */
 /* Arithmetic helpers (inlined for dispatch loop)               */
@@ -434,6 +431,19 @@ void mark_and_sweep(VM *vm) {
     if (vm->attribute_error_class) mark_object((Object*)vm->attribute_error_class);
     if (vm->value_error_class) mark_object((Object*)vm->value_error_class);
     if (vm->runtime_error_class) mark_object((Object*)vm->runtime_error_class);
+    if (vm->string_class) mark_object((Object*)vm->string_class);
+    if (vm->list_class) mark_object((Object*)vm->list_class);
+    if (vm->dict_class) mark_object((Object*)vm->dict_class);
+    if (vm->enum_class) mark_object((Object*)vm->enum_class);
+    if (vm->buffer_class) mark_object((Object*)vm->buffer_class);
+    if (vm->vector_class) mark_object((Object*)vm->vector_class);
+    if (vm->matrix_class) mark_object((Object*)vm->matrix_class);
+    if (vm->function_class) mark_object((Object*)vm->function_class);
+    if (vm->closure_class) mark_object((Object*)vm->closure_class);
+    if (vm->bound_method_class) mark_object((Object*)vm->bound_method_class);
+    if (vm->class_class) mark_object((Object*)vm->class_class);
+    if (vm->module_class) mark_object((Object*)vm->module_class);
+    if (vm->userdata_class) mark_object((Object*)vm->userdata_class);
 
     // Invalidate inline caches — any cached object may have been collected.
     memset(vm->global_ic, 0, sizeof(vm->global_ic));
@@ -515,6 +525,7 @@ void vm_init(VM *vm) {
     memset(vm, 0, sizeof(VM));
     vm->time_start_us = luna_time_monotonic_us();
     vm_register_builtins(vm);
+    vm_register_canonical_classes(vm);
 
     /* Register built-in Exception hierarchy */
     vm->exception_class      = vm_register_builtin_exception(vm, "Exception", NULL);

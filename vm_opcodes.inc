@@ -999,18 +999,6 @@
                 }
                 break;
             }
-            case OBJ_LIST: {
-                if (field->length == 6 && !memcmp(field->chars, "length", 6))
-                    SET_REG_PRIM(RA, make_int(list_length((ObjList*)AS_OBJ(obj))));
-                else {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "AttributeError: list has no field '%s'", field->chars);
-                    
-                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                    goto op_throw;
-                }
-                break;
-            }
             case OBJ_MODULE: {
                 ObjModule *mod = (ObjModule*)AS_OBJ(obj);
                 Value export_val = dict_get(mod->exports, make_obj((Object*)field));
@@ -1019,14 +1007,16 @@
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "AttributeError: module '%s' has no attribute '%s'", mod->name->chars, field->chars);
-                    
+
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
                 break;
             }
             case OBJ_DICT: {
-                ObjFunction *mfn = vm_dict_method_lookup(field->chars, field->length);
+                /* Try method lookup first, then dict_get */
+                ObjClass *dklass = vm->dict_class;
+                ObjFunction *mfn = dklass ? class_find_method(dklass, field->chars) : NULL;
                 if (mfn) {
                     ObjBoundMethod *bm = new_bound_method(obj, mfn);
                     SET_REG(RA, make_obj((Object*)bm));
@@ -1035,7 +1025,6 @@
                     if (IS_NIL(val)) {
                         char buf[256];
                         snprintf(buf, sizeof(buf), "KeyError: '%s' not found in dict", field->chars);
-                        
                         _exc = make_exception_instance(vm, vm->key_error_class, buf);
                         goto op_throw;
                     }
@@ -1043,13 +1032,26 @@
                 }
                 break;
             }
-            case OBJ_STRING: {
-                if (field->length == 6 && !memcmp(field->chars, "length", 6)) {
-                    SET_REG_PRIM(RA, make_int(((ObjString*)AS_OBJ(obj))->length));
+            case OBJ_STRING:
+            case OBJ_LIST: {
+                /* Unified: try find_method on canonical class */
+                ObjClass *klass = get_class(vm, obj);
+                ObjFunction *mfn = klass ? class_find_method(klass, field->chars) : NULL;
+                if (mfn) {
+                    if (mfn->is_native && mfn->param_count == 0) {
+                        /* Auto-call 0-arg native methods (like .length) */
+                        Value result;
+                        Value native_args[1] = { obj };
+                        if (!vm_call_native(vm, mfn->native_fn, native_args, 1, &result)) goto op_throw;
+                        SET_REG(RA, result);
+                    } else {
+                        ObjBoundMethod *bm = new_bound_method(obj, mfn);
+                        SET_REG(RA, make_obj((Object*)bm));
+                    }
                 } else {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "AttributeError: string has no field '%s'", field->chars);
-                    
+                    snprintf(buf, sizeof(buf), "AttributeError: %s has no field '%s'",
+                             AS_OBJ(obj)->type == OBJ_STRING ? "string" : "list", field->chars);
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
@@ -1159,14 +1161,14 @@
                 }
                 break;
             }
-            case OBJ_LIST:     SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(list_length((ObjList*)AS_OBJ(obj))) : make_null()); break;
             case OBJ_MODULE: {
                 ObjModule *mod = (ObjModule*)AS_OBJ(obj);
                 SET_REG(RA, dict_get(mod->exports, make_obj((Object*)field)));
                 break;
             }
             case OBJ_DICT: {
-                ObjFunction *mfn = vm_dict_method_lookup(field->chars, field->length);
+                ObjClass *dklass = vm->dict_class;
+                ObjFunction *mfn = dklass ? class_find_method(dklass, field->chars) : NULL;
                 if (mfn) {
                     ObjBoundMethod *bm = new_bound_method(obj, mfn);
                     SET_REG(RA, make_obj((Object*)bm));
@@ -1175,7 +1177,25 @@
                 }
                 break;
             }
-            case OBJ_STRING:   SET_REG_PRIM(RA, (field->length == 6 && !memcmp(field->chars, "length", 6)) ? make_int(((ObjString*)AS_OBJ(obj))->length) : make_null()); break;
+            case OBJ_STRING:
+            case OBJ_LIST: {
+                ObjClass *klass = get_class(vm, obj);
+                ObjFunction *mfn = klass ? class_find_method(klass, field->chars) : NULL;
+                if (mfn) {
+                    if (mfn->is_native && mfn->param_count == 0) {
+                        Value result;
+                        Value native_args[1] = { obj };
+                        if (!vm_call_native(vm, mfn->native_fn, native_args, 1, &result)) { SET_REG_PRIM(RA, make_null()); break; }
+                        SET_REG(RA, result);
+                    } else {
+                        ObjBoundMethod *bm = new_bound_method(obj, mfn);
+                        SET_REG(RA, make_obj((Object*)bm));
+                    }
+                } else {
+                    SET_REG_PRIM(RA, make_null());
+                }
+                break;
+            }
             case OBJ_ENUM: {
                 ObjEnum *e = (ObjEnum*)AS_OBJ(obj);
                 int fi = -1;
@@ -1305,11 +1325,10 @@
 
         Value result = make_null();
         bool handled = false;
+        Value native_scratch[256];
         if (IS_OBJ(obj) && AS_OBJ(obj)) {
             switch (AS_OBJ(obj)->type) {
-                case OBJ_LIST: handled = vm_invoke_list(vm, (ObjList*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
-                case OBJ_DICT: handled = vm_invoke_dict(vm, (ObjDict*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
-                case OBJ_ENUM: handled = vm_invoke_enum(vm, (ObjEnum*)AS_OBJ(obj), mname, scratch, nargs, &result); break;
+                /* Buffer methods — special (cursor advancement) */
                 case OBJ_BUFFER: {
                     ObjBuffer *buf = (ObjBuffer*)AS_OBJ(obj);
                     if (!strcmp(mname, "read_byte")) {
@@ -1737,14 +1756,56 @@
                     }
                     break;
                 }
-                default: break;
+                /* All other types — use unified get_class + find_method */
+                default: {
+                    ObjClass *klass = get_class(vm, obj);
+                    ObjFunction *method = klass ? class_find_method(klass, mname) : NULL;
+                    if (method) {
+                        if (method->is_native) {
+                            native_scratch[0] = obj;
+                            for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
+                            if (!vm_call_native(vm, method->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
+                        } else {
+                            if (vm->frame_count < MAX_FRAMES) {
+                                CallFrame *caller = &FRAME;
+                                CallFrame *callee = &vm->frames[vm->frame_count];
+                                callee->chunk = method->chunk;
+                                callee->ip = 0;
+                                callee->base = caller->base + obj_reg + 1;
+                                callee->ret_reg = ret_reg;
+                                callee->nargs = nargs;
+                                callee->kw_args = make_null();
+                                frame_set_refs(callee, NULL, method);
+                                callee->saved_globals = NULL;
+                                int need = callee->base + method->chunk->max_registers;
+                                if (need > vm->stack_cap) {
+                                    vm->stack_cap = need < 64 ? 64 : need * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack[callee->base] = obj; /* self at reg 0 */
+                                for (int j = 1 + nargs; j < method->chunk->max_registers; j++)
+                                    vm->stack[callee->base + j] = make_null();
+                                vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                                vm->frame_count++;
+                                CHUNK = callee->chunk;
+                                IP = 0;
+                                DECODE;
+                                goto *op_labels[OP(instr)];
+                            }
+                        }
+                        handled = true;
+                    } else if (klass && strcmp(mname, "_init") == 0) {
+                        /* Constructors are optional: allow new Class() when no _init exists. */
+                        result = make_null();
+                        handled = true;
+                    }
+                    break;
+                }
             }
         }
         if (handled) SET_REG(ret_reg, result);
         else {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
-            
+            char buf[256]; snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
