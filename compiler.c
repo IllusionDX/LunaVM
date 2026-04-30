@@ -37,6 +37,16 @@ typedef struct LoopInfo {
     struct LoopInfo *next;
 } LoopInfo;
 
+/* ---- Finally context (compile-time inlining) ---- */
+
+typedef struct FinallyCtx {
+    Stmt  **finally_body;
+    int     finally_count;
+    bool    has_catch;
+    struct LoopInfo *enclosing_loop;
+    struct FinallyCtx *next;
+} FinallyCtx;
+
 /* ---- Upvalue tracking ---- */
 
 typedef struct CompilerUpvalue {
@@ -55,6 +65,7 @@ typedef struct Compiler {
     int         line;       /* V1: always 1 (AST has no lines) */
     int         func_depth; /* 0 = top-level */
     LoopInfo   *loop;
+    FinallyCtx *finally_ctx;
     struct Compiler *parent;
     bool        is_repl;
     ObjClass   *current_class; /* class whose method we're compiling, NULL at top-level */
@@ -281,6 +292,16 @@ static void loop_record_break(Compiler *c, int jump_idx) {
     l->break_patches[l->break_count++] = jump_idx;
 }
 
+static void loop_record_continue(Compiler *c, int jump_idx) {
+    LoopInfo *l = c->loop;
+    if (!l) return;
+    if (l->continue_count >= l->continue_cap) {
+        l->continue_cap = l->continue_cap ? l->continue_cap * 2 : 4;
+        l->continue_patches = realloc(l->continue_patches, sizeof(int) * l->continue_cap);
+    }
+    l->continue_patches[l->continue_count++] = jump_idx;
+}
+
 static void loop_pop(Compiler *c) {
     LoopInfo *l = c->loop;
     c->loop = l->next;
@@ -299,6 +320,72 @@ static void compile_decl(Compiler *c, Decl *decl);
 static int compile_function_value(Compiler *c, const char *name,
                                    FunctionParam *params, int param_count,
                                    Stmt **body, int body_count);
+
+/* ============================================================ */
+/* Finally context: compile-time inlining                       */
+/* ============================================================ */
+
+static void finally_ctx_push(Compiler *c, Stmt **body, int count, bool has_catch) {
+    FinallyCtx *f = malloc(sizeof(FinallyCtx));
+    f->finally_body   = body;
+    f->finally_count  = count;
+    f->has_catch      = has_catch;
+    f->enclosing_loop = c->loop;
+    f->next           = c->finally_ctx;
+    c->finally_ctx    = f;
+}
+
+static void finally_ctx_pop(Compiler *c) {
+    FinallyCtx *f = c->finally_ctx;
+    if (f) {
+        c->finally_ctx = f->next;
+        free(f);
+    }
+}
+
+/* Emit finally blocks for an early exit (break/continue/return).
+ * Walks the FinallyCtx chain innermost-first.
+ * If stop_at is non-NULL, only emits contexts nested inside that loop. */
+static void emit_finally_blocks_for_early_exit(Compiler *c, LoopInfo *stop_at) {
+    FinallyCtx *f = c->finally_ctx;
+    if (!f) return;
+
+    int count = 0;
+    for (FinallyCtx *cur = f; cur; cur = cur->next) {
+        bool relevant = (stop_at == NULL);
+        if (stop_at) {
+            for (LoopInfo *l = cur->enclosing_loop; l; l = l->next) {
+                if (l == stop_at) { relevant = true; break; }
+            }
+        }
+        if (relevant) count++;
+    }
+    if (count == 0) return;
+
+    FinallyCtx **buf = malloc(sizeof(FinallyCtx*) * count);
+    int idx = 0;
+    for (FinallyCtx *cur = f; cur; cur = cur->next) {
+        bool relevant = (stop_at == NULL);
+        if (stop_at) {
+            for (LoopInfo *l = cur->enclosing_loop; l; l = l->next) {
+                if (l == stop_at) { relevant = true; break; }
+            }
+        }
+        if (relevant) buf[idx++] = cur;
+    }
+
+    for (int i = 0; i < count; i++) {
+        FinallyCtx *ctx = buf[i];
+        if (ctx->has_catch) {
+            emit_ABC(c, OP_ENDTRY, 0, 0, 0);
+        }
+        scope_enter(c);
+        for (int j = 0; j < ctx->finally_count; j++)
+            compile_stmt(c, ctx->finally_body[j]);
+        scope_exit(c);
+    }
+    free(buf);
+}
 
 /* ============================================================ */
 /* Assignment helpers                                         */
@@ -1405,6 +1492,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         } else {
             emit_loadnull(c, (uint8_t)r);
         }
+        emit_finally_blocks_for_early_exit(c, NULL);
         emit_ret(c, (uint8_t)r);
         free_reg(c);
         break;
@@ -1418,6 +1506,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             fprintf(stderr, "compiler: break outside loop\n");
             break;
         }
+        emit_finally_blocks_for_early_exit(c, c->loop);
         int j = emit_jump(c, OP_JMP, 0);
         loop_record_break(c, j);
         break;
@@ -1428,16 +1517,9 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             fprintf(stderr, "compiler: continue outside loop\n");
             break;
         }
-        if (c->loop->continue_ip >= 0) {
-            /* for-loop: jump to increment */
-            int sbx = c->loop->continue_ip - (c->chunk->count + 1);
-            emit_AsBx(c, OP_JMP, 0, sbx);
-        } else {
-            /* while-loop: target not known yet if body still compiling,
-               but for while we know start_ip immediately. */
-            int sbx = c->loop->start_ip - (c->chunk->count + 1);
-            emit_AsBx(c, OP_JMP, 0, sbx);
-        }
+        emit_finally_blocks_for_early_exit(c, c->loop);
+        int j = emit_jump(c, OP_JMP, 0);
+        loop_record_continue(c, j);
         break;
     }
 
@@ -1509,6 +1591,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
     case STMT_WHILE: {
         int loop_start = c->chunk->count;
         loop_push(c, loop_start);
+        c->loop->continue_ip = loop_start;
 
         Expr *cond = stmt->data.while_stmt.condition;
         int jz = -1;
@@ -1561,6 +1644,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         }
 
         loop_patch_breaks(c);
+        loop_patch_continues(c);
         loop_pop(c);
         break;
     }
@@ -1682,7 +1766,16 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         int try_idx = -1;
         int skip_dispatch = -1;
 
-        if (stmt->data.try_stmt.catch_count > 0) {
+        bool has_catch = stmt->data.try_stmt.catch_count > 0;
+        bool has_finally = stmt->data.try_stmt.finally_count > 0;
+
+        if (has_finally) {
+            finally_ctx_push(c, stmt->data.try_stmt.finally_body,
+                              stmt->data.try_stmt.finally_count,
+                              has_catch);
+        }
+
+        if (has_catch) {
             try_idx = emit_jump(c, OP_TRY, (uint8_t)exc_reg);
         }
 
@@ -1691,7 +1784,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             compile_stmt(c, stmt->data.try_stmt.try_body[i]);
         scope_exit(c);
 
-        if (stmt->data.try_stmt.catch_count > 0) {
+        if (has_catch) {
             emit_ABC(c, OP_ENDTRY, 0, 0, 0);
             skip_dispatch = emit_jump(c, OP_JMP, 0);
             patch_jump(c, try_idx);
@@ -1741,11 +1834,12 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             patch_jump(c, skip_dispatch);
         }
 
-        if (stmt->data.try_stmt.finally_count > 0) {
+        if (has_finally) {
             scope_enter(c);
             for (int i = 0; i < stmt->data.try_stmt.finally_count; i++)
                 compile_stmt(c, stmt->data.try_stmt.finally_body[i]);
             scope_exit(c);
+            finally_ctx_pop(c);
         }
 
         free_reg(c);
@@ -1810,6 +1904,7 @@ static int compile_function_value(Compiler *c, const char *name,
         .line        = c->line,
         .func_depth  = c->func_depth + 1,
         .loop        = NULL,
+        .finally_ctx = NULL,
         .parent      = c,
         .upvalue_count = 0
     };
@@ -1968,6 +2063,7 @@ static void compile_class(Compiler *c, Decl *decl) {
             .line        = c->line,
             .func_depth  = c->func_depth + 1,
             .loop        = NULL,
+            .finally_ctx = NULL,
             .current_class = cls
         };
         scope_enter(&sub);
@@ -2058,6 +2154,7 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl, bool 
         .line       = 0,
         .func_depth = 0,
         .loop       = NULL,
+        .finally_ctx = NULL,
         .is_repl    = is_repl
     };
 

@@ -1,0 +1,120 @@
+# Test try-finally compile-time inlining
+
+# 1. Basic try-finally (no catch)
+print("=== test 1: basic try-finally ===")
+try:
+    print("try body")
+finally:
+    print("finally body")
+print("after try-finally")
+
+# 2. try-finally with break inside for-loop
+print("=== test 2: break inside try-finally in for-loop ===")
+for i in [1, 2, 3]:
+    try:
+        print("try:" + str(i))
+        if i == 2:
+            break
+    finally:
+        print("finally:" + str(i))
+print("after loop")
+
+# 3. try-finally with continue inside for-loop
+print("=== test 3: continue inside try-finally in for-loop ===")
+for i in [1, 2, 3]:
+    try:
+        print("try:" + str(i))
+        if i == 2:
+            continue
+        print("after check:" + str(i))
+    finally:
+        print("finally:" + str(i))
+print("after cont loop")
+
+# 4. try-finally with return
+print("=== test 4: return inside try-finally ===")
+def test_return():
+    try:
+        print("before return")
+        return 42
+    finally:
+        print("in finally")
+    print("should not reach")
+
+print("returned:" + str(test_return()))
+
+# 5. try-catch-finally
+print("=== test 5: try-catch-finally ===")
+try:
+    throw("error!")
+except as e:
+    print("caught:" + e)
+finally:
+    print("cleanup after catch")
+
+# 6. Nested try-finally
+print("=== test 6: nested try-finally ===")
+try:
+    print("outer try")
+    try:
+        print("inner try")
+    finally:
+        print("inner finally")
+finally:
+    print("outer finally")
+
+# 7. Nested try-finally with break
+print("=== test 7: nested try-finally with break ===")
+for i in [1, 2]:
+    try:
+        print("outer try:" + str(i))
+        try:
+            print("inner try:" + str(i))
+            if i == 1:
+                break
+        finally:
+            print("inner finally:" + str(i))
+    finally:
+        print("outer finally:" + str(i))
+print("after nested break")
+
+# 8. Try-finally without catch, exception caught by outer
+print("=== test 8: finally runs after exception caught in outer ===")
+try:
+    try:
+        throw("err")
+    except as e:
+        print("caught inner:" + e)
+finally:
+    print("outer finally runs")
+
+# 9. For loop continue (the original bug fix)
+print("=== test 9: for-loop continue ===")
+var result = []
+for i in [1, 2, 3, 4]:
+    if i == 2:
+        continue
+    result.add(i)
+print("continue test:" + str(result))
+
+# 10. While loop continue
+print("=== test 10: while-loop continue ===")
+var items = []
+var i = 0
+while i < 5:
+    i = i + 1
+    if i == 3:
+        continue
+    items.add(i)
+print("while continue test:" + str(items))
+
+# 11. For loop with continue that had the infinite-loop bug
+print("=== test 11: for-loop continue stress ===")
+var sum = 0
+for x in [1, 2, 3, 4, 5]:
+    if x % 2 == 0:
+        continue
+    sum = sum + x
+print("sum of odds:" + str(sum))
+
+print("ALL DONE")
