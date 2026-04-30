@@ -231,6 +231,8 @@ ObjClass *new_class(const char *name, const char *base_name) {
     cls->method_count = 0;
     cls->method_capacity = 0;
     cls->fields = new_dict();
+    cls->field_slot_map = NULL;
+    cls->field_count = 0;
     return cls;
 }
 

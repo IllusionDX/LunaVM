@@ -1246,6 +1246,49 @@
         DECODE; goto *op_labels[OP(instr)];
     }
 
+    /* OP_GETFIELD (slot-based field get: A = B->fields[C]) */
+    op_getfield: {
+        Value obj = REG(RB);
+        if (IS_INSTANCE(obj)) {
+            ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
+            int slot = (int)RC;
+            if (slot >= 0 && slot < inst->field_count) {
+                SET_REG(RA, inst->fields[slot]);
+            } else {
+                SET_REG_PRIM(RA, make_null());
+            }
+        } else {
+            SET_REG_PRIM(RA, make_null());
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* OP_SETFIELD (slot-based field set: A->fields[C] = B) */
+    op_setfield: {
+        Value obj = REG(RA);
+        if (IS_INSTANCE(obj)) {
+            ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
+            int slot = (int)RC;
+            if (slot >= 0 && slot < inst->field_count) {
+                SET_FIELD(inst, slot, REG(RB));
+            } else if (slot >= inst->field_count) {
+                /* slot out of range: expand instance to accommodate */
+                while (slot >= inst->field_capacity) {
+                    inst->field_capacity = inst->field_capacity < 4 ? 4 : inst->field_capacity * 2;
+                    inst->field_names = realloc(inst->field_names, inst->field_capacity * sizeof(char *));
+                    inst->fields      = realloc(inst->fields,      inst->field_capacity * sizeof(Value));
+                }
+                while (inst->field_count <= slot) {
+                    inst->field_names[inst->field_count] = NULL;
+                    inst->fields[inst->field_count] = make_null();
+                    inst->field_count++;
+                }
+                SET_FIELD(inst, slot, REG(RB));
+            }
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
     /* ---- Invocation ---- */
     /* 52. OP_INVOKE */
     op_invoke: {

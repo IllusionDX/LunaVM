@@ -129,7 +129,10 @@ typedef enum {
     OP_SLICE,       /* ABC  : A = slice(B, B+1..B+C)  C=0..3, null=omit  */
     OP_MEMBERGET,   /* ABC  : A = B.field  (field = constants[C])         */
     OP_MEMBERSET,   /* ABC  : A.field = B  (field = constants[C])         */
+    OP_GETFIELD,    /* ABC  : A = B->fields[C] (slot-based field get)     */
+    OP_SETFIELD,    /* ABC  : A->fields[C] = B (slot-based field set)     */
     /* Note: MEMBERGET/SET use ABC where A=dest/obj, B=obj/val, C=const-index. 
+     * GETFIELD/SETFIELD use C as the direct field slot index (0-255).
      * For larger pools, use LOADK + INDEXGET pattern.             */
 
     OP_INVOKE,      /* ABC  : A = B.method(nargs=C), method-name in const[A+1 slot] */

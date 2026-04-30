@@ -57,6 +57,7 @@ typedef struct Compiler {
     LoopInfo   *loop;
     struct Compiler *parent;
     bool        is_repl;
+    ObjClass   *current_class; /* class whose method we're compiling, NULL at top-level */
     CompilerUpvalue upvalues[VM_MAX_REGISTERS];
     int         upvalue_count;
 } Compiler;
@@ -134,6 +135,18 @@ static VarKind resolve_variable(Compiler *c, const char *name, int *index) {
         return VAR_UPVALUE;
     }
     return VAR_GLOBAL;
+}
+
+/* Try to resolve a field slot index for self.field access.
+ * Returns -1 if not applicable (not self, unknown class, or unknown field). */
+static int resolve_field_slot(Compiler *c, const char *field_name) {
+    if (!c->current_class || !c->current_class->prototype) return -1;
+    ObjInstance *proto = c->current_class->prototype;
+    for (int i = 0; i < proto->field_count; i++) {
+        if (proto->field_names[i] && strcmp(proto->field_names[i], field_name) == 0)
+            return i;
+    }
+    return -1;
 }
 
 static int add_local(Compiler *c, const char *name, int reg) {
@@ -307,14 +320,25 @@ static void compile_single_assignment(Compiler *c, Expr *lhs, int src_reg) {
     } else if (lhs->kind == EXPR_FIELD_ACCESS) {
         int obj = alloc_reg(c);
         compile_expr_into(c, lhs->data.field_access.obj, obj);
-        int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
-        if (fk > 255) {
-            int temp = alloc_reg(c);
-            emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
-            emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)src_reg, (uint8_t)temp);
-            free_reg(c);
+        int slot = -1;
+        if (lhs->data.field_access.obj->kind == EXPR_IDENTIFIER) {
+            int self_idx;
+            if (resolve_variable(c, lhs->data.field_access.obj->data.identifier.name, &self_idx) == VAR_LOCAL && self_idx == 0) {
+                slot = resolve_field_slot(c, lhs->data.field_access.field);
+            }
+        }
+        if (slot >= 0 && slot <= 255) {
+            emit_ABC(c, OP_SETFIELD, (uint8_t)obj, (uint8_t)src_reg, (uint8_t)slot);
         } else {
-            emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)src_reg, (uint8_t)fk);
+            int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+            if (fk > 255) {
+                int temp = alloc_reg(c);
+                emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
+                emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)src_reg, (uint8_t)temp);
+                free_reg(c);
+            } else {
+                emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)src_reg, (uint8_t)fk);
+            }
         }
         free_reg(c);
     } else if (lhs->kind == EXPR_INDEX_ACCESS) {
@@ -767,17 +791,32 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_FIELD_ACCESS: {
-        compile_expr_into(c, expr->data.field_access.obj, target);
-        int fk = chunk_add_string(c->chunk, expr->data.field_access.field);
-        OpCode get_op = expr->data.field_access.optional ? OP_MEMBERGET_SAFE : OP_MEMBERGET;
-        if (fk > 255) {
-            int temp = alloc_reg(c);
-            emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
-            emit_ABC(c, expr->data.field_access.optional ? OP_INDEXGET_SAFE : OP_INDEXGET,
-                     (uint8_t)target, (uint8_t)target, (uint8_t)temp);
-            free_reg(c);
+        /* Try slot-based access for self.field in class methods */
+        int slot = -1;
+        if (!expr->data.field_access.optional &&
+            expr->data.field_access.obj->kind == EXPR_IDENTIFIER) {
+            const char *obj_name = expr->data.field_access.obj->data.identifier.name;
+            int self_idx;
+            if (resolve_variable(c, obj_name, &self_idx) == VAR_LOCAL && self_idx == 0) {
+                slot = resolve_field_slot(c, expr->data.field_access.field);
+            }
+        }
+        if (slot >= 0 && slot <= 255) {
+            compile_expr_into(c, expr->data.field_access.obj, target);
+            emit_ABC(c, OP_GETFIELD, (uint8_t)target, (uint8_t)target, (uint8_t)slot);
         } else {
-            emit_ABC(c, get_op, (uint8_t)target, (uint8_t)target, (uint8_t)fk);
+            compile_expr_into(c, expr->data.field_access.obj, target);
+            int fk = chunk_add_string(c->chunk, expr->data.field_access.field);
+            OpCode get_op = expr->data.field_access.optional ? OP_MEMBERGET_SAFE : OP_MEMBERGET;
+            if (fk > 255) {
+                int temp = alloc_reg(c);
+                emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
+                emit_ABC(c, expr->data.field_access.optional ? OP_INDEXGET_SAFE : OP_INDEXGET,
+                         (uint8_t)target, (uint8_t)target, (uint8_t)temp);
+                free_reg(c);
+            } else {
+                emit_ABC(c, get_op, (uint8_t)target, (uint8_t)target, (uint8_t)fk);
+            }
         }
         break;
     }
@@ -839,14 +878,25 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             int obj = alloc_reg(c);
             compile_expr_into(c, lhs->data.field_access.obj, obj);
             compile_expr_into(c, rhs, target);
-            int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
-            if (fk > 255) {
-                int temp = alloc_reg(c);
-                emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
-                emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)target, (uint8_t)temp);
-                free_reg(c);
+            int slot = -1;
+            if (lhs->data.field_access.obj->kind == EXPR_IDENTIFIER) {
+                int self_idx;
+                if (resolve_variable(c, lhs->data.field_access.obj->data.identifier.name, &self_idx) == VAR_LOCAL && self_idx == 0) {
+                    slot = resolve_field_slot(c, lhs->data.field_access.field);
+                }
+            }
+            if (slot >= 0 && slot <= 255) {
+                emit_ABC(c, OP_SETFIELD, (uint8_t)obj, (uint8_t)target, (uint8_t)slot);
             } else {
-                emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)target, (uint8_t)fk);
+                int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+                if (fk > 255) {
+                    int temp = alloc_reg(c);
+                    emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
+                    emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)target, (uint8_t)temp);
+                    free_reg(c);
+                } else {
+                    emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)target, (uint8_t)fk);
+                }
             }
             free_reg(c); /* obj */
         } else if (lhs->kind == EXPR_INDEX_ACCESS) {
@@ -953,30 +1003,42 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             int obj = alloc_reg(c);
             compile_expr_into(c, lhs->data.field_access.obj, obj);
             
-            int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+            int slot = -1;
+            if (lhs->data.field_access.obj->kind == EXPR_IDENTIFIER) {
+                int self_idx;
+                if (resolve_variable(c, lhs->data.field_access.obj->data.identifier.name, &self_idx) == VAR_LOCAL && self_idx == 0) {
+                    slot = resolve_field_slot(c, lhs->data.field_access.field);
+                }
+            }
             int temp_val = alloc_reg(c);
             
-            if (fk > 255) {
-                int temp_k = alloc_reg(c);
-                emit_ABx(c, OP_LOADK, (uint8_t)temp_k, (uint16_t)fk);
-                emit_ABC(c, OP_INDEXGET, (uint8_t)temp_val, (uint8_t)obj, (uint8_t)temp_k);
-                
+            if (slot >= 0 && slot <= 255) {
+                emit_ABC(c, OP_GETFIELD, (uint8_t)temp_val, (uint8_t)obj, (uint8_t)slot);
                 int temp_rhs = alloc_reg(c);
                 compile_expr_into(c, rhs, temp_rhs);
                 emit_ABC(c, op, (uint8_t)temp_val, (uint8_t)temp_val, (uint8_t)temp_rhs);
-                
-                emit_ABC(c, OP_INDEXSET, (uint8_t)obj, (uint8_t)temp_k, (uint8_t)temp_val);
-                free_reg(c);
+                emit_ABC(c, OP_SETFIELD, (uint8_t)obj, (uint8_t)temp_val, (uint8_t)slot);
                 free_reg(c);
             } else {
-                emit_ABC(c, OP_MEMBERGET, (uint8_t)temp_val, (uint8_t)obj, (uint8_t)fk);
-                
-                int temp_rhs = alloc_reg(c);
-                compile_expr_into(c, rhs, temp_rhs);
-                emit_ABC(c, op, (uint8_t)temp_val, (uint8_t)temp_val, (uint8_t)temp_rhs);
-                
-                emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)temp_val, (uint8_t)fk);
-                free_reg(c);
+                int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+                if (fk > 255) {
+                    int temp_k = alloc_reg(c);
+                    emit_ABx(c, OP_LOADK, (uint8_t)temp_k, (uint16_t)fk);
+                    emit_ABC(c, OP_INDEXGET, (uint8_t)temp_val, (uint8_t)obj, (uint8_t)temp_k);
+                    int temp_rhs = alloc_reg(c);
+                    compile_expr_into(c, rhs, temp_rhs);
+                    emit_ABC(c, op, (uint8_t)temp_val, (uint8_t)temp_val, (uint8_t)temp_rhs);
+                    emit_ABC(c, OP_INDEXSET, (uint8_t)obj, (uint8_t)temp_k, (uint8_t)temp_val);
+                    free_reg(c);
+                    free_reg(c);
+                } else {
+                    emit_ABC(c, OP_MEMBERGET, (uint8_t)temp_val, (uint8_t)obj, (uint8_t)fk);
+                    int temp_rhs = alloc_reg(c);
+                    compile_expr_into(c, rhs, temp_rhs);
+                    emit_ABC(c, op, (uint8_t)temp_val, (uint8_t)temp_val, (uint8_t)temp_rhs);
+                    emit_ABC(c, OP_MEMBERSET, (uint8_t)obj, (uint8_t)temp_val, (uint8_t)fk);
+                    free_reg(c);
+                }
             }
             if (target != temp_val) emit_move(c, (uint8_t)target, (uint8_t)temp_val);
             free_reg(c);
@@ -1843,15 +1905,6 @@ static void compile_class(Compiler *c, Decl *decl) {
             ObjClass *parent = (ObjClass*)AS_OBJ(parent_val);
             cls->base = parent;
 
-            /* Copy parent's prototype fields to new prototype */
-            if (parent->prototype) {
-                ObjInstance *pp = parent->prototype;
-                cls->prototype = new_instance(cls, pp->field_capacity > 4 ? pp->field_capacity : 4);
-                for (int i = 0; i < pp->field_count; i++) {
-                    /* Already cloned by new_instance since klass->prototype was set */
-                }
-            }
-
             /* Copy parent methods */
             if (parent->method_count > 0) {
                 cls->methods = malloc(sizeof(ObjFunction*) * parent->method_count);
@@ -1872,9 +1925,27 @@ static void compile_class(Compiler *c, Decl *decl) {
        The prototype is owned by the class, and the class is owned by globals,
        so when the class is freed, it frees the prototype too. */
 
+    /* Inherit parent prototype fields first (so slot indices match parent methods) */
+    if (cls->base && cls->base->prototype) {
+        ObjInstance *pp = cls->base->prototype;
+        for (int i = 0; i < pp->field_count; i++) {
+            instance_set_field(cls->prototype, pp->field_names[i], pp->fields[i]);
+        }
+    }
+
     /* Fields */
     for (int i = 0; i < decl->data.class_decl.field_count; i++) {
         instance_set_field(cls->prototype, decl->data.class_decl.fields[i].name, make_null());
+    }
+
+    /* Build field_slot_map for O(1) slot-based access */
+    cls->field_count = cls->prototype->field_count;
+    cls->field_slot_map = new_dict();
+    for (int i = 0; i < cls->prototype->field_count; i++) {
+        dict_set(cls->field_slot_map,
+                 make_obj((Object*)new_string(cls->prototype->field_names[i],
+                                              (int)strlen(cls->prototype->field_names[i]))),
+                 make_int(i));
     }
 
     /* Methods */
@@ -1892,7 +1963,8 @@ static void compile_class(Compiler *c, Decl *decl) {
             .max_temp_base = 0,
             .line        = c->line,
             .func_depth  = c->func_depth + 1,
-            .loop        = NULL
+            .loop        = NULL,
+            .current_class = cls
         };
         scope_enter(&sub);
         /* self in reg 0, params in 1..n */
@@ -1943,6 +2015,8 @@ static void compile_class(Compiler *c, Decl *decl) {
         cls->method_names[cls->method_count] = strdup(m->data.function.name);
         cls->methods[cls->method_count] = mf;
         cls->method_count++;
+        /* Add method function to parent chunk constants so --dump-bytecode can find it */
+        chunk_add_const(c->chunk, make_obj((Object*)mf));
     }
 
     Value cls_val = make_obj((Object*)cls);

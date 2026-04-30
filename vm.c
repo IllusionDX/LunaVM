@@ -854,26 +854,28 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_slice,         // 50 OP_SLICE
         &&op_memberget,     // 51 OP_MEMBERGET
         &&op_memberset,     // 52 OP_MEMBERSET
-        &&op_invoke,        // 53 OP_INVOKE
-        &&op_super,         // 54 OP_SUPER
-        &&op_throw,         // 55 OP_THROW
-        &&op_try,           // 56 OP_TRY
-        &&op_endtry,        // 57 OP_ENDTRY
-        &&op_isinstance,    // 58 OP_ISINSTANCE
-        &&op_default,       // 59 OP_DEFAULT
-        &&op_kwargs,        // 60 OP_KWARGS
-        &&op_kcall,         // 61 OP_KCALL
-        &&op_coalesce,      // 62 OP_COALESCE
-        &&op_memberget_safe,// 63 OP_MEMBERGET_SAFE
-        &&op_indexget_safe, // 64 OP_INDEXGET_SAFE
-        &&op_slice_safe,    // 65 OP_SLICE_SAFE
-        &&op_import,        // 66 OP_IMPORT
-        &&op_tryinit,       // 67 OP_TRYINIT
-        &&op_halt,          // 68 OP_HALT
-        &&op_lt_jz,         // 69 OP_LT_JZ
-        &&op_le_jz,         // 70 OP_LE_JZ
-        &&op_gt_jz,         // 71 OP_GT_JZ
-        &&op_ge_jz          // 72 OP_GE_JZ
+        &&op_getfield,      // 53 OP_GETFIELD
+        &&op_setfield,      // 54 OP_SETFIELD
+        &&op_invoke,        // 55 OP_INVOKE
+        &&op_super,         // 56 OP_SUPER
+        &&op_throw,         // 57 OP_THROW
+        &&op_try,           // 58 OP_TRY
+        &&op_endtry,        // 59 OP_ENDTRY
+        &&op_isinstance,    // 60 OP_ISINSTANCE
+        &&op_default,       // 61 OP_DEFAULT
+        &&op_kwargs,        // 62 OP_KWARGS
+        &&op_kcall,         // 63 OP_KCALL
+        &&op_coalesce,      // 64 OP_COALESCE
+        &&op_memberget_safe,// 65 OP_MEMBERGET_SAFE
+        &&op_indexget_safe, // 66 OP_INDEXGET_SAFE
+        &&op_slice_safe,    // 67 OP_SLICE_SAFE
+        &&op_import,        // 68 OP_IMPORT
+        &&op_tryinit,       // 69 OP_TRYINIT
+        &&op_halt,          // 70 OP_HALT
+        &&op_lt_jz,         // 71 OP_LT_JZ
+        &&op_le_jz,         // 72 OP_LE_JZ
+        &&op_gt_jz,         // 73 OP_GT_JZ
+        &&op_ge_jz          // 74 OP_GE_JZ
     };
 
     DECODE;

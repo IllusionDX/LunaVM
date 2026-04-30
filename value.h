@@ -280,6 +280,8 @@ typedef struct ObjClass {
     int                  method_count;
     int                  method_capacity;
     ObjDict            *fields;        /* static members (constructors, constants) */
+    ObjDict            *field_slot_map; /* name -> slot index for instance fields */
+    int                 field_count;    /* declared instance field count */
 } ObjClass;
 
 /* Bound method — instance + method function, callable like a closure */
