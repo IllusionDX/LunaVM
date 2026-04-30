@@ -52,7 +52,8 @@ typedef uint64_t Value;
 #define TAG_TRUE     2  /* 0x010 */
 #define TAG_FALSE    3  /* 0x011 */
 #define TAG_INT      4  /* 0x100 */
-#define TAG_EMPTY    5  /* 0x101 (internal tombstone) */
+#define TAG_EMPTY    5  /* 0x101 (dict empty slot sentinel) */
+#define TAG_TOMB     6  /* 0x110 (dict tombstone sentinel) */
 
 #define IS_DOUBLE(v) LUNA_LIKELY( \
     (((v) & 0x7FF8000000000000ULL) != 0x7FF8000000000000ULL) || \
@@ -134,6 +135,7 @@ static inline int64_t as_int64(Value v);
 #define FALSE_VAL    (QNAN_TAG | TAG_FALSE)
 #define BOOL_VAL(b)  ((b) ? TRUE_VAL : FALSE_VAL)
 #define EMPTY_VAL    (QNAN_TAG | TAG_EMPTY)
+#define TOMBSTONE_VAL (QNAN_TAG | TAG_TOMB)
 
 /* Compatibility constructors (same names as before) */
 #define make_null()   NIL_VAL
@@ -265,17 +267,18 @@ typedef struct {
     Value    value;
 } ObjDictEntry;
 
-/* Dict — Compact Ordered Dict maintaining insertion order
+/* Dict — Open-addressing hash table preserving insertion order
  * Small Object Optimization: up to 4 entries stored inline
- * with linear search to avoid sparse+dense allocations. */
+ * with linear search to avoid heap allocation. */
 typedef struct {
     Object     obj;
-    int       *indices;          /* NULL = using SOO (linear search) */
-    ObjDictEntry *entries;       /* NULL = using SOO */
-    int        capacity;         /* Size of indices array (power of 2) */
-    int        entry_count;      /* Number of valid entries */
-    int        next_entry;       /* Next available index in entries array */
-    int        deleted_count;    /* Number of tombstones */
+    ObjDictEntry *entries;       /* NULL = using SOO; open-addressing array */
+    int       *order;            /* indices into entries[], insertion order */
+    int        capacity;         /* Size of entries array (power of 2) */
+    int        entry_count;      /* Number of live entries */
+    int        order_count;      /* Number of entries in order array */
+    int        order_capacity;   /* Capacity of order array */
+    int        tombstone_count;  /* Number of tombstones */
     ObjDictEntry inline_entries[4]; /* inline buffer for SOO */
 } ObjDict;
 

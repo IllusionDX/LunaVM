@@ -346,14 +346,14 @@ static void mark_drain(void) {
             }
             case OBJ_DICT: {
                 ObjDict *d = (ObjDict *)obj;
-                if (d->indices == NULL) {
+                if (d->entries == NULL) {
                     for (int i = 0; i < d->entry_count; i++) {
                         mark_value(d->inline_entries[i].key);
                         mark_value(d->inline_entries[i].value);
                     }
                 } else {
-                    for (int i = 0; i < d->next_entry; i++) {
-                        if (d->entries[i].key != EMPTY_VAL) {
+                    for (int i = 0; i < d->capacity; i++) {
+                        if (d->entries[i].key != EMPTY_VAL && d->entries[i].key != TOMBSTONE_VAL) {
                             mark_value(d->entries[i].key);
                             mark_value(d->entries[i].value);
                         }
@@ -515,14 +515,14 @@ static void gc_step(VM *vm) {
                 }
                 case OBJ_DICT: {
                     ObjDict *d = (ObjDict *)obj;
-                    if (d->indices == NULL) {
+                    if (d->entries == NULL) {
                         for (int i = 0; i < d->entry_count; i++) {
                             mark_value(d->inline_entries[i].key);
                             mark_value(d->inline_entries[i].value);
                         }
                     } else {
-                        for (int i = 0; i < d->next_entry; i++) {
-                            if (d->entries[i].key != EMPTY_VAL) {
+                        for (int i = 0; i < d->capacity; i++) {
+                            if (d->entries[i].key != EMPTY_VAL && d->entries[i].key != TOMBSTONE_VAL) {
                                 mark_value(d->entries[i].key);
                                 mark_value(d->entries[i].value);
                             }

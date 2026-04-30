@@ -359,7 +359,7 @@ static void encode_value(VM *vm, Value v, char **buf, size_t *len, size_t *cap, 
 static void encode_dict(VM *vm, ObjDict *dict, char **buf, size_t *len, size_t *cap, int depth) {
     sb_append_char(buf, len, cap, '{');
     bool first = true;
-    if (dict->indices == NULL) {
+    if (dict->entries == NULL) {
         /* SOO mode */
         for (int i = 0; i < dict->entry_count; i++) {
             Value key = dict->inline_entries[i].key;
@@ -377,9 +377,10 @@ static void encode_dict(VM *vm, ObjDict *dict, char **buf, size_t *len, size_t *
         }
     } else {
         /* Heap mode */
-        for (int i = 0; i < dict->next_entry; i++) {
-            Value key = dict->entries[i].key;
-            if (key == EMPTY_VAL) continue;
+        for (int i = 0; i < dict->order_count; i++) {
+            int idx = dict->order[i];
+            Value key = dict->entries[idx].key;
+            if (key == EMPTY_VAL || key == TOMBSTONE_VAL) continue;
             if (!IS_STRING(key)) {
                 luna_throw(vm, vm->type_error_class,
                     "json.encode(): dict keys must be strings");
@@ -389,7 +390,7 @@ static void encode_dict(VM *vm, ObjDict *dict, char **buf, size_t *len, size_t *
             ObjString *k = (ObjString*)AS_OBJ(key);
             encode_string(buf, len, cap, k->chars, k->length);
             sb_append_char(buf, len, cap, ':');
-            encode_value(vm, dict->entries[i].value, buf, len, cap, depth + 1);
+            encode_value(vm, dict->entries[idx].value, buf, len, cap, depth + 1);
         }
     }
     sb_append_char(buf, len, cap, '}');

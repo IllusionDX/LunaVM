@@ -615,13 +615,14 @@
         if (IS_DICT(iter)) {
             ObjDict *dict = (ObjDict*)AS_OBJ(iter);
             ObjList *keys = new_list(dict->entry_count);
-            if (dict->indices == NULL) {
+            if (dict->entries == NULL) {
                 for (int i = 0; i < dict->entry_count; i++)
                     list_add(keys, dict->inline_entries[i].key);
             } else {
-                for (int i = 0; i < dict->next_entry; i++) {
-                    if (dict->entries[i].key != EMPTY_VAL)
-                        list_add(keys, dict->entries[i].key);
+                for (int i = 0; i < dict->order_count; i++) {
+                    int idx = dict->order[i];
+                    if (dict->entries[idx].key != EMPTY_VAL && dict->entries[idx].key != TOMBSTONE_VAL)
+                        list_add(keys, dict->entries[idx].key);
                 }
             }
             SET_REG(RA, make_obj((Object*)keys));

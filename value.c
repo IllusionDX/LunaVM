@@ -220,47 +220,38 @@ ObjDict *new_dict(void) {
     ObjDict *d = malloc(sizeof(ObjDict));
     if (!d) { fprintf(stderr, "OOM\n"); exit(1); }
     init_object((Object*)d, OBJ_DICT, sizeof(ObjDict));
-    d->indices = NULL;
     d->entries = NULL;
+    d->order = NULL;
     d->capacity = 0;
     d->entry_count = 0;
-    d->next_entry = 0;
-    d->deleted_count = 0;
+    d->order_count = 0;
+    d->order_capacity = 0;
+    d->tombstone_count = 0;
     return d;
 }
 
-/* Transition an SOO dict (inline_entries) to full heap layout */
+/* Transition an SOO dict (inline_entries) to open-addressing heap layout */
 static void dict_transition_to_heap(ObjDict *d) {
     ObjDictEntry old[4];
     int old_count = d->entry_count;
     memcpy(old, d->inline_entries, sizeof(ObjDictEntry) * old_count);
 
     d->capacity = 8;
-    d->indices = malloc(sizeof(int) * 8);
-    if (!d->indices) { fprintf(stderr, "OOM\n"); exit(1); }
-    for (int i = 0; i < 8; i++) d->indices[i] = -1;
-    d->entries = malloc(sizeof(ObjDictEntry) * 8);
+    d->entries = calloc(d->capacity, sizeof(ObjDictEntry));
     if (!d->entries) { fprintf(stderr, "OOM\n"); exit(1); }
-    d->next_entry = 0;
+    for (int i = 0; i < d->capacity; i++) d->entries[i].key = EMPTY_VAL;
+
+    d->order = malloc(8 * sizeof(int));
+    if (!d->order) { fprintf(stderr, "OOM\n"); exit(1); }
+    d->order_capacity = 8;
+
     d->entry_count = 0;
-    d->deleted_count = 0;
+    d->order_count = 0;
+    d->tombstone_count = 0;
 
     for (int i = 0; i < old_count; i++) {
-        uint32_t perturb = old[i].hash;
-        uint32_t mask = d->capacity - 1;
-        uint32_t idx = old[i].hash & mask;
-        while (d->indices[idx] != -1) {
-            idx = ((idx << 2) + idx + perturb + 1) & mask;
-            perturb >>= 5;
-        }
-        int e_idx = d->next_entry++;
-        d->indices[idx] = e_idx;
-        d->entries[e_idx] = old[i];
-        d->entry_count++;
+        dict_set(d, old[i].key, old[i].value);
     }
-
-    /* Do NOT release the old inline references — the dict still owns them,
-     * they've just moved from the inline array to the heap array. */
 }
 
 ObjClass *new_class(const char *name, const char *base_name) {
@@ -536,7 +527,7 @@ void free_object_container(Object *obj) {
         }
         case OBJ_DICT: {
             ObjDict *d = (ObjDict *)obj;
-            if (d->indices) { free(d->indices); free(d->entries); }
+            if (d->entries) { free(d->entries); free(d->order); }
             free(d); break;
         }
         case OBJ_INSTANCE: {
@@ -702,7 +693,7 @@ char *value_to_string(Value v) {
                 ObjDict *d = (ObjDict *)obj;
                 int cap = 32; char *out = malloc(cap); int pos = 0; bool first = true;
                 out[pos++] = '{';
-                if (d->indices == NULL) {
+                if (d->entries == NULL) {
                     for (int i = 0; i < d->entry_count; i++) {
                         ObjDictEntry *e = &d->inline_entries[i];
                         char *k = value_to_string(e->key), *val = value_to_string(e->value);
@@ -721,9 +712,10 @@ char *value_to_string(Value v) {
                         free(k); free(val);
                     }
                 } else {
-                    for (int i = 0; i < d->next_entry; i++) {
-                        if (d->entries[i].key == EMPTY_VAL) continue;
-                        ObjDictEntry *e = &d->entries[i];
+                    for (int i = 0; i < d->order_count; i++) {
+                        int idx = d->order[i];
+                        if (d->entries[idx].key == EMPTY_VAL || d->entries[idx].key == TOMBSTONE_VAL) continue;
+                        ObjDictEntry *e = &d->entries[idx];
                         char *k = value_to_string(e->key), *val = value_to_string(e->value);
                         bool ks = IS_STRING(e->key);
                         bool vs = IS_STRING(e->value);
@@ -951,46 +943,48 @@ bool list_contains(ObjList *list, Value value) {
 /* ============================================================ */
 
 static void dict_resize(ObjDict *d) {
-    int new_cap = d->capacity == 0 ? 8 : d->capacity * 2;
-    if (d->capacity > 8 && d->entry_count <= d->capacity / 2) {
-        new_cap = d->capacity;
+    int old_cap = d->capacity;
+    int new_cap = old_cap == 0 ? 8 : old_cap * 2;
+    if (old_cap > 8 && d->entry_count <= old_cap / 2) {
+        new_cap = old_cap;
     }
-    
-    int *new_indices = malloc(new_cap * sizeof(int));
-    for (int i = 0; i < new_cap; i++) new_indices[i] = -1;
-    
-    ObjDictEntry *new_entries = malloc(new_cap * sizeof(ObjDictEntry));
-    
-    int new_next = 0;
-    for (int i = 0; i < d->next_entry; i++) {
-        if (d->entries[i].key == EMPTY_VAL) continue;
-        
-        ObjDictEntry *e = &d->entries[i];
-        int new_e_idx = new_next++;
-        new_entries[new_e_idx] = *e;
-        
+
+    ObjDictEntry *new_entries = calloc(new_cap, sizeof(ObjDictEntry));
+    if (!new_entries) { fprintf(stderr, "OOM\n"); exit(1); }
+    for (int i = 0; i < new_cap; i++) new_entries[i].key = EMPTY_VAL;
+
+    int *new_order = malloc(d->order_count * sizeof(int));
+    if (!new_order) { fprintf(stderr, "OOM\n"); exit(1); }
+    int new_order_count = 0;
+
+    for (int oi = 0; oi < d->order_count; oi++) {
+        int old_idx = d->order[oi];
+        ObjDictEntry *e = &d->entries[old_idx];
+        if (e->key == EMPTY_VAL || e->key == TOMBSTONE_VAL) continue;
+
         uint32_t perturb = e->hash;
         uint32_t mask = new_cap - 1;
-        uint32_t idx = e->hash & mask;
-        while (new_indices[idx] != -1) {
-            idx = ((idx << 2) + idx + perturb + 1) & mask;
+        uint32_t ni = e->hash & mask;
+        while (new_entries[ni].key != EMPTY_VAL) {
+            ni = ((ni << 2) + ni + perturb + 1) & mask;
             perturb >>= 5;
         }
-        new_indices[idx] = new_e_idx;
+        new_entries[ni] = *e;
+        new_order[new_order_count++] = (int)ni;
     }
-    
-    free(d->indices);
+
     free(d->entries);
-    d->indices = new_indices;
+    free(d->order);
     d->entries = new_entries;
+    d->order = new_order;
     d->capacity = new_cap;
-    d->next_entry = new_next;
-    d->deleted_count = 0;
+    d->order_count = new_order_count;
+    d->order_capacity = new_order_count;
+    d->tombstone_count = 0;
 }
 
 void dict_set(ObjDict *d, Value key, Value value) {
-    /* SOO mode: linear search on inline_entries */
-    if (d->indices == NULL) {
+    if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key)) {
                 d->inline_entries[i].value = value;
@@ -1004,11 +998,10 @@ void dict_set(ObjDict *d, Value key, Value value) {
             d->entry_count++;
             return;
         }
-        /* Full — transition to heap and fall through */
         dict_transition_to_heap(d);
     }
 
-    if (d->capacity == 0 || d->next_entry + d->deleted_count >= d->capacity * 2 / 3) {
+    if (d->capacity == 0 || d->entry_count + d->tombstone_count >= d->capacity * 2 / 3) {
         dict_resize(d);
     }
 
@@ -1016,34 +1009,40 @@ void dict_set(ObjDict *d, Value key, Value value) {
     uint32_t perturb = hash;
     uint32_t mask = d->capacity - 1;
     uint32_t i = hash & mask;
-    int target_idx = -1;
+    int tombstone_slot = -1;
 
-    while (d->indices[i] != -1) {
-        if (d->indices[i] == -2) {
-            if (target_idx == -1) target_idx = i;
-        } else {
-            int e_idx = d->indices[i];
-            if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
-                d->entries[e_idx].value = value;
-                return;
-            }
+    while (d->entries[i].key != EMPTY_VAL) {
+        if (d->entries[i].key == TOMBSTONE_VAL) {
+            if (tombstone_slot < 0) tombstone_slot = (int)i;
+        } else if (d->entries[i].hash == hash && values_equal(d->entries[i].key, key)) {
+            d->entries[i].value = value;
+            return;
         }
         i = ((i << 2) + i + perturb + 1) & mask;
         perturb >>= 5;
     }
 
-    if (target_idx == -1) target_idx = i;
+    if (tombstone_slot >= 0) i = (uint32_t)tombstone_slot;
 
-    int e_idx = d->next_entry++;
-    d->indices[target_idx] = e_idx;
-    d->entries[e_idx].hash = hash;
-    d->entries[e_idx].key = key;
-    d->entries[e_idx].value = value;
+    bool reuse_tombstone = (d->entries[i].key == TOMBSTONE_VAL);
+    d->entries[i].hash = hash;
+    d->entries[i].key = key;
+    d->entries[i].value = value;
+    if (reuse_tombstone) {
+        d->tombstone_count--;
+    } else {
+        if (d->order_count >= d->order_capacity) {
+            d->order_capacity = d->order_capacity < 8 ? 8 : d->order_capacity * 2;
+            d->order = realloc(d->order, d->order_capacity * sizeof(int));
+            if (!d->order) { fprintf(stderr, "OOM\n"); exit(1); }
+        }
+        d->order[d->order_count++] = (int)i;
+    }
     d->entry_count++;
 }
 
 Value dict_get(ObjDict *d, Value key) {
-    if (d->indices == NULL) {
+    if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key))
                 return d->inline_entries[i].value;
@@ -1056,12 +1055,11 @@ Value dict_get(ObjDict *d, Value key) {
     uint32_t mask = d->capacity - 1;
     uint32_t i = hash & mask;
 
-    while (d->indices[i] != -1) {
-        if (d->indices[i] >= 0) {
-            int e_idx = d->indices[i];
-            if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
-                return d->entries[e_idx].value;
-            }
+    while (d->entries[i].key != EMPTY_VAL) {
+        if (d->entries[i].key != TOMBSTONE_VAL &&
+            d->entries[i].hash == hash &&
+            values_equal(d->entries[i].key, key)) {
+            return d->entries[i].value;
         }
         i = ((i << 2) + i + perturb + 1) & mask;
         perturb >>= 5;
@@ -1070,7 +1068,7 @@ Value dict_get(ObjDict *d, Value key) {
 }
 
 bool dict_has(ObjDict *d, Value key) {
-    if (d->indices == NULL) {
+    if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key))
                 return true;
@@ -1083,12 +1081,11 @@ bool dict_has(ObjDict *d, Value key) {
     uint32_t mask = d->capacity - 1;
     uint32_t i = hash & mask;
 
-    while (d->indices[i] != -1) {
-        if (d->indices[i] >= 0) {
-            int e_idx = d->indices[i];
-            if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
-                return true;
-            }
+    while (d->entries[i].key != EMPTY_VAL) {
+        if (d->entries[i].key != TOMBSTONE_VAL &&
+            d->entries[i].hash == hash &&
+            values_equal(d->entries[i].key, key)) {
+            return true;
         }
         i = ((i << 2) + i + perturb + 1) & mask;
         perturb >>= 5;
@@ -1097,7 +1094,7 @@ bool dict_has(ObjDict *d, Value key) {
 }
 
 Value dict_remove(ObjDict *d, Value key) {
-    if (d->indices == NULL) {
+    if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key)) {
                 Value v = d->inline_entries[i].value;
@@ -1115,18 +1112,16 @@ Value dict_remove(ObjDict *d, Value key) {
     uint32_t mask = d->capacity - 1;
     uint32_t i = hash & mask;
 
-    while (d->indices[i] != -1) {
-        if (d->indices[i] >= 0) {
-            int e_idx = d->indices[i];
-            if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
-                d->indices[i] = -2;
-                Value v = d->entries[e_idx].value;
-                d->entries[e_idx].key = EMPTY_VAL;
-                d->entries[e_idx].value = make_null();
-                d->entry_count--;
-                d->deleted_count++;
-                return v;
-            }
+    while (d->entries[i].key != EMPTY_VAL) {
+        if (d->entries[i].key != TOMBSTONE_VAL &&
+            d->entries[i].hash == hash &&
+            values_equal(d->entries[i].key, key)) {
+            Value v = d->entries[i].value;
+            d->entries[i].key = TOMBSTONE_VAL;
+            d->entries[i].value = make_null();
+            d->entry_count--;
+            d->tombstone_count++;
+            return v;
         }
         i = ((i << 2) + i + perturb + 1) & mask;
         perturb >>= 5;
@@ -1135,33 +1130,28 @@ Value dict_remove(ObjDict *d, Value key) {
 }
 
 void dict_clear(ObjDict *d) {
-    if (d->indices == NULL) {
+    if (d->entries == NULL) {
         d->entry_count = 0;
         return;
     }
-    for (int i = 0; i < d->next_entry; i++) {
-        if (d->entries[i].key != EMPTY_VAL) {
-            d->entries[i].key = EMPTY_VAL;
-            d->entries[i].value = make_null();
-        }
-    }
-    for (int i = 0; i < d->capacity; i++) d->indices[i] = -1;
+    for (int i = 0; i < d->capacity; i++) d->entries[i].key = EMPTY_VAL;
     d->entry_count = 0;
-    d->next_entry = 0;
-    d->deleted_count = 0;
+    d->order_count = 0;
+    d->tombstone_count = 0;
 }
 
 int dict_length(ObjDict *d) { return d->entry_count; }
 
 Value dict_keys(ObjDict *d) {
     ObjList *list = new_list(d->entry_count);
-    if (d->indices == NULL) {
+    if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++)
             list_add(list, d->inline_entries[i].key);
     } else {
-        for (int i = 0; i < d->next_entry; i++) {
-            if (d->entries[i].key != EMPTY_VAL)
-                list_add(list, d->entries[i].key);
+        for (int i = 0; i < d->order_count; i++) {
+            int idx = d->order[i];
+            if (d->entries[idx].key != EMPTY_VAL && d->entries[idx].key != TOMBSTONE_VAL)
+                list_add(list, d->entries[idx].key);
         }
     }
     return make_obj((Object *)list);
@@ -1169,13 +1159,14 @@ Value dict_keys(ObjDict *d) {
 
 Value dict_values(ObjDict *d) {
     ObjList *list = new_list(d->entry_count);
-    if (d->indices == NULL) {
+    if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++)
             list_add(list, d->inline_entries[i].value);
     } else {
-        for (int i = 0; i < d->next_entry; i++) {
-            if (d->entries[i].key != EMPTY_VAL)
-                list_add(list, d->entries[i].value);
+        for (int i = 0; i < d->order_count; i++) {
+            int idx = d->order[i];
+            if (d->entries[idx].key != EMPTY_VAL && d->entries[idx].key != TOMBSTONE_VAL)
+                list_add(list, d->entries[idx].value);
         }
     }
     return make_obj((Object *)list);
