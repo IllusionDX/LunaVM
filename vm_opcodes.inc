@@ -1636,50 +1636,46 @@
                 case OBJ_INSTANCE: {
                     ObjInstance *obj_inst = (ObjInstance*)AS_OBJ(obj);
                     ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
-                    uint32_t h = ((uint32_t)(uintptr_t)obj_inst ^ mname_obj->hash);
-                    int idx = h & (IC_CACHE_SIZE - 1);
-                    IC_MemberEntry *ic = &vm->method_ic[idx];
-                    int mi = -1;
                     ObjClass *k = obj_inst->klass;
                     if (k) {
-                        if (ic->inst == obj_inst && ic->name == mname_obj) {
-                            mi = ic->index;
+                        ObjFunction *method = NULL;
+                        uint32_t ic_idx = ((uint32_t)(uintptr_t)CHUNK ^ (uint32_t)IP) & (IC_CACHE_SIZE - 1);
+                        IC_InvokeEntry *ic = &vm->invoke_ic[ic_idx];
+                        if (ic->klass == k && ic->name == mname_obj) {
+                            method = ic->method;
                         } else {
-                            /* Search backwards so child methods shadow inherited ones */
                             for (int i = k->method_count - 1; i >= 0; i--) {
                                 ObjFunction *m = k->methods[i];
-                                if (m && strcmp(k->method_names[i], mname_obj->chars) == 0) { mi = i; break; }
+                                if (m && strcmp(k->method_names[i], mname_obj->chars) == 0) { method = m; break; }
                             }
-                            if (mi >= 0) { ic->inst = obj_inst; ic->name = mname_obj; ic->index = mi; }
+                            if (method) { ic->klass = k; ic->name = mname_obj; ic->method = method; }
                         }
-                        if (mi >= 0) {
-                            ObjFunction *m = k->methods[mi];
-                            SET_REG(obj_reg + 1, obj); // Bind 'self' to first arg slot
-                            if (m->is_native) {
+                        if (method) {
+                            SET_REG(obj_reg + 1, obj);
+                            if (method->is_native) {
                                 Value native_scratch[256];
                                 native_scratch[0] = obj;
                                 for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
-                                if (!vm_call_native(vm, m->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
+                                if (!vm_call_native(vm, method->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
                             } else {
                                 if (vm->frame_count < MAX_FRAMES) {
                                     CallFrame *caller = &FRAME;
                                     CallFrame *callee = &vm->frames[vm->frame_count];
-                                    callee->chunk = m->chunk;
+                                    callee->chunk = method->chunk;
                                     callee->ip = 0;
                                     callee->base = caller->base + obj_reg + 1;
                                     callee->ret_reg = ret_reg;
                                     callee->nargs = nargs;
                                     callee->kw_args = make_null();
-                                    frame_set_refs(callee, NULL, m);
+                                    frame_set_refs(callee, NULL, method);
                                     callee->saved_globals = NULL;
-                                    int need = callee->base + m->chunk->max_registers;
+                                    int need = callee->base + method->chunk->max_registers;
                                     if (need > vm->stack_cap) {
                                         vm->stack_cap = need < 64 ? 64 : need * 2;
                                         vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
                                     }
-                                    vm->stack[callee->base] = obj; /* self at reg 0 */
-                                    /* args already aligned: callee reg 1 = caller reg obj_reg+2 */
-                                    for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
+                                    vm->stack[callee->base] = obj;
+                                    for (int j = 1 + nargs; j < method->chunk->max_registers; j++)
                                         vm->stack[callee->base + j] = make_null();
                                     vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
                                     vm->frame_count++;
@@ -1691,7 +1687,6 @@
                             }
                             handled = true;
                         } else if (strcmp(mname, "_init") == 0) {
-                            /* Constructors are optional: allow `new Class()` when no _init exists. */
                             result = make_null();
                             handled = true;
                         }
