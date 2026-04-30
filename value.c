@@ -49,10 +49,12 @@ uint32_t hash_value(Value v) {
 }
 
 /* ============================================================ */
-/* String interning                                              */
+/* String interning (dynamically resizing hash table)             */
 /* ============================================================ */
 
-#define INTERN_TABLE_SIZE 1024
+#define INTERN_INITIAL_CAPACITY 64
+#define INTERN_GROWTH_FACTOR 2
+#define INTERN_LOAD_LIMIT 0.75
 
 typedef struct StringInternEntry {
     struct StringInternEntry *next;
@@ -61,10 +63,41 @@ typedef struct StringInternEntry {
     ObjString *string;
 } StringInternEntry;
 
-static StringInternEntry *intern_table[INTERN_TABLE_SIZE];
+static StringInternEntry **intern_table = NULL;
+static int intern_capacity = 0;
+static int intern_count = 0;
+static int intern_threshold = 0;
+
+static void intern_resize(void) {
+    int new_cap = intern_capacity * INTERN_GROWTH_FACTOR;
+    StringInternEntry **new_table = calloc(new_cap, sizeof(StringInternEntry*));
+
+    for (int i = 0; i < intern_capacity; i++) {
+        StringInternEntry *e = intern_table[i];
+        while (e) {
+            StringInternEntry *next = e->next;
+            uint32_t bucket = e->hash & (new_cap - 1);
+            e->next = new_table[bucket];
+            new_table[bucket] = e;
+            e = next;
+        }
+    }
+    free(intern_table);
+    intern_table = new_table;
+    intern_capacity = new_cap;
+    intern_threshold = (int)(new_cap * INTERN_LOAD_LIMIT);
+}
 
 static void intern_add(ObjString *s) {
-    uint32_t bucket = s->hash & (INTERN_TABLE_SIZE - 1);
+    if (!intern_table) {
+        intern_capacity = INTERN_INITIAL_CAPACITY;
+        intern_table = calloc(intern_capacity, sizeof(StringInternEntry*));
+        intern_threshold = (int)(intern_capacity * INTERN_LOAD_LIMIT);
+    } else if (intern_count >= intern_threshold) {
+        intern_resize();
+    }
+
+    uint32_t bucket = s->hash & (intern_capacity - 1);
     StringInternEntry *e = malloc(sizeof(StringInternEntry));
     if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
     e->hash = s->hash;
@@ -72,12 +105,15 @@ static void intern_add(ObjString *s) {
     e->string = s;
     e->next = intern_table[bucket];
     intern_table[bucket] = e;
+    intern_count++;
 }
 
 static ObjString *intern_find(const char *chars, int length, uint32_t hash) {
-    uint32_t bucket = hash & (INTERN_TABLE_SIZE - 1);
+    if (!intern_table) return NULL;
+    uint32_t bucket = hash & (intern_capacity - 1);
     for (StringInternEntry *e = intern_table[bucket]; e; e = e->next) {
-        if (e->hash == hash && e->length == length && memcmp(e->string->chars, chars, length) == 0) {
+        if (e->hash == hash && e->length == length &&
+            memcmp(e->string->chars, chars, length) == 0) {
             return e->string;
         }
     }
@@ -85,13 +121,15 @@ static ObjString *intern_find(const char *chars, int length, uint32_t hash) {
 }
 
 static void intern_remove(ObjString *s) {
-    uint32_t bucket = s->hash & (INTERN_TABLE_SIZE - 1);
+    if (!intern_table) return;
+    uint32_t bucket = s->hash & (intern_capacity - 1);
     StringInternEntry **current = &intern_table[bucket];
     while (*current) {
         if ((*current)->string == s) {
             StringInternEntry *to_free = *current;
             *current = (*current)->next;
             free(to_free);
+            intern_count--;
             return;
         }
         current = &(*current)->next;
@@ -99,7 +137,8 @@ static void intern_remove(ObjString *s) {
 }
 
 void value_free_intern_table(void) {
-    for (int i = 0; i < INTERN_TABLE_SIZE; i++) {
+    if (!intern_table) return;
+    for (int i = 0; i < intern_capacity; i++) {
         StringInternEntry *e = intern_table[i];
         while (e) {
             StringInternEntry *next = e->next;
@@ -108,6 +147,11 @@ void value_free_intern_table(void) {
         }
         intern_table[i] = NULL;
     }
+    free(intern_table);
+    intern_table = NULL;
+    intern_capacity = 0;
+    intern_count = 0;
+    intern_threshold = 0;
 }
 
 /* ============================================================ */

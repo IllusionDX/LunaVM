@@ -47,13 +47,14 @@
         } else {
             SET_REG(RA, do_arith(_L, _R, OP_ADD));
         }
+        CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 8.  OP_SUB */
     op_sub: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)-to_i64(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
     /* 9.  OP_MUL */
-    op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)*to_i64(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_MUL));} DECODE; goto *op_labels[OP(instr)]; }
+    op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)*to_i64(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_MUL));} CHECK_GC; DECODE; goto *op_labels[OP(instr)]; }
 
     /* 10. OP_DIV */
     op_div: {
@@ -616,6 +617,7 @@
         }
         SET_REG_PRIM(RA + 1, make_int(0));
         SET_REG_PRIM(RA + 2, make_null());
+        CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -857,6 +859,7 @@
         } else {
             SET_REG_PRIM(RA, make_null());
         }
+        CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -958,6 +961,7 @@
         } else {
             SET_REG_PRIM(RA, make_null());
         }
+        CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
 
