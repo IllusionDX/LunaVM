@@ -339,7 +339,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.3.11-alpha` | Done | Native vector and matrix types: `vec2()`, `vec3()`, `vec4()`, `mat4()` as builtin globals (no import needed). Vectors support GLSL-style element access (`.x`/`.y`/`.z`/`.w`), operators (`+`, `-`, `*`), and mutable methods (`.add()`, `.sub()`, `.mul()`, `.copy()`). Matrices are 4x4 column-major with GLSL operator semantics, mutable transform methods (`.translate()`, `.rotate_x/y/z()`, `.scale()`, `.invert()`, `.transpose()`), and immutable variants (`.inverted()`, `.transposed()`). 32-type NaN-boxing expansion enabled: OBJ_MATRIX (tag 16) is the first type using bit 63 as the 5th tag bit.
 | `0.3.12-alpha` | Done | Naming convention "The Wave" applied — core types (atoms) stay lowercase (`vec3`, `mat4`), library classes use PascalCase (`Random`, `Buffer`, `JSON`). `ObjClass` gains a `fields` dict for static members, enabling classes as namespaces with `OP_MEMBERGET`/`OP_INVOKE` dispatch. `random` now exports `Random` class (`Random.PCG()`, `Random.Xorshift()`), `buffer` exports `Buffer` class (`Buffer.new()`, `Buffer.from_string()`), `json` exports `JSON` class (`JSON.parse()`, `JSON.encode()`). `math`, `io`, `net`, `os`, `time`, `noise` remain as pure-function modules (lowercase).
 | `0.3.13-alpha` | Done | Stack traces with code context and source line tracking. Format parser and runtime errors in GCC/clang style with `file:line:` prefix and caret pointers. `net` module redesigned with clean constants, proper `Socket` class, and TCP/UDP client/server support. Stdlib API surfaces unified into functional (pure functions), class (constructors + methods), and factory (function returning class instances) patterns. `math`, `random`, `buffer`, `json`, `io`, `os`, `time`, `noise` modules re-aligned. GC check removed from dispatch loop `DECODE` macro; moved to opcodes that allocate (`OP_NEW`, `OP_NEWDICT`, `OP_NEWLIST`, `OP_CLOSURE`). Compare-and-branch superinstructions: `OP_LT_JZ`, `OP_LE_JZ`, `OP_GT_JZ`, `OP_GE_JZ` fuse comparison + branch into single dispatch. -17% in loop benchmarks. |
-| `0.3.14-alpha` | **Current** | VM dispatch optimizations: Lazy decode (on-demand field extraction macros eliminate dead decode work), ISK/RKB/RKC dead branch removal (Luna uses 8-bit regs, not 9-bit like Lua), IS_DOUBLE simplification from 3 checks to 2 (fixes latent OBJ_STRING-as-double bug). `-flto` build flag for cross-TU inlining. Dead code elimination (skip implicit LOADNULL+RET when last statement is return). ENTER no-op removal. All tested: 74/74 tests pass. fib30 benchmark improvement: ~0.120s to ~0.114s (-5%). |
+| `0.3.14-alpha` | Done | VM dispatch optimizations: Lazy decode (on-demand field extraction macros eliminate dead decode work), ISK/RKB/RKC dead branch removal (Luna uses 8-bit regs, not 9-bit like Lua), IS_DOUBLE simplification from 3 checks to 2 (fixes latent OBJ_STRING-as-double bug). `-flto` build flag for cross-TU inlining. Dead code elimination (skip implicit LOADNULL+RET when last statement is return). ENTER no-op removal. Exception formatting cleanup: removed redundant `vm:` and `error:` prefixes, `throw(string)` now wraps in `Exception`, `value_to_string` for instances no longer wraps message in `< >`. Parser infinite loop fix on invalid parameter names (e.g., `self`). All tested: 75/75 tests pass. |
+| `0.4.0-alpha` | **Current** | ARC removal → shift to pure tracing GC. Unified Classes Model — all values (primitives + objects) have a canonical class for method dispatch (`get_class()`). Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
 
 ## The Wave Naming Convention
 
@@ -364,12 +365,13 @@ This convention applies retroactively to `random` (→ exports `Random`), `buffe
 
 | Version | Milestone |
 |---------|-----------|
-| `0.3.x` | Better error messages with line/column context and suggestions. Standard library expansion (io — done, os — done, time — done, noise — done, strings — pending). |
-| `0.4.x` | Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
-| `0.5.x` | Debugger / profiler. |
-| `0.6.x` | Coroutines / async (`await`, `async def`). |
-| `0.7.x` | Generation 2 optimized VM lands. Type specialization from hints. |
-| `0.8.x` | Generation 3 simple JIT. |
+| `0.3.x` | Better error messages with line/column context and suggestions. Standard library expansion (io — done, os — done, time — done, noise — done, strings — deferred to unified class model). |
+| `0.4.x` | **ARC removal → shift to pure tracing GC.** Unified Classes Model — all values (primitives + objects) have a canonical class for method dispatch (`get_class()`). Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
+| `0.5.x` | Incremental Tracing GC (tricolor mark-sweep). |
+| `0.6.x` | Debugger / profiler. |
+| `0.7.x` | Coroutines / async (`await`, `async def`). |
+| `0.8.x` | Generation 2 optimized VM lands. Type specialization from hints. |
+| `0.9.x` | Generation 3 simple JIT. |
 | `0.9.x` | Package manager and ecosystem tools. |
 | `1.0.0-beta` | Spec freeze, release candidate phase. |
 | `1.0.0` | Language spec is stable. Stdlib is complete. Backward compatibility promised. |
