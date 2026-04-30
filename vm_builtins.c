@@ -14,6 +14,15 @@
 #include "value.h"
 #include "chunk.h"
 
+/* Extern declarations for static mat4 helpers in vm.c */
+extern void mat4_mul_translate(float *m, float x, float y, float z);
+extern void mat4_mul_rotate_x(float *m, float angle);
+extern void mat4_mul_rotate_y(float *m, float angle);
+extern void mat4_mul_rotate_z(float *m, float angle);
+extern void mat4_mul_scale(float *m, float sx, float sy, float sz);
+extern void mat4_transpose(const float *src, float *dst);
+extern int  mat4_invert(float *m, float *out);
+
 /* ============================================================ */
 /* Global variable table                                         */
 /* ============================================================ */
@@ -433,6 +442,168 @@ static Value string_method_length(VM *vm, Value *args, int nargs) {
     return make_int(((ObjString*)AS_OBJ(args[0]))->length);
 }
 
+/* ============================================================ */
+/* Buffer method native functions — args[0] = buffer (self)    */
+/* ============================================================ */
+
+static Value buffer_method_read_byte(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_BUFFER(args[0])) return make_null();
+    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(args[0]);
+    Value result = buffer_read_byte(buf, buf->cursor);
+    if (!IS_NIL(result)) buf->cursor += 1;
+    return result;
+}
+static Value buffer_method_read_short(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_BUFFER(args[0])) return make_null();
+    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(args[0]);
+    Value result = buffer_read_short(buf, buf->cursor);
+    if (!IS_NIL(result)) buf->cursor += 2;
+    return result;
+}
+static Value buffer_method_read_int(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_BUFFER(args[0])) return make_null();
+    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(args[0]);
+    Value result = buffer_read_int(buf, buf->cursor);
+    if (!IS_NIL(result)) buf->cursor += 4;
+    return result;
+}
+static Value buffer_method_read_long(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_BUFFER(args[0])) return make_null();
+    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(args[0]);
+    Value result = buffer_read_long(buf, buf->cursor);
+    if (!IS_NIL(result)) buf->cursor += 8;
+    return result;
+}
+
+/* ============================================================ */
+/* Vector method native functions — args[0] = vector (self)    */
+/* ============================================================ */
+
+static Value vector_method_add(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_VECTOR(args[0]) || !IS_VECTOR(args[1])) return make_null();
+    ObjVector *vec = (ObjVector*)AS_OBJ(args[0]);
+    ObjVector *other = (ObjVector*)AS_OBJ(args[1]);
+    float s = 1.0f;
+    if (nargs >= 3) {
+        if (!IS_NUMBER(args[2])) {
+            luna_throw(vm, vm->type_error_class, "vector.add() scalar must be numeric");
+            return make_null();
+        }
+        s = (float)value_to_double(args[2]);
+    }
+    vec->data[0] += other->data[0] * s;
+    vec->data[1] += other->data[1] * s;
+    vec->data[2] += other->data[2] * s;
+    vec->data[3] += other->data[3] * s;
+    return args[0];
+}
+static Value vector_method_sub(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_VECTOR(args[0]) || !IS_VECTOR(args[1])) return make_null();
+    ObjVector *vec = (ObjVector*)AS_OBJ(args[0]);
+    ObjVector *other = (ObjVector*)AS_OBJ(args[1]);
+    vec->data[0] -= other->data[0];
+    vec->data[1] -= other->data[1];
+    vec->data[2] -= other->data[2];
+    vec->data[3] -= other->data[3];
+    return args[0];
+}
+static Value vector_method_mul(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_VECTOR(args[0]) || !IS_NUMBER(args[1])) return make_null();
+    ObjVector *vec = (ObjVector*)AS_OBJ(args[0]);
+    float s = (float)value_to_double(args[1]);
+    vec->data[0] *= s;
+    vec->data[1] *= s;
+    vec->data[2] *= s;
+    vec->data[3] *= s;
+    return args[0];
+}
+static Value vector_method_copy(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_VECTOR(args[0])) return make_null();
+    ObjVector *vec = (ObjVector*)AS_OBJ(args[0]);
+    return make_obj((Object*)new_vector(vec->data[0], vec->data[1], vec->data[2], vec->data[3]));
+}
+
+/* ============================================================ */
+/* Matrix method native functions — args[0] = matrix (self)    */
+/* ============================================================ */
+
+static Value matrix_method_translate(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_VECTOR(args[1])) return make_null();
+    ObjVector *v = (ObjVector*)AS_OBJ(args[1]);
+    mat4_mul_translate(((ObjMatrix*)AS_OBJ(args[0]))->m, v->data[0], v->data[1], v->data[2]);
+    return args[0];
+}
+static Value matrix_method_rotate_x(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_NUMBER(args[1])) return make_null();
+    mat4_mul_rotate_x(((ObjMatrix*)AS_OBJ(args[0]))->m, (float)(value_to_double(args[1]) * 3.141592653589793 / 180.0));
+    return args[0];
+}
+static Value matrix_method_rotate_y(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_NUMBER(args[1])) return make_null();
+    mat4_mul_rotate_y(((ObjMatrix*)AS_OBJ(args[0]))->m, (float)(value_to_double(args[1]) * 3.141592653589793 / 180.0));
+    return args[0];
+}
+static Value matrix_method_rotate_z(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_NUMBER(args[1])) return make_null();
+    mat4_mul_rotate_z(((ObjMatrix*)AS_OBJ(args[0]))->m, (float)(value_to_double(args[1]) * 3.141592653589793 / 180.0));
+    return args[0];
+}
+static Value matrix_method_scale(VM *vm, Value *args, int nargs) {
+    (void)vm;
+    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_VECTOR(args[1])) return make_null();
+    ObjVector *v = (ObjVector*)AS_OBJ(args[1]);
+    mat4_mul_scale(((ObjMatrix*)AS_OBJ(args[0]))->m, v->data[0], v->data[1], v->data[2]);
+    return args[0];
+}
+static Value matrix_method_transpose(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_MATRIX(args[0])) return make_null();
+    ObjMatrix *mat = (ObjMatrix*)AS_OBJ(args[0]);
+    mat4_transpose(mat->m, mat->m);
+    return args[0];
+}
+static Value matrix_method_transposed(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_MATRIX(args[0])) return make_null();
+    ObjMatrix *out = new_matrix();
+    mat4_transpose(((ObjMatrix*)AS_OBJ(args[0]))->m, out->m);
+    return make_obj((Object*)out);
+}
+static Value matrix_method_invert(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_MATRIX(args[0])) return make_null();
+    ObjMatrix *mat = (ObjMatrix*)AS_OBJ(args[0]);
+    ObjMatrix *tmp = new_matrix();
+    if (!mat4_invert(mat->m, tmp->m)) {
+        luna_throw(vm, vm->value_error_class, "mat4.invert(): matrix is singular");
+        return make_null();
+    }
+    for (int i = 0; i < 16; i++) mat->m[i] = tmp->m[i];
+    return args[0];
+}
+static Value matrix_method_inverted(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_MATRIX(args[0])) return make_null();
+    ObjMatrix *out = new_matrix();
+    if (!mat4_invert(((ObjMatrix*)AS_OBJ(args[0]))->m, out->m)) {
+        luna_throw(vm, vm->value_error_class, "mat4.inverted(): matrix is singular");
+        return make_null();
+    }
+    return make_obj((Object*)out);
+}
+
 void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);
     vm_define_native(vm, "input", bn_input);
@@ -493,10 +664,31 @@ void vm_register_canonical_classes(VM *vm) {
     class_add_native_method(vm->enum_class, "length", enum_method_count);
     class_add_native_method(vm->enum_class, "size", enum_method_count);
 
-    /* Remaining canonical classes (no methods yet, needed by get_class) */
+    /* Buffer canonical class */
     vm->buffer_class = new_class("Buffer", NULL);
+    class_add_native_method(vm->buffer_class, "read_byte", buffer_method_read_byte);
+    class_add_native_method(vm->buffer_class, "read_short", buffer_method_read_short);
+    class_add_native_method(vm->buffer_class, "read_int", buffer_method_read_int);
+    class_add_native_method(vm->buffer_class, "read_long", buffer_method_read_long);
+
+    /* Vector canonical class */
     vm->vector_class = new_class("Vector", NULL);
+    class_add_native_method(vm->vector_class, "add", vector_method_add);
+    class_add_native_method(vm->vector_class, "sub", vector_method_sub);
+    class_add_native_method(vm->vector_class, "mul", vector_method_mul);
+    class_add_native_method(vm->vector_class, "copy", vector_method_copy);
+
+    /* Matrix canonical class */
     vm->matrix_class = new_class("Matrix", NULL);
+    class_add_native_method(vm->matrix_class, "translate", matrix_method_translate);
+    class_add_native_method(vm->matrix_class, "rotate_x", matrix_method_rotate_x);
+    class_add_native_method(vm->matrix_class, "rotate_y", matrix_method_rotate_y);
+    class_add_native_method(vm->matrix_class, "rotate_z", matrix_method_rotate_z);
+    class_add_native_method(vm->matrix_class, "scale", matrix_method_scale);
+    class_add_native_method(vm->matrix_class, "transpose", matrix_method_transpose);
+    class_add_native_method(vm->matrix_class, "transposed", matrix_method_transposed);
+    class_add_native_method(vm->matrix_class, "invert", matrix_method_invert);
+    class_add_native_method(vm->matrix_class, "inverted", matrix_method_inverted);
     vm->function_class = new_class("Function", NULL);
     vm->closure_class = new_class("Closure", NULL);
     vm->bound_method_class = new_class("BoundMethod", NULL);

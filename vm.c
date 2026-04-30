@@ -954,7 +954,7 @@ static float mat4_det3(float a, float b, float c,
     return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
 }
 
-static int mat4_invert(float *m, float *out) {
+int mat4_invert(float *m, float *out) {
     float cof[16];
     for (int c = 0; c < 4; c++) {
         for (int r = 0; r < 4; r++) {
@@ -977,18 +977,18 @@ static int mat4_invert(float *m, float *out) {
     return 1;
 }
 
-static void mat4_transpose(float *m, float *out) {
+void mat4_transpose(float *m, float *out) {
     for (int c = 0; c < 4; c++)
         for (int r = 0; r < 4; r++)
             out[r + c*4] = m[c + r*4];
 }
 
-static void mat4_mul_translate(float *m, float tx, float ty, float tz) {
+void mat4_mul_translate(float *m, float tx, float ty, float tz) {
     for (int i = 0; i < 4; i++)
         m[12 + i] = m[0 + i]*tx + m[4 + i]*ty + m[8 + i]*tz + m[12 + i];
 }
 
-static void mat4_mul_rotate_x(float *m, float angle) {
+void mat4_mul_rotate_x(float *m, float angle) {
     float c = cosf(angle), s = sinf(angle);
     for (int i = 0; i < 4; i++) {
         float a = m[4 + i], b = m[8 + i];
@@ -997,7 +997,7 @@ static void mat4_mul_rotate_x(float *m, float angle) {
     }
 }
 
-static void mat4_mul_rotate_y(float *m, float angle) {
+void mat4_mul_rotate_y(float *m, float angle) {
     float c = cosf(angle), s = sinf(angle);
     for (int i = 0; i < 4; i++) {
         float a = m[0 + i], b = m[8 + i];
@@ -1006,7 +1006,7 @@ static void mat4_mul_rotate_y(float *m, float angle) {
     }
 }
 
-static void mat4_mul_rotate_z(float *m, float angle) {
+void mat4_mul_rotate_z(float *m, float angle) {
     float c = cosf(angle), s = sinf(angle);
     for (int i = 0; i < 4; i++) {
         float a = m[0 + i], b = m[4 + i];
@@ -1015,7 +1015,7 @@ static void mat4_mul_rotate_z(float *m, float angle) {
     }
 }
 
-static void mat4_mul_scale(float *m, float sx, float sy, float sz) {
+void mat4_mul_scale(float *m, float sx, float sy, float sz) {
     for (int i = 0; i < 4; i++)
         m[0 + i] *= sx;
     for (int i = 0; i < 4; i++)
