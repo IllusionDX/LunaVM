@@ -295,102 +295,131 @@ extern Object *all_objects;
 extern Object *userdata_objects;
 extern int allocated_objects;
 
-static void mark_object(Object *obj);
+/* ---- Explicit gray stack (replaces C recursion in mark phase) ---- */
+
+static Object **gray_stack = NULL;
+static int gray_cap = 0;
+static int gray_count = 0;
+
+static void gray_push(Object *obj) {
+    if (gray_count >= gray_cap) {
+        gray_cap = gray_cap ? gray_cap * 2 : 512;
+        gray_stack = realloc(gray_stack, sizeof(Object*) * gray_cap);
+    }
+    gray_stack[gray_count++] = obj;
+}
 
 static void mark_value(Value v) {
-    if (IS_OBJ(v) && AS_OBJ(v)) {
-        mark_object(AS_OBJ(v));
+    if (IS_OBJ(v)) {
+        Object *obj = AS_OBJ(v);
+        if (obj && !obj->is_marked) {
+            obj->is_marked = true;
+            gray_push(obj);
+        }
     }
 }
 
 static void mark_object(Object *obj) {
-    if (!obj || obj->is_marked) return;
-    obj->is_marked = true;
+    if (obj && !obj->is_marked) {
+        obj->is_marked = true;
+        gray_push(obj);
+    }
+}
 
-    switch (obj->type) {
-        case OBJ_LIST: {
-            ObjList *l = (ObjList *)obj;
-            if (l->items) {
-                for (int i = 0; i < l->count; i++) mark_value(l->items[i]);
-            } else {
-                for (int i = 0; i < l->count; i++) mark_value(l->inline_items[i]);
-            }
-            break;
-        }
-        case OBJ_DICT: {
-            ObjDict *d = (ObjDict *)obj;
-            if (d->indices == NULL) {
-                for (int i = 0; i < d->entry_count; i++) {
-                    mark_value(d->inline_entries[i].key);
-                    mark_value(d->inline_entries[i].value);
+/* Drain the gray stack iteratively — no C recursion. */
+static void mark_drain(void) {
+    while (gray_count > 0) {
+        Object *obj = gray_stack[--gray_count];
+
+        switch (obj->type) {
+            case OBJ_LIST: {
+                ObjList *l = (ObjList *)obj;
+                if (l->items) {
+                    for (int i = 0; i < l->count; i++) mark_value(l->items[i]);
+                } else {
+                    for (int i = 0; i < l->count; i++) mark_value(l->inline_items[i]);
                 }
-            } else {
-                for (int i = 0; i < d->next_entry; i++) {
-                    if (d->entries[i].key != EMPTY_VAL) {
-                        mark_value(d->entries[i].key);
-                        mark_value(d->entries[i].value);
+                break;
+            }
+            case OBJ_DICT: {
+                ObjDict *d = (ObjDict *)obj;
+                if (d->indices == NULL) {
+                    for (int i = 0; i < d->entry_count; i++) {
+                        mark_value(d->inline_entries[i].key);
+                        mark_value(d->inline_entries[i].value);
+                    }
+                } else {
+                    for (int i = 0; i < d->next_entry; i++) {
+                        if (d->entries[i].key != EMPTY_VAL) {
+                            mark_value(d->entries[i].key);
+                            mark_value(d->entries[i].value);
+                        }
                     }
                 }
+                break;
             }
-            break;
-        }
-        case OBJ_INSTANCE: {
-            ObjInstance *inst = (ObjInstance *)obj;
-            for (int i = 0; i < inst->field_count; i++) {
-                mark_value(inst->fields[i]);
-            }
-            if (inst->klass) mark_object((Object*)inst->klass);
-            break;
-        }
-        case OBJ_CLOSURE: {
-            ObjClosure *cl = (ObjClosure *)obj;
-            mark_object((Object*)cl->function);
-            for (int i = 0; i < cl->upvalue_count; i++) {
-                mark_object((Object*)cl->upvalues[i]);
-            }
-            break;
-        }
-        case OBJ_ENUM: break; /* no child Values to mark */
-        case OBJ_FUNCTION: {
-            ObjFunction *f = (ObjFunction *)obj;
-            if (f->chunk) {
-                for (int i = 0; i < f->chunk->const_count; i++) {
-                    mark_value(f->chunk->constants[i]);
+            case OBJ_INSTANCE: {
+                ObjInstance *inst = (ObjInstance *)obj;
+                for (int i = 0; i < inst->field_count; i++) {
+                    mark_value(inst->fields[i]);
                 }
+                mark_object((Object*)inst->klass);
+                break;
             }
-            break;
-        }
-        case OBJ_UPVALUE: {
-            ObjUpvalue *uv = (ObjUpvalue *)obj;
-            mark_value(uv->closed);
-            break;
-        }
-        case OBJ_CLASS: {
-            ObjClass *cls = (ObjClass *)obj;
-            if (cls->base) mark_object((Object*)cls->base);
-            if (cls->prototype) mark_object((Object*)cls->prototype);
-            for (int i = 0; i < cls->method_count; i++) {
-                mark_object((Object*)cls->methods[i]);
+            case OBJ_CLOSURE: {
+                ObjClosure *cl = (ObjClosure *)obj;
+                mark_object((Object*)cl->function);
+                for (int i = 0; i < cl->upvalue_count; i++) {
+                    mark_object((Object*)cl->upvalues[i]);
+                }
+                break;
             }
-            if (cls->fields) mark_object((Object*)cls->fields);
-            break;
+            case OBJ_ENUM: break;
+            case OBJ_FUNCTION: {
+                ObjFunction *f = (ObjFunction *)obj;
+                if (f->chunk) {
+                    for (int i = 0; i < f->chunk->const_count; i++) {
+                        mark_value(f->chunk->constants[i]);
+                    }
+                }
+                break;
+            }
+            case OBJ_UPVALUE: {
+                ObjUpvalue *uv = (ObjUpvalue *)obj;
+                mark_value(uv->closed);
+                break;
+            }
+            case OBJ_CLASS: {
+                ObjClass *cls = (ObjClass *)obj;
+                mark_object((Object*)cls->base);
+                mark_object((Object*)cls->prototype);
+                for (int i = 0; i < cls->method_count; i++) {
+                    mark_object((Object*)cls->methods[i]);
+                }
+                mark_object((Object*)cls->fields);
+                break;
+            }
+            case OBJ_BOUND_METHOD: {
+                ObjBoundMethod *bm = (ObjBoundMethod *)obj;
+                mark_value(bm->self);
+                mark_object((Object*)bm->fn);
+                break;
+            }
+            case OBJ_MODULE: {
+                ObjModule *mod = (ObjModule *)obj;
+                mark_object((Object*)mod->name);
+                mark_object((Object*)mod->exports);
+                break;
+            }
+            case OBJ_BUFFER: break;
+            case OBJ_INT64: break;
+            default: break;
         }
-        case OBJ_BOUND_METHOD: {
-            ObjBoundMethod *bm = (ObjBoundMethod *)obj;
-            mark_value(bm->self);
-            if (bm->fn) mark_object((Object*)bm->fn);
-            break;
-        }
-        case OBJ_MODULE: {
-            ObjModule *mod = (ObjModule *)obj;
-            if (mod->name) mark_object((Object*)mod->name);
-            if (mod->exports) mark_object((Object*)mod->exports);
-            break;
-        }
-        case OBJ_BUFFER: break;
-        case OBJ_INT64: break;
-        default: break;
     }
+    free(gray_stack);
+    gray_stack = NULL;
+    gray_cap = 0;
+    gray_count = 0;
 }
 
 void mark_and_sweep(VM *vm) {
@@ -444,6 +473,9 @@ void mark_and_sweep(VM *vm) {
     if (vm->class_class) mark_object((Object*)vm->class_class);
     if (vm->module_class) mark_object((Object*)vm->module_class);
     if (vm->userdata_class) mark_object((Object*)vm->userdata_class);
+
+    // Drain gray stack iteratively (no C recursion)
+    mark_drain();
 
     // Invalidate inline caches — any cached object may have been collected.
     memset(vm->global_ic, 0, sizeof(vm->global_ic));
