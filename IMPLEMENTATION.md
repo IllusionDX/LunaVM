@@ -143,8 +143,10 @@ Register-based: operations read from `A`, `B`, `C`; write result to `A`.
 | `BNOT` | ABC | `A = ~B` |
 | `SHL` | ABC | `A = B << C` |
 | `SHR` | ABC | `A = B >> C` |
-| `ADDI` | ABC | `A = A + (int8_t)B` — integer fast path |
-| `SUBI` | ABC | `A = A - (int8_t)B` — integer fast path |
+| `ADDI` | ABC | `A = A + (int8_t)B` — in-place int fast path |
+| `SUBI` | ABC | `A = A - (int8_t)B` — in-place int fast path |
+| `ADDI_FROM` | ABC | `A = B + (int8_t)C` — separate dest/src |
+| `SUBI_FROM` | ABC | `A = B - (int8_t)C` — separate dest/src |
 
 #### Comparison
 
@@ -170,6 +172,23 @@ Register-based: operations read from `A`, `B`, `C`; write result to `A`.
 | `JMP` | AsBx | `PC += sBx` |
 | `JZ` | AsBx | `if !A then PC += sBx` |
 | `JNZ` | AsBx | `if A then PC += sBx` |
+
+#### Compare-and-Branch
+
+| Opcode | Format | Description |
+|--------|--------|-------------|
+| `LT_JZ` | ABC | `if !(A < B) then IP += C` — fused compare + branch |
+| `LE_JZ` | ABC | `if !(A <= B) then IP += C` |
+| `GT_JZ` | ABC | `if !(A > B) then IP += C` |
+| `GE_JZ` | ABC | `if !(A >= B) then IP += C` |
+| `EQ_JZ` | ABC | `if !(A == B) then IP += C` |
+| `NE_JZ` | ABC | `if !(A != B) then IP += C` |
+| `LT_JZ_IMM` | ABC | `if !(A < (int8_t)B) then IP += C` — compare reg vs immediate |
+| `LE_JZ_IMM` | ABC | `if !(A <= (int8_t)B) then IP += C` |
+| `GT_JZ_IMM` | ABC | `if !(A > (int8_t)B) then IP += C` |
+| `GE_JZ_IMM` | ABC | `if !(A >= (int8_t)B) then IP += C` |
+| `EQ_JZ_IMM` | ABC | `if !(A == (int8_t)B) then IP += C` |
+| `NE_JZ_IMM` | ABC | `if !(A != (int8_t)B) then IP += C` |
 
 #### Functions
 
@@ -340,7 +359,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.3.12-alpha` | Done | Naming convention "The Wave" applied — core types (atoms) stay lowercase (`vec3`, `mat4`), library classes use PascalCase (`Random`, `Buffer`, `JSON`). `ObjClass` gains a `fields` dict for static members, enabling classes as namespaces with `OP_MEMBERGET`/`OP_INVOKE` dispatch. `random` now exports `Random` class (`Random.PCG()`, `Random.Xorshift()`), `buffer` exports `Buffer` class (`Buffer.new()`, `Buffer.from_string()`), `json` exports `JSON` class (`JSON.parse()`, `JSON.encode()`). `math`, `io`, `net`, `os`, `time`, `noise` remain as pure-function modules (lowercase).
 | `0.3.13-alpha` | Done | Stack traces with code context and source line tracking. Format parser and runtime errors in GCC/clang style with `file:line:` prefix and caret pointers. `net` module redesigned with clean constants, proper `Socket` class, and TCP/UDP client/server support. Stdlib API surfaces unified into functional (pure functions), class (constructors + methods), and factory (function returning class instances) patterns. `math`, `random`, `buffer`, `json`, `io`, `os`, `time`, `noise` modules re-aligned. GC check removed from dispatch loop `DECODE` macro; moved to opcodes that allocate (`OP_NEW`, `OP_NEWDICT`, `OP_NEWLIST`, `OP_CLOSURE`). Compare-and-branch superinstructions: `OP_LT_JZ`, `OP_LE_JZ`, `OP_GT_JZ`, `OP_GE_JZ` fuse comparison + branch into single dispatch. -17% in loop benchmarks. |
 | `0.3.14-alpha` | Done | VM dispatch optimizations: Lazy decode (on-demand field extraction macros eliminate dead decode work), ISK/RKB/RKC dead branch removal (Luna uses 8-bit regs, not 9-bit like Lua), IS_DOUBLE simplification from 3 checks to 2 (fixes latent OBJ_STRING-as-double bug). `-flto` build flag for cross-TU inlining. Dead code elimination (skip implicit LOADNULL+RET when last statement is return). ENTER no-op removal. Exception formatting cleanup: removed redundant `vm:` and `error:` prefixes, `throw(string)` now wraps in `Exception`, `value_to_string` for instances no longer wraps message in `< >`. Parser infinite loop fix on invalid parameter names (e.g., `self`). All tested: 75/75 tests pass. |
-| `0.4.0-alpha` | **Current** | ARC removal → shift to pure tracing GC. Unified Classes Model — all values (primitives + objects) have a canonical class for method dispatch (`get_class()`). Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
+| `0.4.0-alpha` | **Current** | ARC removal → shift to pure tracing GC. Unified Classes Model — all values (primitives + objects) have a canonical class for method dispatch (`get_class()`). Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). **Optimizations:** Dict open addressing refactor (two-array → single entries[] + order[], ~11% on entities). Monomorphic inline cache for `OP_CALL` (64-entry, keyed by chunk^IP, ~2% on fib). Super instructions: `ADDI_FROM`/`SUBI_FROM` (eliminate MOVE+ADDI/SUBI), `*_JZ_IMM` (eliminate LOADI+compare+branch, ~12% on fib). Multi-assign stack arrays (avoid malloc for <=16 vars). String equality fast-path (skip `do_cmp` for different interned pointers). Method dispatch inline cache (per-instance → per-call-site, ~6% on entities). |
 
 ## The Wave Naming Convention
 
@@ -411,10 +430,16 @@ This convention applies retroactively to `random` (→ exports `Random`), `buffe
 | High | **Constant Folding + Peephole** | **B** *Done* — Compile-time evaluation of `int op int`, `float op float`, string concat, unary `-`/`!`/`~` on literals. Peephole: `OP_LT`/`OP_LE`/`OP_GT`/`OP_GE` + `OP_JZ` fused into single opcodes. Reduces bytecode size and runtime work. | Low — compiler-only, zero runtime risk |
 | High | **Fast-path Builtin Opcodes** | **S** *Pending* — Dedicated `OP_PRINT`, `OP_LEN`, `OP_STR`, `OP_TYPE` instead of `OP_CALL` + global lookup. Hot builtins (`print`, `len`, `str`) go from ~50 to ~5 cycles. | Low — new opcodes with `OP_CALL` fallback if builtin was shadowed |
 | Medium | **Liveness-based Register Allocation** | **B** *Pending* — Free registers after last use instead of at block end. Smaller `max_registers` → smaller stack frames → better cache locality. Reduces memory pressure. | Medium — touches `alloc_reg`/`free_reg` in compiler only |
-| Medium | **Superinstructions** | **S** *Done* — Fused `OP_LT`/`OP_LE`/`OP_GT`/`OP_GE` + `OP_JZ` into `OP_LT_JZ`/`OP_LE_JZ`/`OP_GT_JZ`/`OP_GE_JZ`. -17% in tight loop benchmarks. | Low — additive opcodes + compiler peephole |
+| Medium | **Superinstructions** | **S** *Done* — Fused `OP_LT`/`OP_LE`/`OP_GT`/`OP_GE` + `OP_JZ` into `OP_LT_JZ`/`OP_LE_JZ`/`OP_GT_JZ`/`OP_GE_JZ`. Added `OP_ADDI_FROM`/`OP_SUBI_FROM` to eliminate `MOVE+ADDI`/`MOVE+SUBI` patterns. Added compare-and-branch with immediate variants (`*_JZ_IMM`) to eliminate `LOADI+compare` patterns. fib30: 0.090s → 0.079s (~12%). | Low — additive opcodes + compiler peephole |
 | Medium | **OP_CALL Frame Deduplication** | **S** *Done* — Extracted duplicated frame-setup code from 4 branches into `PUSH_FRAME`/`CHECK_FRAME_OVERFLOW` macros. -126 lines in hot path, better I-cache locality and branch prediction. | Low — macro extraction, no logic changes |
+| Medium | **OP_CALL Monomorphic Inline Cache** | **S** *Done* — 64-entry direct-mapped cache keyed by `(chunk ^ IP)`. Hit path skips `IS_FUNCTION`/`IS_CLOSURE` type chain and pushes frame directly. fib30: ~0.092s → 0.090s (~2%). | Low — additive cache array, GC-invalidated on sweep |
+| Medium | **Method Dispatch Inline Cache** | **S** *Done* — Changed `OP_INVOKE` instance method cache from per-instance (keyed by object pointer) to per-call-site (keyed by `(chunk ^ IP)`). All instances of the same class share one cache entry, eliminating eviction under many-instance workloads. bench_entities: ~0.128s → 0.120s (~6%). | Low — changed cache key and struct |
+| High | **Delete per-instance `member_ic` inline cache** | **S** *Pending* — The `member_ic` array for `MEMBERGET`/`MEMBERSET` is still keyed by instance pointer. Changing to class-keyed would benefit polymorphic field access across many instances. | Low — follow the same pattern as method IC |
 | Medium | **OP_RET Fast Paths** | **S** *Done* — Skip `close_upvalues` when no open upvalues exist (`LUNA_UNLIKELY` guard). Stack cleanup uses direct `release_value` + `make_null()` instead of full `SET_REG`, avoiding redundant retain-branch on null. | Low — local changes in OP_RET |
 | High | **Lazy Decode (On-Demand Field Extraction)** | **S** *Done* — Removed `A, B, C, Bx, sBx` local variables from dispatch loop. Replaced with on-demand macros (`#define A DECODE_A(instr)`) so GCC/Clang only emits bit extraction code when an opcode actually uses the field. Eliminates dead decode work on instructions like `OP_JMP` that only need `sBx`. | Low — macro refactoring only |
+| High | **Multi-assign Stack Arrays** | **M** *Done* — `EXPR_MULTI_ASSIGN` in compiler.c: replaced malloc/calloc with stack arrays of size 16 for the common case, falling back to heap only when m > 16. Eliminates allocation overhead for typical multi-assign patterns. | Low — stack allocation |
+| High | **String Equality Fast-Path** | **S** *Done* — `op_eq`/`op_ne`/`op_eq_jz`/`op_ne_jz` in vm_opcodes.inc: skip `do_cmp()` for different interned string pointers. String interning guarantees different pointers = different strings. | Low — added IS_STRING guard before function call |
+| High | **Dict Open Addressing Refactor** | **S** *Done* — Replaced two-array layout (indices[] + entries[]) with single entries[] open-addressing hash table. Added order[] array to preserve insertion order. Added TOMBSTONE_VAL sentinel for deletions. bench_entities: 0.137s → 0.122s (~11%). | Medium — full dict rewrite |
 | High | **Eliminate Dead ISK/RKB/RKC Branch** | **S** *Done* — Luna uses 8-bit registers (never 9-bit like Lua), so `ISK(x) ((x) & 0x100)` was always false. Removed the dead constant-table branch from `RKB`/`RKC`. Now `RKB = REG(B)` and `RKC = REG(C)`, eliminating a never-taken conditional branch on every arithmetic and comparison opcode. | Low — macro simplification |
 | High | **IS_DOUBLE Simplification** | **S** *Done* — Replaced 3-check `IS_DOUBLE` with 2-check version using `0x7FF8...` mask. Removed `(((v) & 0x000FFFFFFFFFFFFF) == 0)` which was dead code (Inf already handled by the new mask) and also a latent bug: it incorrectly classified `OBJ_STRING` (type 0, payload=0) as a double. | Low — macro simplification |
 | Medium | **Polymorphic Inline Cache (PIC)** | **S** *Pending* — Cache 2-3 shape entries instead of 1. Makes polymorphic calls (`entity.update()` where entity is `Player|Enemy|NPC`) nearly as fast as monomorphic. | Medium — extends existing IC structures |
