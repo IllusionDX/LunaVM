@@ -1,0 +1,21 @@
+class Entity:
+    var x
+    var y
+
+    def _init(px, py):
+        self.x = px
+        self.y = py
+
+    def update(dt):
+        self.x = self.x + dt * 1.5
+        self.y = self.y + dt * 2.0
+
+var entities = []
+for i in range(0, 10000):
+    entities.append(new Entity(i, i))
+
+var start = clock()
+for frame in range(0, 100):
+    for e in entities:
+        e.update(0.016)
+print("Time:", clock() - start)
