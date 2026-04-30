@@ -1006,7 +1006,7 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 #define CHECK_FRAME_OVERFLOW() do { \
     if (LUNA_UNLIKELY((vm)->frame_count >= MAX_FRAMES)) { \
         release_value(_exc); \
-        _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow"); \
+        _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow"); \
         goto op_throw; \
     } \
 } while (0)
@@ -1058,7 +1058,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         mark_and_sweep(vm);
     }
     if (vm->frame_count >= MAX_FRAMES) {
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, "vm: frame overflow");
+        vm->last_exception = make_exception_instance(vm, vm->exception_class, "frame overflow");
         return VM_EXCEPTION;
     }
     CallFrame *frame = &vm->frames[vm->frame_count++];
@@ -1256,8 +1256,8 @@ void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error
             if (IS_STRING(msgv)) raw_msg = ((ObjString*)AS_OBJ(msgv))->chars;
         }
     }
-    /* GCC-style: file:line: error: ClassName: message */
-    int n = snprintf(buf + pos, buf_size - pos, "%s:%d: error: %s: %s",
+    /* file:line: ClassName: message */
+    int n = snprintf(buf + pos, buf_size - pos, "%s:%d: %s: %s",
                      top_source ? top_source : "?", top_line, class_name,
                      raw_msg ? raw_msg : "?");
     if (n > 0) pos += n;

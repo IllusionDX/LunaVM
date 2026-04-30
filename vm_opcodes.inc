@@ -60,7 +60,7 @@
         Value _L = RKB, _R = RKC;
         if (is_int_type(_L) && is_int_type(_R)) {
             int64_t ri = to_i64(_R);
-            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->runtime_error_class, "vm: division by zero"); goto op_throw; }
+            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->runtime_error_class, "division by zero"); goto op_throw; }
             SET_REG(RA, make_int_result(to_i64(_L) / ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
@@ -83,7 +83,7 @@
         Value _L = RKB, _R = RKC;
         if (is_int_type(_L) && is_int_type(_R)) {
             int64_t ri = to_i64(_R);
-            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->exception_class, "vm: mod/0"); goto op_throw; }
+            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->exception_class, "mod/0"); goto op_throw; }
             SET_REG(RA, make_int_result(to_i64(_L) % ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
@@ -336,7 +336,7 @@
                 goto *op_labels[OP(instr)];
             } else {
                 char buf[256];
-                snprintf(buf, sizeof(buf), "vm: attempt to call instance of '%s' (no _call method)", inst->klass ? inst->klass->name : "?");
+                snprintf(buf, sizeof(buf), "attempt to call instance of '%s' (no _call method)", inst->klass ? inst->klass->name : "?");
                 release_value(_exc);
                 _exc = make_exception_instance(vm, vm->exception_class, buf);
                 goto op_throw;
@@ -345,9 +345,9 @@
             char *s = value_to_string(fn_val);
             char buf[256];
             if (IS_OBJ(fn_val)) {
-                snprintf(buf, sizeof(buf), "vm: attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type, s);
+                snprintf(buf, sizeof(buf), "attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type, s);
             } else {
-                snprintf(buf, sizeof(buf), "vm: attempt to call non-function (got %s)", s);
+                snprintf(buf, sizeof(buf), "attempt to call non-function (got %s)", s);
             }
             free(s);
             release_value(_exc);
@@ -435,7 +435,7 @@
         Value fn_val = CONST(k);
         if (!IS_FUNCTION(fn_val)) {
             release_value(_exc);
-            _exc = make_exception_instance(vm, vm->exception_class, "vm: CLOSURE needs function constant");
+            _exc = make_exception_instance(vm, vm->exception_class, "CLOSURE needs function constant");
             goto op_throw;
         }
         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
@@ -541,7 +541,7 @@
             if (!vm_get_global(vm, mod_name, &mod_val) || !IS_MODULE(mod_val)) {
                 release_value(_exc);
                 char buf[256];
-                snprintf(buf, sizeof(buf), "vm: module '%s' not found for new", mod_name);
+                snprintf(buf, sizeof(buf), "module '%s' not found for new", mod_name);
                 _exc = make_exception_instance(vm, vm->exception_class, buf);
                 goto op_throw;
             }
@@ -551,7 +551,7 @@
             if (!IS_CLASS(cls_val)) {
                 release_value(_exc);
                 char buf[256];
-                snprintf(buf, sizeof(buf), "vm: class '%s' not found in module '%s'", dot + 1, mod_name);
+                snprintf(buf, sizeof(buf), "class '%s' not found in module '%s'", dot + 1, mod_name);
                 _exc = make_exception_instance(vm, vm->exception_class, buf);
                 goto op_throw;
             }
@@ -559,7 +559,7 @@
             if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
                 release_value(_exc);
                 char buf[256];
-                snprintf(buf, sizeof(buf), "vm: class '%s' not found for new", cls_name);
+                snprintf(buf, sizeof(buf), "class '%s' not found for new", cls_name);
                 _exc = make_exception_instance(vm, vm->exception_class, buf);
                 goto op_throw;
             }
@@ -590,7 +590,7 @@
             list_add((ObjList*)AS_OBJ(lst), val);
         } else {
             release_value(_exc);
-            _exc = make_exception_instance(vm, vm->exception_class, "vm: listappend on non-list");
+            _exc = make_exception_instance(vm, vm->exception_class, "listappend on non-list");
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -652,12 +652,12 @@
                 }
                 default:
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, vm->exception_class, "vm: object is not iterable");
+                    _exc = make_exception_instance(vm, vm->exception_class, "object is not iterable");
                     goto op_throw;
             }
         } else {
             release_value(_exc);
-            _exc = make_exception_instance(vm, vm->exception_class, "vm: non-object is not iterable");
+            _exc = make_exception_instance(vm, vm->exception_class, "non-object is not iterable");
             goto op_throw;
         }
 
@@ -1732,7 +1732,7 @@
         if (handled) SET_REG(ret_reg, result);
         else {
             char buf[256];
-            snprintf(buf, sizeof(buf), "vm: unknown method '%s'", mname);
+            snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
             release_value(_exc);
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
@@ -1806,7 +1806,7 @@
         if (handled) SET_REG(ret_reg, result);
         else {
             char buf[256];
-            snprintf(buf, sizeof(buf), "vm: unknown super method '%s'", mname);
+            snprintf(buf, sizeof(buf), "unknown super method '%s'", mname);
             release_value(_exc);
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
@@ -1823,6 +1823,11 @@
             } else {
                 _exc = REG(RA);
             }
+        }
+        if (!IS_INSTANCE(_exc)) {
+            char *msg = value_to_string(_exc);
+            _exc = make_exception_instance(vm, vm->exception_class, msg);
+            free(msg);
         }
         vm->last_exception = _exc;
         /* unwind to the nearest catch */
@@ -1951,7 +1956,7 @@
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -1992,7 +1997,7 @@
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -2034,7 +2039,7 @@
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
                     release_value(_exc);
-                    _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
+                    _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
                     goto op_throw;
                 }
                 CallFrame *caller = &FRAME;
@@ -2067,9 +2072,9 @@
             char *s = value_to_string(fn_val);
             char buf[256];
             if (IS_OBJ(fn_val)) {
-                snprintf(buf, sizeof(buf), "vm: attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type, s);
+                snprintf(buf, sizeof(buf), "attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type, s);
             } else {
-                snprintf(buf, sizeof(buf), "vm: attempt to call non-function (got %s)", s);
+                snprintf(buf, sizeof(buf), "attempt to call non-function (got %s)", s);
             }
             free(s);
             release_value(_exc);
@@ -2113,7 +2118,7 @@
         char *filepath = module_resolve_path(mod_name, from_dir[0] ? from_dir : NULL);
         if (!filepath) {
             char buf[256];
-            snprintf(buf, sizeof(buf), "import: module '%s' not found", mod_name);
+            snprintf(buf, sizeof(buf), "module '%s' not found", mod_name);
             release_value(_exc);
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
@@ -2123,7 +2128,7 @@
         if (!source) {
             free(filepath);
             char buf[256];
-            snprintf(buf, sizeof(buf), "import: cannot read module '%s'", mod_name);
+            snprintf(buf, sizeof(buf), "cannot read module '%s'", mod_name);
             release_value(_exc);
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
@@ -2200,7 +2205,7 @@
 
         if (vm->frame_count >= MAX_FRAMES) {
             release_value(_exc);
-            _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
+            _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
             goto op_throw;
         }
 
@@ -2295,7 +2300,7 @@
             goto *op_labels[OP(instr)];
         } else {
             release_value(_exc);
-            _exc = make_exception_instance(vm, vm->exception_class, "vm: call stack overflow");
+            _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
             goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];

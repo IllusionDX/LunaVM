@@ -718,8 +718,7 @@ char *value_to_string(Value v) {
                 ObjInstance *inst = (ObjInstance*)obj;
                 Value msgv = instance_get_field(inst, "message");
                 if (IS_STRING(msgv)) {
-                    snprintf(buf, sizeof(buf), "<%s>", ((ObjString*)AS_OBJ(msgv))->chars);
-                    return strdup(buf);
+                    return strdup(((ObjString*)AS_OBJ(msgv))->chars);
                 } else {
                     snprintf(buf, sizeof(buf), "<instance of %s>", inst->class_name);
                     return strdup(buf);
