@@ -1319,8 +1319,10 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
          * then assign each temp to its target.
          * Simple literals (int, float, string, bool, null, char) skip the
          * temp and compile directly into the target register. */
-        int *temps = (int *)malloc(m * sizeof(int));
-        bool *direct = (bool *)calloc(m, sizeof(bool));
+        int stack_temps[16];
+        bool stack_direct[16] = {0};
+        int *temps = (m <= 16) ? stack_temps : (int *)malloc(m * sizeof(int));
+        bool *direct = (m <= 16) ? stack_direct : (bool *)calloc(m, sizeof(bool));
         for (int i = 0; i < m; i++) {
             ExprKind vk = expr->data.multi_assign.values[i]->kind;
             bool is_literal = (vk == EXPR_INTEGER || vk == EXPR_FLOAT ||
@@ -1368,8 +1370,10 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         for (int i = 0; i < m; i++) {
             if (!direct[i]) free_reg(c);
         }
-        free(temps);
-        free(direct);
+        if (m > 16) {
+            free(temps);
+            free(direct);
+        }
         emit_loadnull(c, (uint8_t)target);
         break;
     }
