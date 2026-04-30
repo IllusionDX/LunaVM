@@ -449,6 +449,7 @@ void mark_and_sweep(VM *vm) {
     memset(vm->global_ic, 0, sizeof(vm->global_ic));
     memset(vm->member_ic, 0, sizeof(vm->member_ic));
     memset(vm->method_ic, 0, sizeof(vm->method_ic));
+    memset(vm->invoke_ic, 0, sizeof(vm->invoke_ic));
 
     // 2. Collect unmarked garbage
     Object *garbage = NULL;

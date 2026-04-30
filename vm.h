@@ -73,6 +73,12 @@ typedef struct {
     int          index;    /* cached index */
 } IC_MemberEntry;
 
+typedef struct {
+    struct ObjClass *klass;   /* cached class (pointer compare) */
+    ObjString       *name;    /* interned method name */
+    ObjFunction     *method;  /* cached method pointer */
+} IC_InvokeEntry;
+
 /* ---- VM State ---- */
 typedef struct VM {
     CallFrame   frames[VM_MAX_FRAMES];
@@ -105,6 +111,7 @@ typedef struct VM {
     IC_GlobalEntry global_ic[IC_CACHE_SIZE];
     IC_MemberEntry member_ic[IC_CACHE_SIZE];
     IC_MemberEntry method_ic[IC_CACHE_SIZE];
+    IC_InvokeEntry invoke_ic[IC_CACHE_SIZE];
     uint64_t       instr_count;
     uint64_t       time_start_us; /* monotonic microseconds captured at vm_init */
 

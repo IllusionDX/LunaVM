@@ -1756,10 +1756,22 @@
                     }
                     break;
                 }
-                /* All other types — use unified get_class + find_method */
+                /* All other types — use unified get_class + find_method with inline cache */
                 default: {
                     ObjClass *klass = get_class(vm, obj);
-                    ObjFunction *method = klass ? class_find_method(klass, mname) : NULL;
+                    ObjFunction *method = NULL;
+                    if (klass) {
+                        ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
+                        uint32_t ic_h = ((uint32_t)(uintptr_t)klass ^ mname_obj->hash);
+                        int ic_idx = ic_h & (IC_CACHE_SIZE - 1);
+                        IC_InvokeEntry *ic = &vm->invoke_ic[ic_idx];
+                        if (ic->klass == klass && ic->name == mname_obj) {
+                            method = ic->method;
+                        } else {
+                            method = class_find_method(klass, mname);
+                            if (method) { ic->klass = klass; ic->name = mname_obj; ic->method = method; }
+                        }
+                    }
                     if (method) {
                         if (method->is_native) {
                             native_scratch[0] = obj;
