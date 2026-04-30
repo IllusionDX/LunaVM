@@ -594,6 +594,7 @@ static void gc_step(VM *vm) {
             memset(vm->member_ic, 0, sizeof(vm->member_ic));
             memset(vm->method_ic, 0, sizeof(vm->method_ic));
             memset(vm->invoke_ic, 0, sizeof(vm->invoke_ic));
+            memset(vm->call_ic, 0, sizeof(vm->call_ic));
             sweep_cursor = all_objects;
             gc_state = GC_STATE_SWEEP;
         }

@@ -295,7 +295,19 @@
         uint8_t fn_reg  = B;
         uint8_t nargs   = C;
         Value fn_val = REG(fn_reg);
-        /* removed duplicate non-object check */
+
+        /* Inline cache: monomorphic call-site cache */
+        uint32_t ic_idx = ((uint32_t)(uintptr_t)CHUNK ^ (uint32_t)IP) & (IC_CACHE_SIZE - 1);
+        IC_CallEntry *ic = &vm->call_ic[ic_idx];
+        if (LUNA_LIKELY(ic->fn_val == fn_val)) {
+            ObjFunction *fn = ic->fn;
+            if (LUNA_LIKELY(!fn->is_native)) {
+                PUSH_FRAME(fn, ic->cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+        }
+
+        /* Slow path */
         if (IS_FUNCTION(fn_val)) {
             ObjFunction *fn = (ObjFunction *)AS_OBJ(fn_val);
             if (fn->is_native) {
@@ -306,6 +318,7 @@
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             }
+            ic->fn_val = fn_val; ic->fn = fn; ic->cl = NULL;
             PUSH_FRAME(fn, NULL, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
             DECODE;
             goto *op_labels[OP(instr)];
@@ -320,6 +333,7 @@
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             }
+            ic->fn_val = fn_val; ic->fn = fn; ic->cl = cl;
             PUSH_FRAME(fn, cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
             DECODE;
             goto *op_labels[OP(instr)];

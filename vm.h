@@ -79,6 +79,12 @@ typedef struct {
     ObjFunction     *method;  /* cached method pointer */
 } IC_InvokeEntry;
 
+typedef struct {
+    Value        fn_val;     /* cached callable value (NaN-boxing compare) */
+    ObjFunction *fn;         /* resolved function */
+    ObjClosure  *cl;         /* closure (NULL for non-closure functions) */
+} IC_CallEntry;
+
 /* ---- VM State ---- */
 typedef struct VM {
     CallFrame   frames[VM_MAX_FRAMES];
@@ -112,6 +118,7 @@ typedef struct VM {
     IC_MemberEntry member_ic[IC_CACHE_SIZE];
     IC_MemberEntry method_ic[IC_CACHE_SIZE];
     IC_InvokeEntry invoke_ic[IC_CACHE_SIZE];
+    IC_CallEntry   call_ic[IC_CACHE_SIZE];
     uint64_t       instr_count;
     uint64_t       time_start_us; /* monotonic microseconds captured at vm_init */
 
