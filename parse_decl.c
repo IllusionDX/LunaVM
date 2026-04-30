@@ -26,7 +26,17 @@ FunctionParam *parse_parameters(Parser *parser, int *count) {
             params = (FunctionParam *)realloc(params, capacity * sizeof(FunctionParam));
         }
 
-        Token *name = expect(parser, TOK_IDENTIFIER, "Expected parameter name");
+        if (!match(parser, TOK_IDENTIFIER)) {
+            if (match(parser, TOK_SELF)) {
+                parser_error(parser, "Expected parameter name, got 'self'");
+            } else {
+                parser_error(parser, "Expected parameter name, got %s", token_type_name(peek(parser)->type));
+            }
+            advance(parser);
+            if (match(parser, TOK_COMMA)) advance(parser);
+            continue;
+        }
+        Token *name = advance(parser);
         params[*count].name = strdup(name ? name->value : "");
         params[*count].default_value = NULL;
 
