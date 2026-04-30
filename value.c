@@ -311,8 +311,9 @@ ObjFunction *new_function(const char *name) {
     f->param_count = 0;
     f->upvalue_count = 0;
     f->upvalue_descriptors = NULL;
-    f->is_native   = false;
-    f->native_fn   = NULL;
+    f->is_native = false;
+    f->is_leaf = false;
+    f->native_fn = NULL;
     return f;
 }
 

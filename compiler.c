@@ -2047,6 +2047,27 @@ static int compile_function_value(Compiler *c, const char *name,
 
     scope_exit(&sub);
 
+    /* Leaf detection: no calls, no upvalues, no exceptions, no kwargs.
+     * OP_CLOSURE is also disqualifying: a leaf call reuses the caller's
+     * CallFrame (no new frame pushed, no close_upvalues on return).  Any
+     * capture_upvalue() executed inside the leaf body stamps frame_depth =
+     * vm->frame_count and stack_index = FRAME.base + reg.  When the leaf
+     * returns, FRAME.base is restored to the caller's base but the upvalue
+     * remains open, pointing at slots that are now caller-owned — silent
+     * heap/value corruption on the next write to those slots. */
+    bool is_leaf = (sub.upvalue_count == 0);
+    if (is_leaf) {
+        for (int i = 0; i < fn_chunk.count; i++) {
+            OpCode op = DECODE_OP(fn_chunk.code[i]);
+            if (op == OP_CALL || op == OP_INVOKE || op == OP_SUPER ||
+                op == OP_KCALL || op == OP_DEFAULT || op == OP_TRY ||
+                op == OP_TRYINIT || op == OP_CLOSURE) {
+                is_leaf = false;
+                break;
+            }
+        }
+    }
+
     fn_chunk.max_registers = sub.max_temp_base;
     ObjFunction *fn = new_function(name ? name : "");
     fn->chunk       = malloc(sizeof(Chunk));
@@ -2061,6 +2082,7 @@ static int compile_function_value(Compiler *c, const char *name,
         }
     }
     fn->upvalue_count = sub.upvalue_count;
+    fn->is_leaf = is_leaf;
     if (sub.upvalue_count > 0) {
         fn->upvalue_descriptors = malloc(sizeof(UpvalueDesc) * sub.upvalue_count);
         for (int i = 0; i < sub.upvalue_count; i++) {
@@ -2193,10 +2215,29 @@ static void compile_class(Compiler *c, Decl *decl) {
         emit_ret(&sub, 0);
         scope_exit(&sub);
 
+        /* Leaf detection for method: no calls, no upvalues, no exceptions, no kwargs.
+         * OP_CLOSURE is disqualifying for the same reason as in compile_function_value:
+         * the leaf fast-path never closes upvalues on return, so any capture_upvalue()
+         * call inside the method body leaves dangling open upvalues pointing at stale
+         * stack slots once the leaf frame's base is restored to the caller's base. */
+        bool is_leaf = (sub.upvalue_count == 0);
+        if (is_leaf) {
+            for (int i = 0; i < mchunk.count; i++) {
+                OpCode op = DECODE_OP(mchunk.code[i]);
+                if (op == OP_CALL || op == OP_INVOKE || op == OP_SUPER ||
+                    op == OP_KCALL || op == OP_DEFAULT || op == OP_TRY ||
+                    op == OP_TRYINIT || op == OP_CLOSURE) {
+                    is_leaf = false;
+                    break;
+                }
+            }
+        }
+
         mchunk.max_registers = sub.max_temp_base;
         ObjFunction *mf = new_function(m->data.function.name);
         mf->chunk       = malloc(sizeof(Chunk));
         *mf->chunk      = mchunk;
+        mf->is_leaf = is_leaf;
         mf->param_count = m->data.function.param_count + 1; /* +self */
         mf->param_names = malloc(sizeof(char*) * mf->param_count);
         mf->param_name_objs = malloc(sizeof(ObjString*) * mf->param_count);

@@ -448,6 +448,23 @@
         if (LUNA_LIKELY(ic->fn_val == fn_val)) {
             ObjFunction *fn = ic->fn;
             if (LUNA_LIKELY(!fn->is_native)) {
+                /* Leaf fast path: skip full frame push */
+                if (LUNA_LIKELY(fn->is_leaf)) {
+                    CallFrame *cf = &FRAME;
+                    cf->leaf_ret_ip   = IP;
+                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_base = FRAME.base;
+                    cf->leaf_ret_reg = ret_reg;
+                    cf->leaf_ret_closure = FRAME.closure;
+                    cf->leaf_ret_fn      = FRAME.fn;
+                    frame_set_refs(&FRAME, ic->cl, fn);
+                    FRAME.base = cf->base + fn_reg + 1;
+                    CHUNK = fn->chunk;
+                    IP = 0;
+                    for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                        vm->stack[FRAME.base + _i] = make_null();
+                    DECODE; goto *op_labels[OP(instr)];
+                }
                 PUSH_FRAME(fn, ic->cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
                 DECODE; goto *op_labels[OP(instr)];
             }
@@ -465,6 +482,22 @@
                 DECODE; goto *op_labels[OP(instr)];
             }
             ic->fn_val = fn_val; ic->fn = fn; ic->cl = NULL;
+            if (LUNA_LIKELY(fn->is_leaf)) {
+                CallFrame *cf = &FRAME;
+                cf->leaf_ret_ip   = IP;
+                cf->leaf_ret_chunk = CHUNK;
+                cf->leaf_ret_base = FRAME.base;
+                cf->leaf_ret_reg = ret_reg;
+                cf->leaf_ret_closure = FRAME.closure;
+                cf->leaf_ret_fn      = FRAME.fn;
+                frame_set_refs(&FRAME, NULL, fn);
+                FRAME.base = cf->base + fn_reg + 1;
+                CHUNK = fn->chunk;
+                IP = 0;
+                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                    vm->stack[FRAME.base + _i] = make_null();
+                DECODE; goto *op_labels[OP(instr)];
+            }
             PUSH_FRAME(fn, NULL, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
             DECODE;
             goto *op_labels[OP(instr)];
@@ -480,6 +513,22 @@
                 DECODE; goto *op_labels[OP(instr)];
             }
             ic->fn_val = fn_val; ic->fn = fn; ic->cl = cl;
+            if (LUNA_LIKELY(fn->is_leaf)) {
+                CallFrame *cf = &FRAME;
+                cf->leaf_ret_ip   = IP;
+                cf->leaf_ret_chunk = CHUNK;
+                cf->leaf_ret_base = FRAME.base;
+                cf->leaf_ret_reg = ret_reg;
+                cf->leaf_ret_closure = FRAME.closure;
+                cf->leaf_ret_fn      = FRAME.fn;
+                frame_set_refs(&FRAME, cl, fn);
+                FRAME.base = cf->base + fn_reg + 1;
+                CHUNK = fn->chunk;
+                IP = 0;
+                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                    vm->stack[FRAME.base + _i] = make_null();
+                DECODE; goto *op_labels[OP(instr)];
+            }
             PUSH_FRAME(fn, cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
             DECODE;
             goto *op_labels[OP(instr)];
@@ -496,6 +545,22 @@
                 DECODE; goto *op_labels[OP(instr)];
             }
             SET_REG(fn_reg, bm->self);
+            if (LUNA_LIKELY(fn->is_leaf)) {
+                CallFrame *cf = &FRAME;
+                cf->leaf_ret_ip   = IP;
+                cf->leaf_ret_chunk = CHUNK;
+                cf->leaf_ret_base = FRAME.base;
+                cf->leaf_ret_reg = ret_reg;
+                cf->leaf_ret_closure = FRAME.closure;
+                cf->leaf_ret_fn      = FRAME.fn;
+                frame_set_refs(&FRAME, NULL, fn);
+                FRAME.base = cf->base + fn_reg;
+                CHUNK = fn->chunk;
+                IP = 0;
+                for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
+                    vm->stack[FRAME.base + _i] = make_null();
+                DECODE; goto *op_labels[OP(instr)];
+            }
             PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
             DECODE;
             goto *op_labels[OP(instr)];
@@ -516,6 +581,22 @@
                     Value result;
                     if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
                     SET_REG(ret_reg, result);
+                    DECODE; goto *op_labels[OP(instr)];
+                }
+                if (LUNA_LIKELY(fn->is_leaf)) {
+                    CallFrame *cf = &FRAME;
+                    cf->leaf_ret_ip   = IP;
+                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_base = FRAME.base;
+                    cf->leaf_ret_reg = ret_reg;
+                    cf->leaf_ret_closure = FRAME.closure;
+                    cf->leaf_ret_fn      = FRAME.fn;
+                    frame_set_refs(&FRAME, NULL, fn);
+                    FRAME.base = cf->base + fn_reg;
+                    CHUNK = fn->chunk;
+                    IP = 0;
+                    for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
+                        vm->stack[FRAME.base + _i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
                 }
                 PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
@@ -548,6 +629,28 @@
     op_ret: {
         uint8_t ret_reg = RA;
         Value retval = REG(ret_reg);
+        /* Leaf return: fast path */
+        if (LUNA_UNLIKELY(FRAME.leaf_ret_ip != 0)) {
+            CallFrame *cf = &FRAME;
+            int leaf_rip = cf->leaf_ret_ip;
+            Chunk *leaf_rchunk = cf->leaf_ret_chunk;
+            int leaf_rbase = cf->leaf_ret_base;
+            int leaf_rreg = cf->leaf_ret_reg;
+            ObjClosure        *leaf_rclosure = cf->leaf_ret_closure;
+            struct ObjFunction *leaf_rfn     = cf->leaf_ret_fn;
+            cf->leaf_ret_ip = 0;
+            cf->leaf_ret_chunk = NULL;
+            cf->leaf_ret_base = 0;
+            cf->leaf_ret_reg = 0;
+            cf->leaf_ret_closure = NULL;
+            cf->leaf_ret_fn = NULL;
+            frame_set_refs(cf, leaf_rclosure, leaf_rfn);
+            FRAME.base = leaf_rbase;
+            CHUNK = leaf_rchunk;
+            IP = leaf_rip;
+            SET_REG(leaf_rreg, retval);
+            DECODE; goto *op_labels[OP(instr)];
+        }
         if (vm->frame_count <= 1) {
             if (LUNA_UNLIKELY(vm->open_upvalues)) close_upvalues(vm, 0);
             for (int i = 0; i < FRAME.chunk->max_registers; i++) {
@@ -1526,6 +1629,23 @@
                         if (fn->is_native) {
                             if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                         } else if (vm->frame_count < MAX_FRAMES) {
+                            /* Leaf fast path: skip full frame push */
+                            if (LUNA_LIKELY(fn->is_leaf)) {
+                                CallFrame *cf = &FRAME;
+                                cf->leaf_ret_ip   = IP;
+                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_base = FRAME.base;
+                                cf->leaf_ret_reg = ret_reg;
+                                cf->leaf_ret_closure = FRAME.closure;
+                                cf->leaf_ret_fn      = FRAME.fn;
+                                frame_set_refs(&FRAME, NULL, fn);
+                                FRAME.base = cf->base + obj_reg + 2;
+                                CHUNK = fn->chunk;
+                                IP = 0;
+                                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                                    vm->stack[FRAME.base + _i] = make_null();
+                                DECODE; goto *op_labels[OP(instr)];
+                            }
                             CallFrame *caller = &FRAME;
                             CallFrame *callee = &vm->frames[vm->frame_count];
                             callee->chunk = fn->chunk;
@@ -1557,6 +1677,23 @@
                         if (fn->is_native) {
                             if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                         } else if (vm->frame_count < MAX_FRAMES) {
+                            /* Leaf fast path: skip full frame push */
+                            if (LUNA_LIKELY(fn->is_leaf)) {
+                                CallFrame *cf = &FRAME;
+                                cf->leaf_ret_ip   = IP;
+                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_base = FRAME.base;
+                                cf->leaf_ret_reg = ret_reg;
+                                cf->leaf_ret_closure = FRAME.closure;
+                                cf->leaf_ret_fn      = FRAME.fn;
+                                frame_set_refs(&FRAME, cl, fn);
+                                FRAME.base = cf->base + obj_reg + 2;
+                                CHUNK = fn->chunk;
+                                IP = 0;
+                                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                                    vm->stack[FRAME.base + _i] = make_null();
+                                DECODE; goto *op_labels[OP(instr)];
+                            }
                             CallFrame *caller = &FRAME;
                             CallFrame *callee = &vm->frames[vm->frame_count];
                             callee->chunk = fn->chunk;
@@ -1600,6 +1737,23 @@
                         if (fn->is_native) {
                             if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                         } else if (vm->frame_count < MAX_FRAMES) {
+                            /* Leaf fast path: skip full frame push */
+                            if (LUNA_LIKELY(fn->is_leaf)) {
+                                CallFrame *cf = &FRAME;
+                                cf->leaf_ret_ip   = IP;
+                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_base = FRAME.base;
+                                cf->leaf_ret_reg = ret_reg;
+                                cf->leaf_ret_closure = FRAME.closure;
+                                cf->leaf_ret_fn      = FRAME.fn;
+                                frame_set_refs(&FRAME, NULL, fn);
+                                FRAME.base = cf->base + obj_reg + 2;
+                                CHUNK = fn->chunk;
+                                IP = 0;
+                                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                                    vm->stack[FRAME.base + _i] = make_null();
+                                DECODE; goto *op_labels[OP(instr)];
+                            }
                             CallFrame *caller = &FRAME;
                             CallFrame *callee = &vm->frames[vm->frame_count];
                             callee->chunk = fn->chunk;
@@ -1631,6 +1785,23 @@
                         if (fn->is_native) {
                             if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
                         } else if (vm->frame_count < MAX_FRAMES) {
+                            /* Leaf fast path: skip full frame push */
+                            if (LUNA_LIKELY(fn->is_leaf)) {
+                                CallFrame *cf = &FRAME;
+                                cf->leaf_ret_ip   = IP;
+                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_base = FRAME.base;
+                                cf->leaf_ret_reg = ret_reg;
+                                cf->leaf_ret_closure = FRAME.closure;
+                                cf->leaf_ret_fn      = FRAME.fn;
+                                frame_set_refs(&FRAME, cl, fn);
+                                FRAME.base = cf->base + obj_reg + 2;
+                                CHUNK = fn->chunk;
+                                IP = 0;
+                                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                                    vm->stack[FRAME.base + _i] = make_null();
+                                DECODE; goto *op_labels[OP(instr)];
+                            }
                             CallFrame *caller = &FRAME;
                             CallFrame *callee = &vm->frames[vm->frame_count];
                             callee->chunk = fn->chunk;
@@ -1684,6 +1855,23 @@
                                 for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
                                 if (!vm_call_native(vm, method->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
                             } else {
+                                /* Leaf fast path: skip full frame push */
+                                if (LUNA_LIKELY(method->is_leaf)) {
+                                    CallFrame *cf = &FRAME;
+                                    cf->leaf_ret_ip   = IP;
+                                    cf->leaf_ret_chunk = CHUNK;
+                                    cf->leaf_ret_base = FRAME.base;
+                                    cf->leaf_ret_reg = ret_reg;
+                                    cf->leaf_ret_closure = FRAME.closure;
+                                    cf->leaf_ret_fn      = FRAME.fn;
+                                    frame_set_refs(&FRAME, NULL, method);
+                                    FRAME.base = cf->base + obj_reg + 1;
+                                    CHUNK = method->chunk;
+                                    IP = 0;
+                                    for (int _i = 1 + nargs; _i < method->chunk->max_registers; _i++)
+                                        vm->stack[FRAME.base + _i] = make_null();
+                                    DECODE; goto *op_labels[OP(instr)];
+                                }
                                 if (vm->frame_count < MAX_FRAMES) {
                                     CallFrame *caller = &FRAME;
                                     CallFrame *callee = &vm->frames[vm->frame_count];
@@ -1741,6 +1929,24 @@
                             for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
                             if (!vm_call_native(vm, method->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
                         } else {
+                            /* Leaf fast path: skip full frame push */
+                            if (LUNA_LIKELY(method->is_leaf)) {
+                                CallFrame *cf = &FRAME;
+                                cf->leaf_ret_ip   = IP;
+                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_base = FRAME.base;
+                                cf->leaf_ret_reg = ret_reg;
+                                cf->leaf_ret_closure = FRAME.closure;
+                                cf->leaf_ret_fn      = FRAME.fn;
+                                frame_set_refs(&FRAME, NULL, method);
+                                FRAME.base = cf->base + obj_reg + 1;
+                                CHUNK = method->chunk;
+                                IP = 0;
+                                vm->stack[FRAME.base] = obj; /* self at reg 0 */
+                                for (int _i = 1 + nargs; _i < method->chunk->max_registers; _i++)
+                                    vm->stack[FRAME.base + _i] = make_null();
+                                DECODE; goto *op_labels[OP(instr)];
+                            }
                             if (vm->frame_count < MAX_FRAMES) {
                                 CallFrame *caller = &FRAME;
                                 CallFrame *callee = &vm->frames[vm->frame_count];
@@ -1817,6 +2023,23 @@
                                 scratch[j] = REG(ret_reg + 2 + j);
                             if (!vm_call_native(vm, m->native_fn, scratch, nargs, &result)) goto op_throw;
                         } else {
+                            /* Leaf fast path: skip full frame push */
+                            if (LUNA_LIKELY(m->is_leaf)) {
+                                CallFrame *cf = &FRAME;
+                                cf->leaf_ret_ip   = IP;
+                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_base = FRAME.base;
+                                cf->leaf_ret_reg = ret_reg;
+                                cf->leaf_ret_closure = FRAME.closure;
+                                cf->leaf_ret_fn      = FRAME.fn;
+                                frame_set_refs(&FRAME, NULL, m);
+                                FRAME.base = cf->base + self_reg + 1;
+                                CHUNK = m->chunk;
+                                IP = 0;
+                                for (int _i = 1 + nargs; _i < m->chunk->max_registers; _i++)
+                                    vm->stack[FRAME.base + _i] = make_null();
+                                DECODE; goto *op_labels[OP(instr)];
+                            }
                         if (vm->frame_count < MAX_FRAMES) {
                             CallFrame *caller = &FRAME;
                             CallFrame *callee = &vm->frames[vm->frame_count];
@@ -2001,6 +2224,23 @@
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
+                /* Leaf fast path for kcall */
+                if (LUNA_LIKELY(fn->is_leaf)) {
+                    CallFrame *cf = &FRAME;
+                    cf->leaf_ret_ip   = IP;
+                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_base = FRAME.base;
+                    cf->leaf_ret_reg = ret_reg;
+                    cf->leaf_ret_closure = FRAME.closure;
+                    cf->leaf_ret_fn      = FRAME.fn;
+                    frame_set_refs(&FRAME, NULL, fn);
+                    FRAME.base = cf->base + fn_reg + 1;
+                    CHUNK = fn->chunk;
+                    IP = 0;
+                    for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                        vm->stack[FRAME.base + _i] = make_null();
+                    DECODE; goto *op_labels[OP(instr)];
+                }
                 if (vm->frame_count >= MAX_FRAMES) {
                     
                     _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
@@ -2042,6 +2282,23 @@
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
+                /* Leaf fast path for kcall closure */
+                if (LUNA_LIKELY(fn->is_leaf)) {
+                    CallFrame *cf = &FRAME;
+                    cf->leaf_ret_ip   = IP;
+                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_base = FRAME.base;
+                    cf->leaf_ret_reg = ret_reg;
+                    cf->leaf_ret_closure = FRAME.closure;
+                    cf->leaf_ret_fn      = FRAME.fn;
+                    frame_set_refs(&FRAME, cl, fn);
+                    FRAME.base = cf->base + fn_reg + 1;
+                    CHUNK = fn->chunk;
+                    IP = 0;
+                    for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
+                        vm->stack[FRAME.base + _i] = make_null();
+                    DECODE; goto *op_labels[OP(instr)];
+                }
                 if (vm->frame_count >= MAX_FRAMES) {
                     
                     _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
@@ -2084,6 +2341,24 @@
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
+                /* Leaf fast path for bound-method kcall */
+                if (LUNA_LIKELY(fn->is_leaf)) {
+                    CallFrame *cf = &FRAME;
+                    cf->leaf_ret_ip   = IP;
+                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_base = FRAME.base;
+                    cf->leaf_ret_reg = ret_reg;
+                    cf->leaf_ret_closure = FRAME.closure;
+                    cf->leaf_ret_fn      = FRAME.fn;
+                    frame_set_refs(&FRAME, NULL, fn);
+                    SET_REG(fn_reg, bm->self);
+                    FRAME.base = cf->base + fn_reg;
+                    CHUNK = fn->chunk;
+                    IP = 0;
+                    for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
+                        vm->stack[FRAME.base + _i] = make_null();
+                    DECODE; goto *op_labels[OP(instr)];
+                }
                 if (vm->frame_count >= MAX_FRAMES) {
                     
                     _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
@@ -2319,6 +2594,21 @@
             Value result;
             if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
         } else if (vm->frame_count < MAX_FRAMES) {
+            /* Leaf fast path: skip full frame push */
+            if (LUNA_LIKELY(fn->is_leaf)) {
+                CallFrame *cf = &FRAME;
+                cf->leaf_ret_ip   = IP;
+                cf->leaf_ret_chunk = CHUNK;
+                cf->leaf_ret_base = FRAME.base;
+                cf->leaf_ret_reg = (uint8_t)(obj_reg + nargs + 1);
+                FRAME.base = cf->base + obj_reg + 1;
+                CHUNK = fn->chunk;
+                IP = 0;
+                vm->stack[FRAME.base] = obj;
+                for (int _i = 1 + nargs; _i < fn->chunk->max_registers; _i++)
+                    vm->stack[FRAME.base + _i] = make_null();
+                DECODE; goto *op_labels[OP(instr)];
+            }
             CallFrame *caller = &FRAME;
             CallFrame *callee = &vm->frames[vm->frame_count];
             callee->chunk = fn->chunk;

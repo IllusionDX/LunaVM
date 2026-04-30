@@ -388,6 +388,7 @@ typedef struct ObjFunction {
     int param_count;
     /* Native flag */
     bool is_native;
+    bool is_leaf;
     NativeFn native_fn;
     /* Closure metadata */
     int upvalue_count;

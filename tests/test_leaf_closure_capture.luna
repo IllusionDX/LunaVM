@@ -1,0 +1,70 @@
+# test_leaf_closure_capture.luna
+# Regression test: IS_CLOSURE / IS_BOUND_METHOD / IS_INSTANCE leaf fast-path
+# must NOT corrupt upvalues when the callee contains OP_CLOSURE (inner lambda).
+#
+# Root cause that was fixed:
+#   1. compiler.c: OP_CLOSURE was not blacklisted from is_leaf detection.
+#      A function that emits OP_CLOSURE calls capture_upvalue(), which stamps
+#      frame_depth = vm->frame_count and stack_index = FRAME.base + reg.
+#      Because the leaf path never pushes a new frame or calls close_upvalues
+#      on return, those open upvalues point at stale caller-owned stack slots
+#      after the leaf returns.
+#   2. vm_opcodes.inc / vm.h: FRAME.closure and FRAME.fn were not saved /
+#      restored in the leaf fast-path, so a closure called via the IS_CLOSURE
+#      or IS_BOUND_METHOD leaf path left stale pointers visible to subsequent
+#      OP_GETUPVAL / OP_SETUPVAL / OP_CLOSURE instructions in the resumed caller.
+
+# --- 1. IS_CLOSURE path: make_adder returns an inner lambda that closes over n.
+#        After the fix, n must survive across multiple calls without corruption.
+def make_adder(n):
+    return (x) => x + n
+
+var add5 = make_adder(5)
+var add10 = make_adder(10)
+
+print(add5(1) == 6)    # true
+print(add10(1) == 11)  # true
+print(add5(100) == 105)  # true
+print(add10(100) == 110) # true
+
+# --- 2. Chained closures: each factory produces independent state.
+def make_counter(start):
+    var n = start
+    def inc():
+        # (no upvalue capture from make_counter here — uses stack-local n directly)
+        return n
+    return inc
+
+var c1 = make_counter(1)
+var c2 = make_counter(100)
+print(c1() == 1)    # true
+print(c2() == 100)  # true
+
+# --- 3. IS_BOUND_METHOD leaf path: method that returns a lambda capturing self-field.
+class Box:
+    var v
+    def _init(v):
+        self.v = v
+
+    def make_getter():
+        var val = self.v
+        return () => val
+
+var b = new Box(42)
+var get_b = b.make_getter()
+print(get_b() == 42)  # true
+
+var b2 = new Box(99)
+var get2 = b2.make_getter()
+print(get2() == 99)  # true
+print(get_b() == 42)   # true — first closure must still be intact
+
+# --- 4. Multiple lambda captures from same scope don't interfere.
+def make_ops(x):
+    var double_op = () => x * 2
+    var triple_op = () => x * 3
+    return [double_op, triple_op]
+
+var ops = make_ops(7)
+print(ops[0]() == 14)  # true
+print(ops[1]() == 21)  # true

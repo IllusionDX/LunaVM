@@ -1164,6 +1164,12 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     _c->ret_reg = (retreg); \
     _c->nargs = (n); \
     _c->kw_args = make_null(); \
+    _c->leaf_ret_ip = 0; \
+    _c->leaf_ret_chunk = NULL; \
+    _c->leaf_ret_base = 0; \
+    _c->leaf_ret_reg = 0; \
+    _c->leaf_ret_closure = NULL; \
+    _c->leaf_ret_fn = NULL; \
     frame_set_refs(_c, (cl), (fn)); \
     _c->saved_globals = NULL; \
     int _needed = _c->base + (fn)->chunk->max_registers; \
@@ -1215,6 +1221,12 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     frame->closure = NULL;
     frame->fn = NULL;
     frame->saved_globals = NULL;
+    frame->leaf_ret_ip = 0;
+    frame->leaf_ret_chunk = NULL;
+    frame->leaf_ret_base = 0;
+    frame->leaf_ret_reg = 0;
+    frame->leaf_ret_closure = NULL;
+    frame->leaf_ret_fn = NULL;
     int needed = frame->base + chunk->max_registers;
     if (needed > vm->stack_cap) {
         vm->stack_cap = needed < 64 ? 64 : needed * 2;
