@@ -414,7 +414,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     case EXPR_BINARY: {
         const char *op_str = expr->data.binary.operator;
 
-        if (strcmp(op_str, "and") == 0) {
+        if (strcmp(op_str, "and") == 0 || strcmp(op_str, "&&") == 0) {
             compile_expr_into(c, expr->data.binary.left, target);
             /* Short-circuit AND */
             int t = alloc_reg(c);
@@ -431,7 +431,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             free_reg(c); /* t */
             break;
         }
-        else if (strcmp(op_str, "or") == 0) {
+        else if (strcmp(op_str, "or") == 0 || strcmp(op_str, "||") == 0) {
             compile_expr_into(c, expr->data.binary.left, target);
             /* Short-circuit OR */
             int t = alloc_reg(c);
@@ -648,7 +648,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         compile_expr_into(c, operand, target);
         if (strcmp(op_str, "-") == 0) {
             emit_ABC(c, OP_NEG, (uint8_t)target, (uint8_t)target, 0);
-        } else if (strcmp(op_str, "!") == 0) {
+        } else if (strcmp(op_str, "!") == 0 || strcmp(op_str, "not") == 0) {
             emit_ABC(c, OP_NOT, (uint8_t)target, (uint8_t)target, 0);
         } else if (strcmp(op_str, "~") == 0) {
             emit_ABC(c, OP_BNOT, (uint8_t)target, (uint8_t)target, 0);
@@ -1453,6 +1453,8 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             else if (strcmp(op_str, "<=") == 0) cmp_op = OP_LE_JZ;
             else if (strcmp(op_str, ">") == 0) cmp_op = OP_GT_JZ;
             else if (strcmp(op_str, ">=") == 0) cmp_op = OP_GE_JZ;
+            else if (strcmp(op_str, "==") == 0) cmp_op = OP_EQ_JZ;
+            else if (strcmp(op_str, "!=") == 0) cmp_op = OP_NE_JZ;
 
             if (cmp_op != (OpCode)-1) {
                 int right = alloc_reg(c);
@@ -1519,6 +1521,8 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             else if (strcmp(op_str, "<=") == 0) cmp_op = OP_LE_JZ;
             else if (strcmp(op_str, ">") == 0) cmp_op = OP_GT_JZ;
             else if (strcmp(op_str, ">=") == 0) cmp_op = OP_GE_JZ;
+            else if (strcmp(op_str, "==") == 0) cmp_op = OP_EQ_JZ;
+            else if (strcmp(op_str, "!=") == 0) cmp_op = OP_NE_JZ;
 
             if (cmp_op != (OpCode)-1) {
                 int right = alloc_reg(c);

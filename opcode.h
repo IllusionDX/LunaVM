@@ -170,6 +170,8 @@ typedef enum {
     OP_LE_JZ,       /* ABC  : if !(A <= B) then IP += C                 */
     OP_GT_JZ,       /* ABC  : if !(A > B) then IP += C                  */
     OP_GE_JZ,       /* ABC  : if !(A >= B) then IP += C                 */
+    OP_EQ_JZ,       /* ABC  : if !(A == B) then IP += C                 */
+    OP_NE_JZ,       /* ABC  : if !(A != B) then IP += C                 */
 
     OP_COUNT        /* sentinel — total opcode count                       */
 } OpCode;

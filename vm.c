@@ -451,7 +451,7 @@ void mark_and_sweep(VM *vm) {
     memset(vm->method_ic, 0, sizeof(vm->method_ic));
     memset(vm->invoke_ic, 0, sizeof(vm->invoke_ic));
 
-    // 2. Collect unmarked garbage
+    /* 2. Collect unmarked garbage */
     Object *garbage = NULL;
     Object *obj = all_objects;
     while (obj) {
@@ -887,7 +887,9 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_lt_jz,         // 71 OP_LT_JZ
         &&op_le_jz,         // 72 OP_LE_JZ
         &&op_gt_jz,         // 73 OP_GT_JZ
-        &&op_ge_jz          // 74 OP_GE_JZ
+        &&op_ge_jz,         // 74 OP_GE_JZ
+        &&op_eq_jz,         // 75 OP_EQ_JZ
+        &&op_ne_jz          // 76 OP_NE_JZ
     };
 
     DECODE;

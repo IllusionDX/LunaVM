@@ -252,6 +252,28 @@
         if (!_c) IP += C;
         DECODE; goto *op_labels[OP(instr)];
     }
+    op_eq_jz: {
+        Value _L = REG(RA), _R = REG(RB);
+        bool _c;
+        if (_L == _R) {
+            _c = true;  /* bitwise identical — NaN boxing: ints, bools, nil, same-object pointers */
+        } else {
+            _c = is_truthy(do_cmp(_L, _R, OP_EQ));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_ne_jz: {
+        Value _L = REG(RA), _R = REG(RB);
+        bool _c;
+        if (_L == _R) {
+            _c = false;  /* bitwise identical → not different */
+        } else {
+            _c = is_truthy(do_cmp(_L, _R, OP_NE));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
 
     /* ---- Functions ---- */
     /* 33. OP_CALL */
@@ -601,44 +623,30 @@
     op_forloop: {
         Value iter = REG(RA);
         Value state = REG(RA + 1);
+        int idx = AS_INT(state);
         bool has_next = false;
 
-        if (IS_OBJ(iter) && AS_OBJ(iter)) {
-            switch (AS_OBJ(iter)->type) {
-                case OBJ_LIST: {
-                    ObjList *lst = (ObjList*)AS_OBJ(iter);
-                    int idx = AS_INT(state);
-                    if (idx < lst->count) {
-                        Value item = lst->items ? lst->items[idx] : lst->inline_items[idx];
-                        SET_REG(RA + 2, item);
-                        SET_REG_PRIM(RA + 1, make_int(idx + 1));
-                        has_next = true;
-                    }
-                    break;
-                }
-                case OBJ_STRING: {
-                    ObjString *str = (ObjString*)AS_OBJ(iter);
-                    int idx = AS_INT(state);
-                    if (idx < str->length) {
-                        char buf[2] = {str->chars[idx], '\0'};
-                        SET_REG(RA + 2, make_obj((Object*)new_string(buf, 1)));
-                        SET_REG_PRIM(RA + 1, make_int(idx + 1));
-                        has_next = true;
-                    }
-                    break;
-                }
-                default:
-                    
-                    _exc = make_exception_instance(vm, vm->exception_class, "object is not iterable");
-                    goto op_throw;
+        if (LUNA_LIKELY(IS_LIST(iter))) {
+            ObjList *lst = (ObjList*)AS_OBJ(iter);
+            if (idx < lst->count) {
+                SET_REG(RA + 2, lst->items ? lst->items[idx] : lst->inline_items[idx]);
+                SET_REG_PRIM(RA + 1, make_int(idx + 1));
+                has_next = true;
+            }
+        } else if (LUNA_LIKELY(IS_STRING(iter))) {
+            ObjString *str = (ObjString*)AS_OBJ(iter);
+            if (idx < str->length) {
+                char buf[2] = {str->chars[idx], '\0'};
+                SET_REG(RA + 2, make_obj((Object*)new_string(buf, 1)));
+                SET_REG_PRIM(RA + 1, make_int(idx + 1));
+                has_next = true;
             }
         } else {
-            
-            _exc = make_exception_instance(vm, vm->exception_class, "non-object is not iterable");
+            _exc = make_exception_instance(vm, vm->exception_class, "object is not iterable");
             goto op_throw;
         }
 
-        if (has_next) {
+        if (LUNA_LIKELY(has_next)) {
             IP += SBX;
         }
         DECODE; goto *op_labels[OP(instr)];

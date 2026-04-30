@@ -324,8 +324,10 @@ static Token *scan_operator(Lexer *lexer) {
             if (next == '>') { advance(lexer); return make_token(lexer, TOK_RSHIFT, start, 2); }
             return make_token(lexer, TOK_GT, start, 1);
         case '&':
+            if (next == '&') { advance(lexer); return make_token(lexer, TOK_AND, start, 2); }
             return make_token(lexer, TOK_AMPERSAND, start, 1);
         case '|':
+            if (next == '|') { advance(lexer); return make_token(lexer, TOK_OR, start, 2); }
             return make_token(lexer, TOK_PIPE, start, 1);
         case '^':
             return make_token(lexer, TOK_CARET, start, 1);
