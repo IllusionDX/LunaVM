@@ -121,6 +121,32 @@
     /* 18. OP_SHR */
     op_shr:  SET_REG(RA, make_int_result(to_i64(REG(RB)) >> to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
 
+    /* ---- Arithmetic with constant pool operand ---- */
+    /* OP_ADDK */
+    op_addk: {
+        Value _L = REG(RB);
+        Value _R = CONST(RC);
+        if (is_int_type(_L) && is_int_type(_R)) {
+            SET_REG(RA, make_int_result(to_i64(_L) + to_i64(_R)));
+        } else {
+            SET_REG(RA, do_arith(_L, _R, OP_ADD));
+        }
+        CHECK_GC;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    /* OP_MULK */
+    op_mulk: {
+        Value _L = REG(RB);
+        Value _R = CONST(RC);
+        if (is_int_type(_L) && is_int_type(_R)) {
+            SET_REG(RA, make_int_result(to_i64(_L) * to_i64(_R)));
+        } else {
+            SET_REG(RA, do_arith(_L, _R, OP_MUL));
+        }
+        CHECK_GC;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
     /* ---- Integer-immediate arithmetic (ABC: A = A op (int8_t)B) ---- */
     /* 19. OP_ADDI */
     op_addi: {

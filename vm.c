@@ -1074,32 +1074,34 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_bnot,          // 16 OP_BNOT
         &&op_shl,           // 17 OP_SHL
         &&op_shr,           // 18 OP_SHR
-        &&op_addi,          // 19 OP_ADDI
-        &&op_subi,          // 20 OP_SUBI
-        &&op_addi_from,     // 21 OP_ADDI_FROM
-        &&op_subi_from,     // 22 OP_SUBI_FROM
-        &&op_eq,            // 23 OP_EQ
-        &&op_ne,            // 22 OP_NE
-        &&op_lt,            // 23 OP_LT
-        &&op_le,            // 24 OP_LE
-        &&op_gt,            // 25 OP_GT
-        &&op_ge,            // 26 OP_GE
-        &&op_in,            // 27 OP_IN
-        &&op_not,           // 28 OP_NOT
-        &&op_jmp,           // 29 OP_JMP
-        &&op_jz,            // 30 OP_JZ
-        &&op_jnz,           // 31 OP_JNZ
-        &&op_jnil,          // 32 OP_JNIL
-        &&op_call,          // 33 OP_CALL
-        &&op_ret,           // 34 OP_RET
-        &&op_enter,         // 35 OP_ENTER
-        &&op_leave,         // 36 OP_LEAVE
-        &&op_closure,       // 37 OP_CLOSURE
-        &&op_getglobal,     // 38 OP_GETGLOBAL
-        &&op_setglobal,     // 39 OP_SETGLOBAL
-        &&op_getupval,      // 40 OP_GETUPVAL
-        &&op_setupval,      // 41 OP_SETUPVAL
-        &&op_new,           // 42 OP_NEW
+        &&op_addk,          // 19 OP_ADDK
+        &&op_mulk,          // 20 OP_MULK
+        &&op_addi,          // 21 OP_ADDI
+        &&op_subi,          // 22 OP_SUBI
+        &&op_addi_from,     // 23 OP_ADDI_FROM
+        &&op_subi_from,     // 24 OP_SUBI_FROM
+        &&op_eq,            // 25 OP_EQ
+        &&op_ne,            // 26 OP_NE
+        &&op_lt,            // 27 OP_LT
+        &&op_le,            // 28 OP_LE
+        &&op_gt,            // 29 OP_GT
+        &&op_ge,            // 30 OP_GE
+        &&op_in,            // 31 OP_IN
+        &&op_not,           // 32 OP_NOT
+        &&op_jmp,           // 33 OP_JMP
+        &&op_jz,            // 34 OP_JZ
+        &&op_jnz,           // 35 OP_JNZ
+        &&op_jnil,          // 36 OP_JNIL
+        &&op_call,          // 37 OP_CALL
+        &&op_ret,           // 38 OP_RET
+        &&op_enter,         // 39 OP_ENTER
+        &&op_leave,         // 40 OP_LEAVE
+        &&op_closure,       // 41 OP_CLOSURE
+        &&op_getglobal,     // 42 OP_GETGLOBAL
+        &&op_setglobal,     // 43 OP_SETGLOBAL
+        &&op_getupval,      // 44 OP_GETUPVAL
+        &&op_setupval,      // 45 OP_SETUPVAL
+        &&op_new,           // 46 OP_NEW
         &&op_newdict,       // 43 OP_NEWDICT
         &&op_newlist,       // 44 OP_NEWLIST
         &&op_listappend,    // 45 OP_LISTAPPEND

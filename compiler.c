@@ -687,6 +687,29 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             }
         }
 
+        /* ADDK/MULK: literal right operand in constant pool, no LOADK needed */
+        if ((strcmp(op_str, "+") == 0 || strcmp(op_str, "*") == 0) &&
+            (expr->data.binary.right->kind == EXPR_INTEGER ||
+             expr->data.binary.right->kind == EXPR_FLOAT)) {
+            Value cv;
+            if (expr->data.binary.right->kind == EXPR_INTEGER) {
+                cv = make_int((int64_t)atoll(expr->data.binary.right->data.integer.value));
+            } else {
+                cv = make_double(atof(expr->data.binary.right->data.float_lit.value));
+            }
+            int cidx = -1;
+            for (int i = 0; i < c->chunk->const_count; i++) {
+                if (c->chunk->constants[i] == cv) { cidx = i; break; }
+            }
+            if (cidx < 0) cidx = chunk_add_const(c->chunk, cv);
+            if (cidx <= 255) {
+                compile_expr_into(c, expr->data.binary.left, target);
+                OpCode kop = (strcmp(op_str, "+") == 0) ? OP_ADDK : OP_MULK;
+                emit_ABC(c, kop, (uint8_t)target, (uint8_t)target, (uint8_t)cidx);
+                break;
+            }
+        }
+
         compile_expr_into(c, expr->data.binary.left, target);
         int temp = alloc_reg(c);
         compile_expr_into(c, expr->data.binary.right, temp);

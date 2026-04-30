@@ -149,6 +149,7 @@ static const char *op_mnemonics[] = {
     "ADD",     "SUB",      "MUL",       "DIV",
     "MOD",     "NEG",      "BAND",      "BOR",
     "BXOR",    "BNOT",     "SHL",       "SHR",
+    "ADDK",    "MULK",
     "ADDI",    "SUBI",    "ADDI_FROM","SUBI_FROM",
     "EQ",      "NE",       "LT",        "LE",
     "GT",      "GE",       "IN",        "NOT",
@@ -183,6 +184,7 @@ static OpFormat op_formats[] = {
     /* MOD */      FMT_ABC, /* NEG */ FMT_ABC,
     /* BAND */     FMT_ABC, /* BOR */ FMT_ABC, /* BXOR */ FMT_ABC,
     /* BNOT */     FMT_ABC, /* SHL */ FMT_ABC, /* SHR */ FMT_ABC,
+    /* ADDK */     FMT_ABC, /* MULK */ FMT_ABC,
     /* ADDI */     FMT_ABC, /* SUBI */ FMT_ABC,
     /* ADDI_FROM */ FMT_ABC, /* SUBI_FROM */ FMT_ABC,
     /* EQ */       FMT_ABC, /* NE */ FMT_ABC, /* LT */ FMT_ABC,
@@ -273,6 +275,22 @@ void chunk_disassemble(Chunk *chunk) {
             printf(" R%d R%d %+d", a, b, (int8_t)c);
         } else if (opcode == OP_SUBI_FROM) {
             printf(" R%d R%d %+d", a, b, -(int8_t)c);
+        } else if (opcode == OP_ADDK) {
+            Value cv = chunk->constants[c];
+            if (IS_INT(cv) || IS_INT64(cv))
+                printf(" R%d R%d %lld", a, b, (long long)as_int64(cv));
+            else if (IS_DOUBLE(cv))
+                printf(" R%d R%d %g", a, b, AS_DOUBLE(cv));
+            else
+                printf(" R%d R%d const[%d]", a, b, c);
+        } else if (opcode == OP_MULK) {
+            Value cv = chunk->constants[c];
+            if (IS_INT(cv) || IS_INT64(cv))
+                printf(" R%d R%d %lld", a, b, (long long)as_int64(cv));
+            else if (IS_DOUBLE(cv))
+                printf(" R%d R%d %g", a, b, AS_DOUBLE(cv));
+            else
+                printf(" R%d R%d const[%d]", a, b, c);
         }
         /* Special: LT_JZ / LE_JZ / GT_JZ / GE_JZ use A=left, B=right, C=offset */
         else if (opcode == OP_LT_JZ || opcode == OP_LE_JZ ||

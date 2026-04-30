@@ -78,6 +78,10 @@ typedef enum {
     OP_SHL,         /* ABC  : A = B << C                                   */
     OP_SHR,         /* ABC  : A = B >> C                                   */
 
+    /* ---- Arithmetic with constant pool operand (ABC: A = B op constants[C]) ---- */
+    OP_ADDK,        /* ABC  : A = B + constants[C]                         */
+    OP_MULK,        /* ABC  : A = B * constants[C]                         */
+
     /* ---- Integer-immediate arithmetic (ABC: A = A op (int8_t)B, C unused) ---- */
     OP_ADDI,        /* ABC  : A = A + (int8_t)B  (arithmetic fast path)  */
     OP_SUBI,        /* ABC  : A = A - (int8_t)B  (arithmetic fast path)  */
