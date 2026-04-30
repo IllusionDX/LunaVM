@@ -863,7 +863,7 @@
         Value val = REG(RB);
         if (IS_LIST(lst)) {
             list_add((ObjList*)AS_OBJ(lst), val);
-            gc_write_barrier(lst, val);
+            GC_BARRIER(lst, val);
         } else {
             
             _exc = make_exception_instance(vm, vm->exception_class, "listappend on non-list");
@@ -1036,7 +1036,7 @@
             if (IS_LIST(obj) && IS_INT(key)) list_set((ObjList*)AS_OBJ(obj), AS_INT(key), val);
             else if (IS_DICT(obj)) dict_set((ObjDict*)AS_OBJ(obj), key, val);
         }
-        gc_write_barrier(obj, val);
+        GC_BARRIER(obj, val);
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -1553,7 +1553,7 @@
                 goto op_throw;
             }
         }
-        gc_write_barrier(obj, REG(RB));
+        GC_BARRIER(obj, REG(RB));
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -1597,7 +1597,7 @@
                 SET_FIELD(inst, slot, REG(RB));
             }
         }
-        gc_write_barrier(obj, REG(RB));
+        GC_BARRIER(obj, REG(RB));
         DECODE; goto *op_labels[OP(instr)];
     }
 

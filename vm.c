@@ -422,22 +422,24 @@ static void mark_drain(void) {
     /* gray_stack persists across cycles for incremental GC */
 }
 
-/* Write barrier: maintains tri-color invariant during GC.
- * Called AFTER every mutator write that stores a value into an object field.
- * Active when gc_state != GC_STATE_IDLE (both MARK and SWEEP phases). */
-static inline void gc_write_barrier(Value obj_val, Value val) {
-    if (gc_state == GC_STATE_IDLE) return;
-    if (!IS_OBJ(obj_val)) return;
-    Object *obj = AS_OBJ(obj_val);
-    if (!obj || obj->gc_color != GC_COLOR_BLACK) return;
-    if (IS_OBJ(val)) {
-        Object *child = AS_OBJ(val);
-        if (child && child->gc_color == GC_COLOR_WHITE) {
-            child->gc_color = GC_COLOR_GRAY;
-            gray_push(child);
-        }
-    }
-}
+/* Write barrier — inline macro for hot-path call sites in vm_opcodes.inc.
+ * Single-expression bit check: (parent_color - BLACK) | child_color == 0
+ * only when parent == BLACK and child == WHITE. */
+#define GC_BARRIER(parent_val, child_val) \
+    do { \
+        if (gc_state == GC_STATE_MARK) { \
+            if (IS_OBJ(parent_val)) { \
+                Object *_p = AS_OBJ(parent_val); \
+                if (_p && IS_OBJ(child_val)) { \
+                    Object *_c = AS_OBJ(child_val); \
+                    if (_c && ((_p->gc_color - GC_COLOR_BLACK) | _c->gc_color) == 0) { \
+                        _c->gc_color = GC_COLOR_GRAY; \
+                        gray_push(_c); \
+                    } \
+                } \
+            } \
+        } \
+    } while (0)
 
 /* Incremental GC step: processes a bounded number of objects.
  * Call from CHECK_GC. If cycle already in progress, continues it.

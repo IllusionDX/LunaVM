@@ -2,13 +2,13 @@
 # Supports: Linux, macOS, Windows (MinGW)
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto
+CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto -Isrc/stdlib -I.
 LDFLAGS = -lm -flto
 
 # Platform detection
 ifeq ($(OS),Windows_NT)
     TARGET = luna.exe
-    RM = cmd /c del /Q
+    RM = del /Q
     EXE_EXT = .exe
     LDFLAGS += -lws2_32
 else
@@ -19,16 +19,23 @@ endif
 
 # Source files
 SOURCES = main.c value.c ast_free.c \
-    lexer.c parser.c chunk.c vm.c vm_builtins.c compiler.c \
+    lexer.c parser.c chunk.c vm.c compiler.c \
     parse_expr.c parse_stmt.c parse_decl.c fstring.c module.c \
-    stdlib_math.c stdlib_random.c stdlib_noise.c stdlib_io.c stdlib_time.c stdlib_os.c stdlib_buffer.c stdlib_string.c stdlib_net.c stdlib_json.c
+    src/stdlib/stdlib_math.c src/stdlib/stdlib_random.c src/stdlib/stdlib_noise.c \
+    src/stdlib/stdlib_io.c src/stdlib/stdlib_time.c src/stdlib/stdlib_os.c \
+    src/stdlib/stdlib_buffer.c src/stdlib/stdlib_string.c \
+    src/stdlib/stdlib_net.c src/stdlib/stdlib_json.c \
+    src/stdlib/vm_builtins.c
 
 OBJECTS = $(SOURCES:.c=.o)
 
 # Header files
 HEADERS = ast.h value.h lexer.h parser.h chunk.h vm.h opcode.h compiler.h \
-    parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h stdlib_math.h stdlib_random.h \
-    stdlib_noise.h stdlib_io.h stdlib_time.h stdlib_os.h stdlib_buffer.h stdlib_string.h stdlib_net.h stdlib_json.h \
+    parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h \
+    src/stdlib/stdlib_math.h src/stdlib/stdlib_random.h src/stdlib/stdlib_noise.h \
+    src/stdlib/stdlib_io.h src/stdlib/stdlib_time.h src/stdlib/stdlib_os.h \
+    src/stdlib/stdlib_buffer.h src/stdlib/stdlib_string.h \
+    src/stdlib/stdlib_net.h src/stdlib/stdlib_json.h \
     vm_opcodes.inc
 
 # Default target
@@ -44,7 +51,7 @@ $(TARGET): $(OBJECTS)
 
 # Clean build artifacts
 clean:
-	$(RM) $(OBJECTS) $(TARGET)
+	del /Q $(subst /,\,$(OBJECTS)) $(TARGET) 2>nul || true
 
 # Rebuild
 rebuild: clean all
