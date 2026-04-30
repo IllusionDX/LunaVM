@@ -170,7 +170,7 @@ typedef enum {
 
 typedef struct Object {
     ObjType        type;
-    bool           is_marked;
+    uint8_t        gc_color;
     size_t         size;
     struct Object *next;
     struct Object *prev;
@@ -474,7 +474,14 @@ extern Object *userdata_objects;
 extern int allocated_objects;
 extern size_t bytes_allocated;
 extern size_t next_gc_threshold;
-extern bool gc_collecting;
+#define GC_COLOR_WHITE 0
+#define GC_COLOR_GRAY  1
+#define GC_COLOR_BLACK 2
+
+enum { GC_STATE_IDLE, GC_STATE_MARK, GC_STATE_SWEEP };
+
+extern int gc_state;
+extern Object *sweep_cursor;
 
 void free_object_container(Object *obj);
 

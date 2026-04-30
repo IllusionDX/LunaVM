@@ -162,12 +162,13 @@ Object *all_objects = NULL;
 int allocated_objects = 0;
 size_t bytes_allocated = 0;
 size_t next_gc_threshold = 64 * 1024 * 1024;
-bool gc_collecting = false;
+int gc_state = GC_STATE_IDLE;
 Object *userdata_objects = NULL;
+Object *sweep_cursor = NULL;
 
 static void init_object(Object *obj, ObjType type, size_t size) {
     obj->type = type;
-    obj->is_marked = false;
+    obj->gc_color = GC_COLOR_WHITE;
     obj->size = size;
     bytes_allocated += size;
     obj->next = all_objects;

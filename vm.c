@@ -294,6 +294,8 @@ static inline Value do_cmp(Value L, Value R, OpCode op) {
 extern Object *all_objects;
 extern Object *userdata_objects;
 extern int allocated_objects;
+extern int gc_state;
+extern Object *sweep_cursor;
 
 /* ---- Explicit gray stack (replaces C recursion in mark phase) ---- */
 
@@ -312,16 +314,16 @@ static void gray_push(Object *obj) {
 static void mark_value(Value v) {
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
-        if (obj && !obj->is_marked) {
-            obj->is_marked = true;
+        if (obj && obj->gc_color == GC_COLOR_WHITE) {
+            obj->gc_color = GC_COLOR_GRAY;
             gray_push(obj);
         }
     }
 }
 
 static void mark_object(Object *obj) {
-    if (obj && !obj->is_marked) {
-        obj->is_marked = true;
+    if (obj && obj->gc_color == GC_COLOR_WHITE) {
+        obj->gc_color = GC_COLOR_GRAY;
         gray_push(obj);
     }
 }
@@ -330,6 +332,7 @@ static void mark_object(Object *obj) {
 static void mark_drain(void) {
     while (gray_count > 0) {
         Object *obj = gray_stack[--gray_count];
+        obj->gc_color = GC_COLOR_BLACK;
 
         switch (obj->type) {
             case OBJ_LIST: {
@@ -416,14 +419,223 @@ static void mark_drain(void) {
             default: break;
         }
     }
-    free(gray_stack);
-    gray_stack = NULL;
-    gray_cap = 0;
-    gray_count = 0;
+    /* gray_stack persists across cycles for incremental GC */
+}
+
+/* Write barrier: maintains tri-color invariant during GC.
+ * Called AFTER every mutator write that stores a value into an object field.
+ * Active when gc_state != GC_STATE_IDLE (both MARK and SWEEP phases). */
+static inline void gc_write_barrier(Value obj_val, Value val) {
+    if (gc_state == GC_STATE_IDLE) return;
+    if (!IS_OBJ(obj_val)) return;
+    Object *obj = AS_OBJ(obj_val);
+    if (!obj || obj->gc_color != GC_COLOR_BLACK) return;
+    if (IS_OBJ(val)) {
+        Object *child = AS_OBJ(val);
+        if (child && child->gc_color == GC_COLOR_WHITE) {
+            child->gc_color = GC_COLOR_GRAY;
+            gray_push(child);
+        }
+    }
+}
+
+/* Incremental GC step: processes a bounded number of objects.
+ * Call from CHECK_GC. If cycle already in progress, continues it.
+ * If idle and threshold exceeded, starts new cycle. */
+static void gc_step(VM *vm) {
+    if (gc_state == GC_STATE_IDLE) {
+        if (bytes_allocated <= next_gc_threshold) return;
+        // Start new cycle: mark all roots gray
+        for (int i = 0; i < vm->stack_count; i++) {
+            mark_value(vm->stack[i]);
+        }
+        for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
+            GlobalEntry *e = vm->globals[i];
+            while (e) {
+                mark_value(e->value);
+                e = e->next;
+            }
+        }
+        for (int i = 0; i < vm->frame_count; i++) {
+            if (vm->frames[i].closure) mark_object((Object*)vm->frames[i].closure);
+            if (vm->frames[i].fn) mark_object((Object*)vm->frames[i].fn);
+            if (vm->frames[i].chunk) {
+                for (int j = 0; j < vm->frames[i].chunk->const_count; j++) {
+                    mark_value(vm->frames[i].chunk->constants[j]);
+                }
+            }
+            mark_value(vm->frames[i].kw_args);
+        }
+        ObjUpvalue *uv = vm->open_upvalues;
+        while (uv) {
+            mark_object((Object*)uv);
+            uv = uv->next;
+        }
+        mark_value(vm->last_exception);
+        if (vm->module_cache) mark_object((Object*)vm->module_cache);
+        if (vm->exception_class) mark_object((Object*)vm->exception_class);
+        if (vm->type_error_class) mark_object((Object*)vm->type_error_class);
+        if (vm->key_error_class) mark_object((Object*)vm->key_error_class);
+        if (vm->index_error_class) mark_object((Object*)vm->index_error_class);
+        if (vm->attribute_error_class) mark_object((Object*)vm->attribute_error_class);
+        if (vm->value_error_class) mark_object((Object*)vm->value_error_class);
+        if (vm->runtime_error_class) mark_object((Object*)vm->runtime_error_class);
+        if (vm->string_class) mark_object((Object*)vm->string_class);
+        if (vm->list_class) mark_object((Object*)vm->list_class);
+        if (vm->dict_class) mark_object((Object*)vm->dict_class);
+        if (vm->enum_class) mark_object((Object*)vm->enum_class);
+        if (vm->buffer_class) mark_object((Object*)vm->buffer_class);
+        if (vm->vector_class) mark_object((Object*)vm->vector_class);
+        if (vm->matrix_class) mark_object((Object*)vm->matrix_class);
+        if (vm->function_class) mark_object((Object*)vm->function_class);
+        if (vm->closure_class) mark_object((Object*)vm->closure_class);
+        if (vm->bound_method_class) mark_object((Object*)vm->bound_method_class);
+        if (vm->class_class) mark_object((Object*)vm->class_class);
+        if (vm->module_class) mark_object((Object*)vm->module_class);
+        if (vm->userdata_class) mark_object((Object*)vm->userdata_class);
+        gc_state = GC_STATE_MARK;
+    }
+
+    if (gc_state == GC_STATE_MARK) {
+        // Drain up to 256 objects from gray stack
+        int limit = 256;
+        while (gray_count > 0 && limit-- > 0) {
+            Object *obj = gray_stack[--gray_count];
+            obj->gc_color = GC_COLOR_BLACK;
+
+            switch (obj->type) {
+                case OBJ_LIST: {
+                    ObjList *l = (ObjList *)obj;
+                    if (l->items) {
+                        for (int i = 0; i < l->count; i++) mark_value(l->items[i]);
+                    } else {
+                        for (int i = 0; i < l->count; i++) mark_value(l->inline_items[i]);
+                    }
+                    break;
+                }
+                case OBJ_DICT: {
+                    ObjDict *d = (ObjDict *)obj;
+                    if (d->indices == NULL) {
+                        for (int i = 0; i < d->entry_count; i++) {
+                            mark_value(d->inline_entries[i].key);
+                            mark_value(d->inline_entries[i].value);
+                        }
+                    } else {
+                        for (int i = 0; i < d->next_entry; i++) {
+                            if (d->entries[i].key != EMPTY_VAL) {
+                                mark_value(d->entries[i].key);
+                                mark_value(d->entries[i].value);
+                            }
+                        }
+                    }
+                    break;
+                }
+                case OBJ_INSTANCE: {
+                    ObjInstance *inst = (ObjInstance *)obj;
+                    for (int i = 0; i < inst->field_count; i++) {
+                        mark_value(inst->fields[i]);
+                    }
+                    mark_object((Object*)inst->klass);
+                    break;
+                }
+                case OBJ_CLOSURE: {
+                    ObjClosure *cl = (ObjClosure *)obj;
+                    mark_object((Object*)cl->function);
+                    for (int i = 0; i < cl->upvalue_count; i++) {
+                        mark_object((Object*)cl->upvalues[i]);
+                    }
+                    break;
+                }
+                case OBJ_ENUM: break;
+                case OBJ_FUNCTION: {
+                    ObjFunction *f = (ObjFunction *)obj;
+                    if (f->chunk) {
+                        for (int i = 0; i < f->chunk->const_count; i++) {
+                            mark_value(f->chunk->constants[i]);
+                        }
+                    }
+                    break;
+                }
+                case OBJ_UPVALUE: {
+                    ObjUpvalue *uv = (ObjUpvalue *)obj;
+                    mark_value(uv->closed);
+                    break;
+                }
+                case OBJ_CLASS: {
+                    ObjClass *cls = (ObjClass *)obj;
+                    mark_object((Object*)cls->base);
+                    mark_object((Object*)cls->prototype);
+                    for (int i = 0; i < cls->method_count; i++) {
+                        mark_object((Object*)cls->methods[i]);
+                    }
+                    mark_object((Object*)cls->fields);
+                    break;
+                }
+                case OBJ_BOUND_METHOD: {
+                    ObjBoundMethod *bm = (ObjBoundMethod *)obj;
+                    mark_value(bm->self);
+                    mark_object((Object*)bm->fn);
+                    break;
+                }
+                case OBJ_MODULE: {
+                    ObjModule *mod = (ObjModule *)obj;
+                    mark_object((Object*)mod->name);
+                    mark_object((Object*)mod->exports);
+                    break;
+                }
+                case OBJ_BUFFER: break;
+                case OBJ_INT64: break;
+                default: break;
+            }
+        }
+        if (gray_count == 0) {
+            // Invalidate inline caches
+            memset(vm->global_ic, 0, sizeof(vm->global_ic));
+            memset(vm->member_ic, 0, sizeof(vm->member_ic));
+            memset(vm->method_ic, 0, sizeof(vm->method_ic));
+            memset(vm->invoke_ic, 0, sizeof(vm->invoke_ic));
+            sweep_cursor = all_objects;
+            gc_state = GC_STATE_SWEEP;
+        }
+    }
+
+    if (gc_state == GC_STATE_SWEEP) {
+        int limit = 256;
+        while (sweep_cursor && limit-- > 0) {
+            Object *obj = sweep_cursor;
+            sweep_cursor = obj->next;
+            if (obj->gc_color == GC_COLOR_WHITE) {
+                // Remove from all_objects linked list
+                if (obj->prev) obj->prev->next = obj->next;
+                else all_objects = obj->next;
+                if (obj->next) obj->next->prev = obj->prev;
+                // Free the object
+                obj->next = NULL;
+                obj->prev = NULL;
+                free_object_container(obj);
+            } else {
+                // Reset to white for next cycle
+                obj->gc_color = GC_COLOR_WHITE;
+            }
+        }
+        if (!sweep_cursor) {
+            gc_state = GC_STATE_IDLE;
+            if (bytes_allocated > next_gc_threshold) {
+                next_gc_threshold = bytes_allocated * 2;
+            } else {
+                next_gc_threshold = 64 * 1024 * 1024;
+            }
+            // If write barrier created new gray objects during sweep, restart mark
+            if (gray_count > 0) {
+                gc_state = GC_STATE_MARK;
+            }
+        }
+    }
 }
 
 void mark_and_sweep(VM *vm) {
-    if (gc_collecting) return;
+    int saved_state = gc_state;
+    gc_state = GC_STATE_IDLE;
 
     // 1. Mark roots
     for (int i = 0; i < vm->stack_count; i++) {
@@ -487,7 +699,7 @@ void mark_and_sweep(VM *vm) {
     Object *garbage = NULL;
     Object *obj = all_objects;
     while (obj) {
-        if (!obj->is_marked) {
+        if (obj->gc_color == GC_COLOR_WHITE) {
             // Isolate it from the doubly linked list
             if (obj->prev) obj->prev->next = obj->next;
             else all_objects = obj->next;
@@ -500,14 +712,12 @@ void mark_and_sweep(VM *vm) {
             garbage = obj;
             obj = next;
         } else {
-            obj->is_marked = false; // Reset for next GC
+            obj->gc_color = GC_COLOR_WHITE; // Reset for next GC
             obj = obj->next;
         }
     }
 
     /* 3. Free garbage */
-    gc_collecting = true;
-
     Object *g = garbage;
     while (g) {
         Object *next = g->next;
@@ -517,7 +727,7 @@ void mark_and_sweep(VM *vm) {
         g = next;
     }
 
-    gc_collecting = false;
+    gc_state = saved_state;
 
     if (bytes_allocated > next_gc_threshold) {
         next_gc_threshold = bytes_allocated * 2;
@@ -599,6 +809,11 @@ static void vm_pop_try_frames(VM *vm, int min_depth) {
 }
 
 void vm_free(VM *vm) {
+    free(gray_stack);
+    gray_stack = NULL;
+    gray_cap = 0;
+    gray_count = 0;
+
     for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
         GlobalEntry *e = vm->globals[i];
         while (e) {
@@ -626,7 +841,6 @@ void vm_free(VM *vm) {
     value_free_intern_table();
 
     // Free any remaining objects (shutdown path).
-    gc_collecting = true;
     Object *obj = all_objects;
     while (obj) {
         Object *next = obj->next;
@@ -638,12 +852,7 @@ void vm_free(VM *vm) {
     all_objects = NULL;
     allocated_objects = 0;
     bytes_allocated = 0;
-    gc_collecting = false;
 }
-
-/* ============================================================ */
-/* Module import helpers                                          */
-/* ============================================================ */
 
 static GlobalEntry **vm_globals_save(VM *vm) {
     GlobalEntry **saved = malloc(sizeof(GlobalEntry *) * VM_GLOBAL_BUCKETS);
@@ -837,7 +1046,7 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 
 #define CHECK_GC \
     do { \
-        if (LUNA_UNLIKELY(bytes_allocated > next_gc_threshold)) mark_and_sweep(vm); \
+        gc_step(vm); \
     } while (0)
 
 #define OP(inst) DECODE_OP(inst)
