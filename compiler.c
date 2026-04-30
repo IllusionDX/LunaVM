@@ -47,6 +47,26 @@ typedef struct FinallyCtx {
     struct FinallyCtx *next;
 } FinallyCtx;
 
+/* ---- Opcode mapping for compare-and-branch immediate variants ---- */
+
+static const OpCode cmp_to_imm_direct[] = {
+    [OP_LT_JZ] = OP_LT_JZ_IMM,
+    [OP_LE_JZ] = OP_LE_JZ_IMM,
+    [OP_GT_JZ] = OP_GT_JZ_IMM,
+    [OP_GE_JZ] = OP_GE_JZ_IMM,
+    [OP_EQ_JZ] = OP_EQ_JZ_IMM,
+    [OP_NE_JZ] = OP_NE_JZ_IMM,
+};
+
+static const OpCode cmp_to_imm_swapped[] = {
+    [OP_LT_JZ] = OP_GT_JZ_IMM,    /* a < const  → const > a */
+    [OP_LE_JZ] = OP_GE_JZ_IMM,    /* a <= const → const >= a */
+    [OP_GT_JZ] = OP_LT_JZ_IMM,    /* a > const  → const < a */
+    [OP_GE_JZ] = OP_LE_JZ_IMM,    /* a >= const → const <= a */
+    [OP_EQ_JZ] = OP_EQ_JZ_IMM,    /* a == const → const == a */
+    [OP_NE_JZ] = OP_NE_JZ_IMM,    /* a != const → const != a */
+};
+
 /* ---- Upvalue tracking ---- */
 
 typedef struct CompilerUpvalue {
@@ -650,6 +670,16 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             expr->data.binary.right->kind == EXPR_INTEGER) {
             int64_t imm = atoll(expr->data.binary.right->data.integer.value);
             if (imm >= -128 && imm <= 127) {
+                /* ADDI_FROM/SUBI_FROM: skip MOVE when left is a local in a different reg */
+                if (expr->data.binary.left->kind == EXPR_IDENTIFIER) {
+                    int idx;
+                    VarKind kind = resolve_variable(c, expr->data.binary.left->data.identifier.name, &idx);
+                    if (kind == VAR_LOCAL && idx != target) {
+                        OpCode iop = (strcmp(op_str, "+") == 0) ? OP_ADDI_FROM : OP_SUBI_FROM;
+                        emit_ABC(c, iop, (uint8_t)target, (uint8_t)idx, (uint8_t)(int8_t)imm);
+                        break;
+                    }
+                }
                 compile_expr_into(c, expr->data.binary.left, target);
                 OpCode iop = (strcmp(op_str, "+") == 0) ? OP_ADDI : OP_SUBI;
                 emit_ABC(c, iop, (uint8_t)target, (uint8_t)(int8_t)imm, 0);
@@ -1543,14 +1573,37 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             else if (strcmp(op_str, "!=") == 0) cmp_op = OP_NE_JZ;
 
             if (cmp_op != (OpCode)-1) {
-                int right = alloc_reg(c);
-                compile_expr_into(c, cond->data.binary.right, right);
-                int left = alloc_reg(c);
-                compile_expr_into(c, cond->data.binary.left, left);
-                jz = chunk_emit_ABC(c->chunk, c->line, cmp_op, (uint8_t)left, (uint8_t)right, 0);
-                free_reg(c);
-                free_reg(c);
-                fused = true;
+                Expr *l = cond->data.binary.left;
+                Expr *r = cond->data.binary.right;
+                if (r->kind == EXPR_INTEGER) {
+                    int64_t imm = atoll(r->data.integer.value);
+                    if (imm >= -128 && imm <= 127) {
+                        int reg = alloc_reg(c);
+                        compile_expr_into(c, l, reg);
+                        jz = chunk_emit_ABC(c->chunk, c->line, cmp_to_imm_direct[cmp_op], (uint8_t)reg, (uint8_t)(int8_t)imm, 0);
+                        free_reg(c);
+                        fused = true;
+                    }
+                } else if (l->kind == EXPR_INTEGER) {
+                    int64_t imm = atoll(l->data.integer.value);
+                    if (imm >= -128 && imm <= 127) {
+                        int reg = alloc_reg(c);
+                        compile_expr_into(c, r, reg);
+                        jz = chunk_emit_ABC(c->chunk, c->line, cmp_to_imm_swapped[cmp_op], (uint8_t)reg, (uint8_t)(int8_t)imm, 0);
+                        free_reg(c);
+                        fused = true;
+                    }
+                }
+                if (!fused) {
+                    int right = alloc_reg(c);
+                    compile_expr_into(c, r, right);
+                    int left = alloc_reg(c);
+                    compile_expr_into(c, l, left);
+                    jz = chunk_emit_ABC(c->chunk, c->line, cmp_op, (uint8_t)left, (uint8_t)right, 0);
+                    free_reg(c);
+                    free_reg(c);
+                    fused = true;
+                }
             }
         }
 
@@ -1612,14 +1665,37 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             else if (strcmp(op_str, "!=") == 0) cmp_op = OP_NE_JZ;
 
             if (cmp_op != (OpCode)-1) {
-                int right = alloc_reg(c);
-                compile_expr_into(c, cond->data.binary.right, right);
-                int left = alloc_reg(c);
-                compile_expr_into(c, cond->data.binary.left, left);
-                jz = chunk_emit_ABC(c->chunk, c->line, cmp_op, (uint8_t)left, (uint8_t)right, 0);
-                free_reg(c);
-                free_reg(c);
-                fused = true;
+                Expr *l = cond->data.binary.left;
+                Expr *r = cond->data.binary.right;
+                if (r->kind == EXPR_INTEGER) {
+                    int64_t imm = atoll(r->data.integer.value);
+                    if (imm >= -128 && imm <= 127) {
+                        int reg = alloc_reg(c);
+                        compile_expr_into(c, l, reg);
+                        jz = chunk_emit_ABC(c->chunk, c->line, cmp_to_imm_direct[cmp_op], (uint8_t)reg, (uint8_t)(int8_t)imm, 0);
+                        free_reg(c);
+                        fused = true;
+                    }
+                } else if (l->kind == EXPR_INTEGER) {
+                    int64_t imm = atoll(l->data.integer.value);
+                    if (imm >= -128 && imm <= 127) {
+                        int reg = alloc_reg(c);
+                        compile_expr_into(c, r, reg);
+                        jz = chunk_emit_ABC(c->chunk, c->line, cmp_to_imm_swapped[cmp_op], (uint8_t)reg, (uint8_t)(int8_t)imm, 0);
+                        free_reg(c);
+                        fused = true;
+                    }
+                }
+                if (!fused) {
+                    int right = alloc_reg(c);
+                    compile_expr_into(c, r, right);
+                    int left = alloc_reg(c);
+                    compile_expr_into(c, l, left);
+                    jz = chunk_emit_ABC(c->chunk, c->line, cmp_op, (uint8_t)left, (uint8_t)right, 0);
+                    free_reg(c);
+                    free_reg(c);
+                    fused = true;
+                }
             }
         }
 

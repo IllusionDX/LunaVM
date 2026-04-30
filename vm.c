@@ -1076,7 +1076,9 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_shr,           // 18 OP_SHR
         &&op_addi,          // 19 OP_ADDI
         &&op_subi,          // 20 OP_SUBI
-        &&op_eq,            // 21 OP_EQ
+        &&op_addi_from,     // 21 OP_ADDI_FROM
+        &&op_subi_from,     // 22 OP_SUBI_FROM
+        &&op_eq,            // 23 OP_EQ
         &&op_ne,            // 22 OP_NE
         &&op_lt,            // 23 OP_LT
         &&op_le,            // 24 OP_LE
@@ -1131,7 +1133,13 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_gt_jz,         // 73 OP_GT_JZ
         &&op_ge_jz,         // 74 OP_GE_JZ
         &&op_eq_jz,         // 75 OP_EQ_JZ
-        &&op_ne_jz          // 76 OP_NE_JZ
+        &&op_ne_jz,         // 76 OP_NE_JZ
+        &&op_lt_jz_imm,     // 77 OP_LT_JZ_IMM
+        &&op_le_jz_imm,     // 78 OP_LE_JZ_IMM
+        &&op_gt_jz_imm,     // 79 OP_GT_JZ_IMM
+        &&op_ge_jz_imm,     // 80 OP_GE_JZ_IMM
+        &&op_eq_jz_imm,     // 81 OP_EQ_JZ_IMM
+        &&op_ne_jz_imm      // 82 OP_NE_JZ_IMM
     };
 
     DECODE;

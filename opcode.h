@@ -81,6 +81,8 @@ typedef enum {
     /* ---- Integer-immediate arithmetic (ABC: A = A op (int8_t)B, C unused) ---- */
     OP_ADDI,        /* ABC  : A = A + (int8_t)B  (arithmetic fast path)  */
     OP_SUBI,        /* ABC  : A = A - (int8_t)B  (arithmetic fast path)  */
+    OP_ADDI_FROM,   /* ABC  : A = B + (int8_t)C  (separate dest)         */
+    OP_SUBI_FROM,   /* ABC  : A = B - (int8_t)C  (separate dest)         */
 
     /* ---- Comparison (ABC: A = B cmp C, result is bool) ---- */
     OP_EQ,          /* ABC  : A = (B == C)                                 */
@@ -172,6 +174,14 @@ typedef enum {
     OP_GE_JZ,       /* ABC  : if !(A >= B) then IP += C                 */
     OP_EQ_JZ,       /* ABC  : if !(A == B) then IP += C                 */
     OP_NE_JZ,       /* ABC  : if !(A != B) then IP += C                 */
+
+    /* ---- Compare-and-branch with immediate (ABC: A=left, B=(int8_t)imm, C=offset) ---- */
+    OP_LT_JZ_IMM,   /* ABC  : if !(A < (int8_t)B) then IP += C          */
+    OP_LE_JZ_IMM,   /* ABC  : if !(A <= (int8_t)B) then IP += C         */
+    OP_GT_JZ_IMM,   /* ABC  : if !(A > (int8_t)B) then IP += C          */
+    OP_GE_JZ_IMM,   /* ABC  : if !(A >= (int8_t)B) then IP += C         */
+    OP_EQ_JZ_IMM,   /* ABC  : if !(A == (int8_t)B) then IP += C         */
+    OP_NE_JZ_IMM,   /* ABC  : if !(A != (int8_t)B) then IP += C         */
 
     OP_COUNT        /* sentinel — total opcode count                       */
 } OpCode;

@@ -146,6 +146,30 @@
         DECODE; goto *op_labels[OP(instr)];
     }
 
+    /* OP_ADDI_FROM */
+    op_addi_from: {
+        Value v = REG(RB);
+        if (is_int_type(v)) {
+            Value _r = make_int_result(to_i64(v) + (int8_t)C);
+            REG(RA) = _r;
+        } else if (IS_DOUBLE(v)) {
+            REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)C);
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* OP_SUBI_FROM */
+    op_subi_from: {
+        Value v = REG(RB);
+        if (is_int_type(v)) {
+            Value _r = make_int_result(to_i64(v) - (int8_t)C);
+            REG(RA) = _r;
+        } else if (IS_DOUBLE(v)) {
+            REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)C);
+        }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
     /* ---- Comparison (ABC: A = B cmp C, result is bool) ---- */
     /* 21. OP_EQ */
     op_eq: {
@@ -283,6 +307,102 @@
             _c = true;  /* different interned string pointers → not equal → NE is true */
         } else {
             _c = is_truthy(do_cmp(_L, _R, OP_NE));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_lt_jz_imm: {
+        Value _L = REG(RA);
+        int64_t _imm = (int8_t)RB;
+        bool _c;
+        if (is_int_type(_L)) {
+            _c = to_i64(_L) < _imm;
+        } else if (IS_DOUBLE(_L)) {
+            _c = AS_DOUBLE(_L) < (double)_imm;
+        } else {
+            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_LT));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_le_jz_imm: {
+        Value _L = REG(RA);
+        int64_t _imm = (int8_t)RB;
+        bool _c;
+        if (is_int_type(_L)) {
+            _c = to_i64(_L) <= _imm;
+        } else if (IS_DOUBLE(_L)) {
+            _c = AS_DOUBLE(_L) <= (double)_imm;
+        } else {
+            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_LE));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_gt_jz_imm: {
+        Value _L = REG(RA);
+        int64_t _imm = (int8_t)RB;
+        bool _c;
+        if (is_int_type(_L)) {
+            _c = to_i64(_L) > _imm;
+        } else if (IS_DOUBLE(_L)) {
+            _c = AS_DOUBLE(_L) > (double)_imm;
+        } else {
+            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_GT));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_ge_jz_imm: {
+        Value _L = REG(RA);
+        int64_t _imm = (int8_t)RB;
+        bool _c;
+        if (is_int_type(_L)) {
+            _c = to_i64(_L) >= _imm;
+        } else if (IS_DOUBLE(_L)) {
+            _c = AS_DOUBLE(_L) >= (double)_imm;
+        } else {
+            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_GE));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_eq_jz_imm: {
+        Value _L = REG(RA);
+        int64_t _imm = (int8_t)RB;
+        bool _c;
+        if (is_int_type(_L)) {
+            _c = to_i64(_L) == _imm;
+        } else if (IS_DOUBLE(_L)) {
+            _c = AS_DOUBLE(_L) == (double)_imm;
+        } else if (IS_NIL(_L)) {
+            _c = false;
+        } else if (IS_BOOL(_L)) {
+            _c = false;
+        } else if (IS_OBJ(_L)) {
+            _c = false;
+        } else {
+            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_EQ));
+        }
+        if (!_c) IP += C;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_ne_jz_imm: {
+        Value _L = REG(RA);
+        int64_t _imm = (int8_t)RB;
+        bool _c;
+        if (is_int_type(_L)) {
+            _c = to_i64(_L) != _imm;
+        } else if (IS_DOUBLE(_L)) {
+            _c = AS_DOUBLE(_L) != (double)_imm;
+        } else if (IS_NIL(_L)) {
+            _c = true;
+        } else if (IS_BOOL(_L)) {
+            _c = true;
+        } else if (IS_OBJ(_L)) {
+            _c = true;
+        } else {
+            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_NE));
         }
         if (!_c) IP += C;
         DECODE; goto *op_labels[OP(instr)];

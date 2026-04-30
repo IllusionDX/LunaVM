@@ -149,7 +149,7 @@ static const char *op_mnemonics[] = {
     "ADD",     "SUB",      "MUL",       "DIV",
     "MOD",     "NEG",      "BAND",      "BOR",
     "BXOR",    "BNOT",     "SHL",       "SHR",
-    "ADDI",    "SUBI",
+    "ADDI",    "SUBI",    "ADDI_FROM","SUBI_FROM",
     "EQ",      "NE",       "LT",        "LE",
     "GT",      "GE",       "IN",        "NOT",
     "JMP",     "JZ",       "JNZ",       "JNIL",
@@ -165,7 +165,10 @@ static const char *op_mnemonics[] = {
     "DEFAULT", "KWARGS",   "KCALL",     "COALESCE",
     "MEMBERGET_SAFE","INDEXGET_SAFE","SLICE_SAFE",
     "IMPORT",  "TRYINIT",  "HALT",
-    "LT_JZ",   "LE_JZ",    "GT_JZ",     "GE_JZ"
+    "LT_JZ",   "LE_JZ",    "GT_JZ",     "GE_JZ",
+    "EQ_JZ",   "NE_JZ",
+    "LT_JZ_IMM","LE_JZ_IMM","GT_JZ_IMM","GE_JZ_IMM",
+    "EQ_JZ_IMM","NE_JZ_IMM"
 };
 
 static OpFormat op_formats[] = {
@@ -181,6 +184,7 @@ static OpFormat op_formats[] = {
     /* BAND */     FMT_ABC, /* BOR */ FMT_ABC, /* BXOR */ FMT_ABC,
     /* BNOT */     FMT_ABC, /* SHL */ FMT_ABC, /* SHR */ FMT_ABC,
     /* ADDI */     FMT_ABC, /* SUBI */ FMT_ABC,
+    /* ADDI_FROM */ FMT_ABC, /* SUBI_FROM */ FMT_ABC,
     /* EQ */       FMT_ABC, /* NE */ FMT_ABC, /* LT */ FMT_ABC,
     /* LE */       FMT_ABC, /* GT */ FMT_ABC, /* GE */ FMT_ABC,
     /* IN */       FMT_ABC, /* NOT */ FMT_ABC,
@@ -226,7 +230,15 @@ static OpFormat op_formats[] = {
     /* LT_JZ */    FMT_ABC,
     /* LE_JZ */    FMT_ABC,
     /* GT_JZ */    FMT_ABC,
-    /* GE_JZ */    FMT_ABC
+    /* GE_JZ */    FMT_ABC,
+    /* EQ_JZ */    FMT_ABC,
+    /* NE_JZ */    FMT_ABC,
+    /* LT_JZ_IMM */FMT_ABC,
+    /* LE_JZ_IMM */FMT_ABC,
+    /* GT_JZ_IMM */FMT_ABC,
+    /* GE_JZ_IMM */FMT_ABC,
+    /* EQ_JZ_IMM */FMT_ABC,
+    /* NE_JZ_IMM */FMT_ABC
 };
 
 void chunk_disassemble(Chunk *chunk) {
@@ -257,11 +269,21 @@ void chunk_disassemble(Chunk *chunk) {
             printf(" R%d %+d", a, (int8_t)b);
         } else if (opcode == OP_SUBI) {
             printf(" R%d %+d", a, -(int8_t)b);
+        } else if (opcode == OP_ADDI_FROM) {
+            printf(" R%d R%d %+d", a, b, (int8_t)c);
+        } else if (opcode == OP_SUBI_FROM) {
+            printf(" R%d R%d %+d", a, b, -(int8_t)c);
         }
         /* Special: LT_JZ / LE_JZ / GT_JZ / GE_JZ use A=left, B=right, C=offset */
         else if (opcode == OP_LT_JZ || opcode == OP_LE_JZ ||
                  opcode == OP_GT_JZ || opcode == OP_GE_JZ) {
             printf(" R%d R%d +%d", a, b, c);
+        }
+        /* Special: *JZ_IMM use A=left, B=(int8_t)imm, C=offset */
+        else if (opcode == OP_LT_JZ_IMM || opcode == OP_LE_JZ_IMM ||
+                 opcode == OP_GT_JZ_IMM || opcode == OP_GE_JZ_IMM ||
+                 opcode == OP_EQ_JZ_IMM || opcode == OP_NE_JZ_IMM) {
+            printf(" R%d %+d +%d", a, (int8_t)b, c);
         }
         else {
             switch (fmt) {
