@@ -148,9 +148,17 @@
 
     /* ---- Comparison (ABC: A = B cmp C, result is bool) ---- */
     /* 21. OP_EQ */
-    op_eq: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_EQ)); DECODE; goto *op_labels[OP(instr)];
+    op_eq: {
+        Value _L = RKB, _R = RKC;
+        SET_REG_PRIM(RA, (_L == _R) ? TRUE_VAL : (IS_STRING(_L) && IS_STRING(_R)) ? FALSE_VAL : do_cmp(_L, _R, OP_EQ));
+        DECODE; goto *op_labels[OP(instr)];
+    }
     /* 22. OP_NE */
-    op_ne: SET_REG_PRIM(RA, do_cmp(RKB, RKC, OP_NE)); DECODE; goto *op_labels[OP(instr)];
+    op_ne: {
+        Value _L = RKB, _R = RKC;
+        SET_REG_PRIM(RA, (_L == _R) ? FALSE_VAL : (IS_STRING(_L) && IS_STRING(_R)) ? TRUE_VAL : do_cmp(_L, _R, OP_NE));
+        DECODE; goto *op_labels[OP(instr)];
+    }
     /* 23. OP_LT */
     op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)< to_i64(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 24. OP_LE */
@@ -258,6 +266,8 @@
         bool _c;
         if (_L == _R) {
             _c = true;  /* bitwise identical — NaN boxing: ints, bools, nil, same-object pointers */
+        } else if (IS_STRING(_L) && IS_STRING(_R)) {
+            _c = false;  /* different interned string pointers → cannot be equal */
         } else {
             _c = is_truthy(do_cmp(_L, _R, OP_EQ));
         }
@@ -269,6 +279,8 @@
         bool _c;
         if (_L == _R) {
             _c = false;  /* bitwise identical → not different */
+        } else if (IS_STRING(_L) && IS_STRING(_R)) {
+            _c = true;  /* different interned string pointers → not equal → NE is true */
         } else {
             _c = is_truthy(do_cmp(_L, _R, OP_NE));
         }
