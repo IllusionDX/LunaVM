@@ -7,3 +7,4 @@ __pycache__/
 *.txt
 !tests/*.txt
 tests/tests_output.txt
+tests/_io_*.txt

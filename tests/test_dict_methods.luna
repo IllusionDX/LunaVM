@@ -33,3 +33,7 @@ print(d3)
 
 # 8. Non-existent key returns null only through safe access
 print(d?.["not_a_key"])
+
+# 9. Nested dict/list access (consolidated from test_dict_list.luna)
+var world_state = {"regions": ["Forest", "Tundra", "Volcano"]}
+print(world_state["regions"][0])

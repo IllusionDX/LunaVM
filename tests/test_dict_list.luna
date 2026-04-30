@@ -1,5 +1,0 @@
-var world_state = {
-    "regions": ["Forest", "Tundra", "Volcano"]
-}
-
-print(world_state["regions"][0])

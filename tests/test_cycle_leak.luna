@@ -1,7 +1,26 @@
+# Small scale sanity check first (consolidated from test_cycle_small.luna)
+var i = 0
+while i < 1000:
+    var a = []
+    var b = []
+    a.append(b)
+    b.append(a)
+    i = i + 1
+print("Done with list cycles")
+
+var j = 0
+while j < 1000:
+    var d1 = {}
+    var d2 = {}
+    d1["other"] = d2
+    d2["other"] = d1
+    j = j + 1
+print("Done with dict cycles")
+
+# Large scale stress test
 var start = clock()
 
-# Test 1: Create a cycle using a list that contains itself
-var i = 0
+i = 0
 while i < 100000:
     var a = []
     var b = []
@@ -9,8 +28,7 @@ while i < 100000:
     b.append(a)
     i = i + 1
 
-# Test 2: Create a cycle using dictionaries
-var j = 0
+j = 0
 while j < 100000:
     var d1 = {}
     var d2 = {}
