@@ -476,7 +476,6 @@ static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn
     }
     cls->method_names[cls->method_count] = strdup(name);
     cls->methods[cls->method_count] = f;
-    retain_obj((Object*)f);
     cls->method_count++;
 }
 

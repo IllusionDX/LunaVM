@@ -33,12 +33,6 @@ void chunk_free(Chunk *chunk) {
     free(chunk->code);
     free(chunk->lines);
 
-    /* Release object-type constants */
-    for (int i = 0; i < chunk->const_count; i++) {
-        if (IS_OBJ(chunk->constants[i]) && AS_OBJ(chunk->constants[i])) {
-            release_obj(AS_OBJ(chunk->constants[i]));
-        }
-    }
     free(chunk->constants);
     free(chunk->global_cache);
     free(chunk->name);
@@ -103,10 +97,6 @@ int chunk_add_const(Chunk *chunk, Value value) {
             exit(1);
         }
         chunk->const_capacity = new_cap;
-    }
-    /* Retain heap objects entering the constant pool */
-    if (IS_OBJ(value) && AS_OBJ(value)) {
-        retain_obj(AS_OBJ(value));
     }
     int idx = chunk->const_count++;
     chunk->constants[idx] = value;

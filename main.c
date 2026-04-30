@@ -345,7 +345,7 @@ int main(int argc, char *argv[]) {
         if (argv[i][0] != '-') break;
         if (strcmp(argv[i], "--version") == 0) {
             printf("LunaScript interpreter %s\n", LUNA_VERSION_STRING);
-            printf("Register-based bytecode VM with ARC memory management\n");
+            printf("Register-based bytecode VM with GC memory management\n");
             printf("Native C lexer, parser, and compiler\n");
             return 0;
         }

@@ -223,7 +223,6 @@ static Value math_rad_to_deg(VM *vm, Value *args, int n) {
 static void math_add_fn(VM *vm, ObjDict *exports, const char *name, NativeFn fn) {
     (void)vm;
     ObjFunction *f = new_native_function(name, fn);
-    retain_obj((Object*)f);
     Value key = make_obj((Object*)new_string(name, (int)strlen(name)));
     dict_set(exports, key, make_obj((Object*)f));
 }

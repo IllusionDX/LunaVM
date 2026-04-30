@@ -60,7 +60,7 @@
         Value _L = RKB, _R = RKC;
         if (is_int_type(_L) && is_int_type(_R)) {
             int64_t ri = to_i64(_R);
-            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->runtime_error_class, "division by zero"); goto op_throw; }
+            if (!ri) { _exc = make_exception_instance(vm, vm->runtime_error_class, "division by zero"); goto op_throw; }
             SET_REG(RA, make_int_result(to_i64(_L) / ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
@@ -83,7 +83,7 @@
         Value _L = RKB, _R = RKC;
         if (is_int_type(_L) && is_int_type(_R)) {
             int64_t ri = to_i64(_R);
-            if (!ri) { release_value(_exc); _exc = make_exception_instance(vm, vm->exception_class, "mod/0"); goto op_throw; }
+            if (!ri) { _exc = make_exception_instance(vm, vm->exception_class, "mod/0"); goto op_throw; }
             SET_REG(RA, make_int_result(to_i64(_L) % ri));
         } else if (is_num(_L) && is_num(_R)) {
             double r = to_f64(_R);
@@ -126,13 +126,9 @@
         Value v = REG(RA);
         if (is_int_type(v)) {
             Value _r = make_int_result(to_i64(v) + (int8_t)B);
-            retain_value(_r);
-            release_value(v);
             REG(RA) = _r;
         } else if (IS_DOUBLE(v)) {
-            Value _old = v;
             REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)B);
-            release_value(_old);
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -142,13 +138,9 @@
         Value v = REG(RA);
         if (is_int_type(v)) {
             Value _r = make_int_result(to_i64(v) - (int8_t)B);
-            retain_value(_r);
-            release_value(v);
             REG(RA) = _r;
         } else if (IS_DOUBLE(v)) {
-            Value _old = v;
             REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)B);
-            release_value(_old);
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -337,7 +329,7 @@
             } else {
                 char buf[256];
                 snprintf(buf, sizeof(buf), "attempt to call instance of '%s' (no _call method)", inst->klass ? inst->klass->name : "?");
-                release_value(_exc);
+                
                 _exc = make_exception_instance(vm, vm->exception_class, buf);
                 goto op_throw;
             }
@@ -350,7 +342,7 @@
                 snprintf(buf, sizeof(buf), "attempt to call non-function (got %s)", s);
             }
             free(s);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -361,48 +353,38 @@
     op_ret: {
         uint8_t ret_reg = RA;
         Value retval = REG(ret_reg);
-        if (IS_OBJ(retval) && AS_OBJ(retval)) retain_obj(AS_OBJ(retval));
-
         if (vm->frame_count <= 1) {
             if (LUNA_UNLIKELY(vm->open_upvalues)) close_upvalues(vm, 0);
             for (int i = 0; i < FRAME.chunk->max_registers; i++) {
-                Value _old = vm->stack[FRAME.base + i];
                 vm->stack[FRAME.base + i] = make_null();
-                release_value(_old);
             }
             vm->stack_count = 0;
             vm->frame_count = 0;
-            if (IS_OBJ(retval) && AS_OBJ(retval)) release_obj(AS_OBJ(retval));
             return VM_OK;
         }
         CallFrame *callee = &FRAME;
         int old_base = callee->base;
-        release_value(callee->kw_args);
+        
         callee->kw_args = make_null();
         if (LUNA_UNLIKELY(vm->open_upvalues)) close_upvalues(vm, vm->frame_count);
 
         /* Module import cleanup: capture exports before destroying globals */
         if (callee->saved_globals) {
             char *captured_name = callee->fn && callee->fn->name ? strdup(callee->fn->name) : strdup("<module>");
-            release_value(retval);
+            
             ObjDict *exports = vm_globals_to_dict(vm);
             vm_globals_restore(vm, callee->saved_globals);
             callee->saved_globals = NULL;
             ObjModule *mod = new_module(captured_name);
-            release_obj((Object*)mod->exports);
             mod->exports = exports;
-            retain_obj((Object*)exports);
             Value module_val = make_obj((Object*)mod);
             dict_set(vm->module_cache, make_obj((Object*)new_string(captured_name, (int)strlen(captured_name))), module_val);
             retval = module_val;
-            if (IS_OBJ(retval)) retain_obj(AS_OBJ(retval));
             free(captured_name);
         }
 
         for (int i = 0; i < callee->chunk->max_registers; i++) {
-            Value _old = vm->stack[callee->base + i];
             vm->stack[callee->base + i] = make_null();
-            release_value(_old);
         }
         
         vm_pop_try_frames(vm, vm->frame_count - 1);
@@ -411,7 +393,6 @@
         CHUNK = caller->chunk;
         IP = caller->ip;
         SET_REG(callee->ret_reg, retval);
-        if (IS_OBJ(retval) && AS_OBJ(retval)) release_obj(AS_OBJ(retval));
         frame_release_refs(callee);
         vm->stack_count = old_base;
         DECODE;
@@ -434,7 +415,7 @@
         uint8_t dst = RA;
         Value fn_val = CONST(k);
         if (!IS_FUNCTION(fn_val)) {
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, "CLOSURE needs function constant");
             goto op_throw;
         }
@@ -451,7 +432,6 @@
                 else
                     cl->upvalues[i] = NULL;
             }
-            if (cl->upvalues[i]) retain_obj((Object*)cl->upvalues[i]);
         }
         SET_REG(dst, make_obj((Object*)cl));
         CHECK_GC;
@@ -495,10 +475,7 @@
             if (uv->is_open) {
                 SET_STACK(uv->stack_index, val);
             } else {
-                if (IS_OBJ(val) && AS_OBJ(val)) retain_obj(AS_OBJ(val));
-                Value old = uv->closed;
                 uv->closed = val;
-                if (IS_OBJ(old) && AS_OBJ(old)) release_obj(AS_OBJ(old));
             }
         }
         DECODE; goto *op_labels[OP(instr)];
@@ -539,7 +516,7 @@
             mod_name[len] = '\0';
             Value mod_val;
             if (!vm_get_global(vm, mod_name, &mod_val) || !IS_MODULE(mod_val)) {
-                release_value(_exc);
+                
                 char buf[256];
                 snprintf(buf, sizeof(buf), "module '%s' not found for new", mod_name);
                 _exc = make_exception_instance(vm, vm->exception_class, buf);
@@ -549,7 +526,7 @@
             ObjString *field = new_string(dot + 1, (int)strlen(dot + 1));
             cls_val = dict_get(mod->exports, make_obj((Object*)field));
             if (!IS_CLASS(cls_val)) {
-                release_value(_exc);
+                
                 char buf[256];
                 snprintf(buf, sizeof(buf), "class '%s' not found in module '%s'", dot + 1, mod_name);
                 _exc = make_exception_instance(vm, vm->exception_class, buf);
@@ -557,7 +534,7 @@
             }
         } else {
             if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
-                release_value(_exc);
+                
                 char buf[256];
                 snprintf(buf, sizeof(buf), "class '%s' not found for new", cls_name);
                 _exc = make_exception_instance(vm, vm->exception_class, buf);
@@ -589,7 +566,7 @@
         if (IS_LIST(lst)) {
             list_add((ObjList*)AS_OBJ(lst), val);
         } else {
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, "listappend on non-list");
             goto op_throw;
         }
@@ -651,12 +628,12 @@
                     break;
                 }
                 default:
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->exception_class, "object is not iterable");
                     goto op_throw;
             }
         } else {
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, "non-object is not iterable");
             goto op_throw;
         }
@@ -672,14 +649,14 @@
         Value obj = REG(RB);
         Value key = REG(RC);
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
-            release_value(_exc);
+            
                 _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: cannot index null value");
             goto op_throw;
         }
         switch (AS_OBJ(obj)->type) {
             case OBJ_LIST: {
                 if (!IS_INT(key)) {
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: list index must be integer");
                     goto op_throw;
                 }
@@ -690,7 +667,7 @@
                 if (idx < 0 || idx >= len) {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "IndexError: list index out of bounds (index: %d, size: %d)", idx, len);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
@@ -704,7 +681,7 @@
                     char buf[256];
                     snprintf(buf, sizeof(buf), "KeyError: %s not found in dict", ks);
                     free(ks);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->key_error_class, buf);
                     goto op_throw;
                 }
@@ -714,7 +691,7 @@
             case OBJ_STRING: {
                 ObjString *s = (ObjString*)AS_OBJ(obj);
                 if (!IS_INT(key)) {
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: string index must be integer");
                     goto op_throw;
                 }
@@ -723,7 +700,7 @@
                 if (idx < 0 || idx >= s->length) {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "IndexError: string index out of bounds (index: %d, length: %d)", idx, s->length);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
@@ -731,7 +708,7 @@
                 break;
             }
             default: {
-                release_value(_exc);
+                
                 _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: value is not indexable");
                 goto op_throw;
             }
@@ -814,13 +791,11 @@
                     for (int i = start; i < stop; i += step) {
                         Value v = lst->items ? lst->items[i] : lst->inline_items[i];
                         list_add(result, v);
-                        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
                     }
                 } else {
                     for (int i = start; i > stop; i += step) {
                         Value v = lst->items ? lst->items[i] : lst->inline_items[i];
                         list_add(result, v);
-                        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
                     }
                 }
                 SET_REG(RA, make_obj((Object*)result));
@@ -917,13 +892,11 @@
                     for (int i = start; i < stop; i += step) {
                         Value v = lst->items ? lst->items[i] : lst->inline_items[i];
                         list_add(result, v);
-                        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
                     }
                 } else {
                     for (int i = start; i > stop; i += step) {
                         Value v = lst->items ? lst->items[i] : lst->inline_items[i];
                         list_add(result, v);
-                        if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
                     }
                 }
                 SET_REG(RA, make_obj((Object*)result));
@@ -985,7 +958,7 @@
         Value obj = REG(RB);
         ObjString *field = KSTROBJ(RC);
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
-            release_value(_exc);
+            
                 _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: cannot access member of null value");
             goto op_throw;
         }
@@ -1016,7 +989,7 @@
                             ObjBoundMethod *bm = new_bound_method(obj, inst->klass->methods[mi]);
                             SET_REG(RA, make_obj((Object*)bm));
                         } else {
-                            release_value(_exc);
+                            
                             char buf[256];
                             snprintf(buf, sizeof(buf), "AttributeError: instance has no field or method '%s'", field->chars);
                             _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
@@ -1032,7 +1005,7 @@
                 else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "AttributeError: list has no field '%s'", field->chars);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
@@ -1046,7 +1019,7 @@
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "AttributeError: module '%s' has no attribute '%s'", mod->name->chars, field->chars);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
@@ -1062,7 +1035,7 @@
                     if (IS_NIL(val)) {
                         char buf[256];
                         snprintf(buf, sizeof(buf), "KeyError: '%s' not found in dict", field->chars);
-                        release_value(_exc);
+                        
                         _exc = make_exception_instance(vm, vm->key_error_class, buf);
                         goto op_throw;
                     }
@@ -1076,7 +1049,7 @@
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "AttributeError: string has no field '%s'", field->chars);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
@@ -1092,7 +1065,7 @@
                 else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "AttributeError: enum has no variant '%s'", field->chars);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
@@ -1111,14 +1084,14 @@
                     } else {
                         char buf[256];
                         snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no field '%s'", cls->name, field->chars);
-                        release_value(_exc);
+                        
                         _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                         goto op_throw;
                     }
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no field '%s'", cls->name, field->chars);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
@@ -1136,7 +1109,7 @@
                     else {
                         char buf[256];
                         snprintf(buf, sizeof(buf), "AttributeError: vector has no field '%s'", field->chars);
-                        release_value(_exc);
+                        
                         _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                         goto op_throw;
                     }
@@ -1144,14 +1117,14 @@
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "AttributeError: vector has no field '%s'", field->chars);
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
                 break;
             }
             default: {
-                release_value(_exc);
+                
                 _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: value has no fields");
                 goto op_throw;
             }
@@ -1260,12 +1233,12 @@
                 else if (c == 'z') vec->data[2] = v;
                 else if (c == 'w') vec->data[3] = v;
                 else {
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: vector has no field");
                     goto op_throw;
                 }
             } else {
-                release_value(_exc);
+                
                 _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: vector has no field");
                 goto op_throw;
             }
@@ -1298,7 +1271,7 @@
                     ObjBuffer *buf = (ObjBuffer*)AS_OBJ(obj);
                     if (!strcmp(mname, "read_byte")) {
                         if (nargs != 0) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->argument_error_class, "buffer.read_byte() expects no arguments");
                             goto op_throw;
                         }
@@ -1307,7 +1280,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "read_short")) {
                         if (nargs != 0) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->argument_error_class, "buffer.read_short() expects no arguments");
                             goto op_throw;
                         }
@@ -1316,7 +1289,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "read_int")) {
                         if (nargs != 0) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->argument_error_class, "buffer.read_int() expects no arguments");
                             goto op_throw;
                         }
@@ -1325,7 +1298,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "read_long")) {
                         if (nargs != 0) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->argument_error_class, "buffer.read_long() expects no arguments");
                             goto op_throw;
                         }
@@ -1404,7 +1377,7 @@
                     if (!handled) {
                         char buf[256];
                         snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no method '%s'", cls->name, mname_obj->chars);
-                        release_value(_exc);
+                        
                         _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                         goto op_throw;
                     }
@@ -1545,7 +1518,7 @@
                 case OBJ_STRING: {
                     if (!strcmp(mname, "to_buffer")) {
                         if (nargs != 0) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->argument_error_class, "string.to_buffer() takes no arguments");
                             goto op_throw;
                         }
@@ -1556,14 +1529,14 @@
                         handled = true;
                     } else if (strcmp(mname, "byte_at") == 0) {
                         if (nargs < 1 || (!IS_INT(scratch[0]) && !IS_INT64(scratch[0]))) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "string.byte_at() expects an integer index");
                             goto op_throw;
                         }
                         ObjString *str = (ObjString*)AS_OBJ(obj);
                         int64_t idx64 = as_int64(scratch[0]);
                         if (idx64 < 0 || idx64 >= str->length) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->index_error_class, "string.byte_at() index out of range");
                             goto op_throw;
                         }
@@ -1576,7 +1549,7 @@
                     ObjVector *vec = (ObjVector*)AS_OBJ(obj);
                     if (!strcmp(mname, "add")) {
                         if (nargs < 1 || !IS_VECTOR(scratch[0])) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "vector.add() expects a vector argument");
                             goto op_throw;
                         }
@@ -1584,7 +1557,7 @@
                         float s = 1.0f;
                         if (nargs >= 2) {
                             if (!IS_NUMBER(scratch[1])) {
-                                release_value(_exc);
+                                
                                 _exc = make_exception_instance(vm, vm->type_error_class, "vector.add() scalar must be numeric");
                                 goto op_throw;
                             }
@@ -1598,7 +1571,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "sub")) {
                         if (nargs < 1 || !IS_VECTOR(scratch[0])) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "vector.sub() expects a vector argument");
                             goto op_throw;
                         }
@@ -1611,7 +1584,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "mul")) {
                         if (nargs < 1 || !IS_NUMBER(scratch[0])) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "vector.mul() expects a numeric argument");
                             goto op_throw;
                         }
@@ -1624,7 +1597,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "copy")) {
                         if (nargs != 0) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->argument_error_class, "vector.copy() takes no arguments");
                             goto op_throw;
                         }
@@ -1637,7 +1610,7 @@
                     ObjMatrix *mat = (ObjMatrix*)AS_OBJ(obj);
                     if (!strcmp(mname, "translate")) {
                         if (nargs < 1 || !IS_VECTOR(scratch[0])) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "mat4.translate() expects a vector argument");
                             goto op_throw;
                         }
@@ -1647,7 +1620,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "rotate_x")) {
                         if (nargs < 1 || !IS_NUMBER(scratch[0])) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "mat4.rotate_x() expects a numeric angle (degrees)");
                             goto op_throw;
                         }
@@ -1656,7 +1629,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "rotate_y")) {
                         if (nargs < 1 || !IS_NUMBER(scratch[0])) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "mat4.rotate_y() expects a numeric angle (degrees)");
                             goto op_throw;
                         }
@@ -1665,7 +1638,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "rotate_z")) {
                         if (nargs < 1 || !IS_NUMBER(scratch[0])) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "mat4.rotate_z() expects a numeric angle (degrees)");
                             goto op_throw;
                         }
@@ -1674,7 +1647,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "scale")) {
                         if (nargs < 1 || !IS_VECTOR(scratch[0])) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->type_error_class, "mat4.scale() expects a vector argument");
                             goto op_throw;
                         }
@@ -1688,7 +1661,7 @@
                         handled = true;
                     } else if (!strcmp(mname, "transposed")) {
                         if (nargs != 0) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->argument_error_class, "mat4.transposed() takes no arguments");
                             goto op_throw;
                         }
@@ -1699,25 +1672,20 @@
                     } else if (!strcmp(mname, "invert")) {
                         ObjMatrix *tmp = new_matrix();
                         if (!mat4_invert(mat->m, tmp->m)) {
-                            release_obj((Object*)tmp);
-                            release_value(_exc);
                             _exc = make_exception_instance(vm, vm->value_error_class, "mat4.invert(): matrix is singular");
                             goto op_throw;
                         }
                         for (int i = 0; i < 16; i++) mat->m[i] = tmp->m[i];
-                        release_obj((Object*)tmp);
                         result = obj;
                         handled = true;
                     } else if (!strcmp(mname, "inverted")) {
                         if (nargs != 0) {
-                            release_value(_exc);
+                            
                             _exc = make_exception_instance(vm, vm->argument_error_class, "mat4.inverted() takes no arguments");
                             goto op_throw;
                         }
                         ObjMatrix *out = new_matrix();
                         if (!mat4_invert(mat->m, out->m)) {
-                            release_obj((Object*)out);
-                            release_value(_exc);
                             _exc = make_exception_instance(vm, vm->value_error_class, "mat4.inverted(): matrix is singular");
                             goto op_throw;
                         }
@@ -1733,7 +1701,7 @@
         else {
             char buf[256];
             snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -1807,7 +1775,7 @@
         else {
             char buf[256];
             snprintf(buf, sizeof(buf), "unknown super method '%s'", mname);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -1837,7 +1805,7 @@
                 /* unwind call frames */
                 while (vm->frame_count > tf->frame_depth) {
                     CallFrame *unwound = &vm->frames[vm->frame_count - 1];
-                    release_value(unwound->kw_args);
+                    
                     unwound->kw_args = make_null();
                     frame_release_refs(unwound);
                     close_upvalues(vm, vm->frame_count);
@@ -1955,7 +1923,7 @@
                 DECODE; goto *op_labels[OP(instr)];
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
                     goto op_throw;
                 }
@@ -1967,7 +1935,7 @@
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = kw_args_val;
-                retain_value(kw_args_val);
+                
                 frame_set_refs(callee, NULL, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
@@ -1996,7 +1964,7 @@
                 DECODE; goto *op_labels[OP(instr)];
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
                     goto op_throw;
                 }
@@ -2008,7 +1976,7 @@
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = kw_args_val;
-                retain_value(kw_args_val);
+                
                 frame_set_refs(callee, cl, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
@@ -2038,7 +2006,7 @@
                 DECODE; goto *op_labels[OP(instr)];
             } else {
                 if (vm->frame_count >= MAX_FRAMES) {
-                    release_value(_exc);
+                    
                     _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
                     goto op_throw;
                 }
@@ -2051,7 +2019,7 @@
                 callee->ret_reg = ret_reg;
                 callee->nargs = nargs;
                 callee->kw_args = kw_args_val;
-                retain_value(kw_args_val);
+                
                 frame_set_refs(callee, NULL, fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
@@ -2077,7 +2045,7 @@
                 snprintf(buf, sizeof(buf), "attempt to call non-function (got %s)", s);
             }
             free(s);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -2100,7 +2068,7 @@
         uint8_t dst = RA;
         Value mod_name_val = CONST(BX);
         if (!IS_STRING(mod_name_val)) {
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, "import: module name must be a string");
             goto op_throw;
         }
@@ -2119,7 +2087,7 @@
         if (!filepath) {
             char buf[256];
             snprintf(buf, sizeof(buf), "module '%s' not found", mod_name);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -2129,7 +2097,7 @@
             free(filepath);
             char buf[256];
             snprintf(buf, sizeof(buf), "cannot read module '%s'", mod_name);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -2151,7 +2119,7 @@
             free(source);
             char buf[256];
             snprintf(buf, sizeof(buf), "import: lexer errors in '%s'", mod_name);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -2167,7 +2135,7 @@
             free(filepath);
             char buf[256];
             snprintf(buf, sizeof(buf), "import: parser errors in '%s'", mod_name);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -2184,7 +2152,7 @@
             lexer_free(lexer);
             char buf[256];
             snprintf(buf, sizeof(buf), "import: compilation errors in '%s'", mod_name);
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, buf);
             goto op_throw;
         }
@@ -2204,7 +2172,7 @@
         SET_REG(dst, make_obj((Object*)mod_fn));
 
         if (vm->frame_count >= MAX_FRAMES) {
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
             goto op_throw;
         }
@@ -2241,7 +2209,7 @@
         uint8_t nargs   = C;
         Value obj = REG(obj_reg);
         if (!IS_INSTANCE(obj)) {
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: tryinit on non-instance");
             goto op_throw;
         }
@@ -2257,7 +2225,7 @@
             if (nargs == 0) {
                 DECODE; goto *op_labels[OP(instr)];
             }
-            release_value(_exc);
+            
             char buf[256];
             snprintf(buf, sizeof(buf), "RuntimeError: class '%s' has no _init constructor but %d argument(s) were provided",
                      cls ? cls->name : "?", nargs);
@@ -2299,7 +2267,7 @@
             DECODE;
             goto *op_labels[OP(instr)];
         } else {
-            release_value(_exc);
+            
             _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
             goto op_throw;
         }
@@ -2310,7 +2278,7 @@
     op_halt: {
         CallFrame *frame = &FRAME;
         close_upvalues(vm, 0);
-        release_value(frame->kw_args);
+        
         frame->kw_args = make_null();
         for (int i = 0; i < frame->chunk->max_registers; i++) SET_REG(i, make_null());
         frame_release_refs(frame);

@@ -754,7 +754,6 @@ static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn
 void vm_register_net_module(VM *vm) {
     /* Socket class */
     socket_class = new_class("Socket", NULL);
-    retain_obj((Object*)socket_class);
 
     class_add_native_method(socket_class, "_init",         socket_init);
     class_add_native_method(socket_class, "connect",       socket_connect);
@@ -779,7 +778,6 @@ void vm_register_net_module(VM *vm) {
     Value socket_key = make_obj((Object*)new_string("Socket", 6));
     Value socket_val = make_obj((Object*)socket_class);
     dict_set(mod->exports, socket_key, socket_val);
-    retain_obj((Object*)socket_class);
 
     /* Constants — clean names, not POSIX jargon */
     dict_set(mod->exports,

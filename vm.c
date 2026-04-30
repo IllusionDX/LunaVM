@@ -462,96 +462,14 @@ void mark_and_sweep(VM *vm) {
         }
     }
 
-    /* 3. Free garbage
-     *
-     * During sweep we release children first (breaking cycles) and then
-     * free container memory.  We set gc_collecting so that release_obj()
-     * never re-enters free_object() while we are mid-sweep.  After children
-     * are released we call free_object_container() which only frees memory
-     * and does NOT release children again, avoiding the double-decrement
-     * bug that the old 1M-refcount hack had.
-     */
+    /* 3. Free garbage */
     gc_collecting = true;
 
     Object *g = garbage;
     while (g) {
-        switch (g->type) {
-            case OBJ_LIST: {
-                ObjList *l = (ObjList *)g;
-                if (l->items) {
-                    for (int i = 0; i < l->count; i++) release_value(l->items[i]);
-                } else {
-                    for (int i = 0; i < l->count; i++) release_value(l->inline_items[i]);
-                }
-                l->count = 0;
-                break;
-            }
-            case OBJ_DICT: {
-                ObjDict *d = (ObjDict *)g;
-                if (d->indices == NULL) {
-                    for (int i = 0; i < d->entry_count; i++) {
-                        release_value(d->inline_entries[i].key);
-                        release_value(d->inline_entries[i].value);
-                    }
-                } else {
-                    for (int i = 0; i < d->next_entry; i++) {
-                        if (d->entries[i].key != EMPTY_VAL) {
-                            release_value(d->entries[i].key);
-                            release_value(d->entries[i].value);
-                        }
-                    }
-                }
-                d->entry_count = 0;
-                d->next_entry = 0;
-                break;
-            }
-            case OBJ_INSTANCE: {
-                ObjInstance *inst = (ObjInstance *)g;
-                for (int i = 0; i < inst->field_count; i++) release_value(inst->fields[i]);
-                inst->field_count = 0;
-                if (inst->klass) release_obj((Object*)inst->klass);
-                inst->klass = NULL;
-                break;
-            }
-            case OBJ_CLOSURE: {
-                ObjClosure *cl = (ObjClosure *)g;
-                if (cl->function) release_obj((Object*)cl->function);
-                cl->function = NULL;
-                for (int i = 0; i < cl->upvalue_count; i++) {
-                    if (cl->upvalues[i]) release_obj((Object*)cl->upvalues[i]);
-                }
-                cl->upvalue_count = 0;
-                break;
-            }
-            case OBJ_UPVALUE: {
-                ObjUpvalue *uv = (ObjUpvalue *)g;
-                release_value(uv->closed);
-                uv->closed = make_null();
-                break;
-            }
-            case OBJ_CLASS: {
-                ObjClass *cls = (ObjClass *)g;
-                if (cls->prototype) release_obj((Object*)cls->prototype);
-                cls->prototype = NULL;
-                if (cls->base) release_obj((Object*)cls->base);
-                cls->base = NULL;
-                for (int i = 0; i < cls->method_count; i++) {
-                    if (cls->methods[i]) release_obj((Object*)cls->methods[i]);
-                }
-                if (cls->fields) release_obj((Object*)cls->fields);
-                cls->fields = NULL;
-                cls->method_count = 0;
-                break;
-            }
-            default: break;
-        }
-        g = g->next;
-    }
-
-    g = garbage;
-    while (g) {
         Object *next = g->next;
         g->next = NULL;
+        g->prev = NULL;
         free_object_container(g);
         g = next;
     }
@@ -573,7 +491,6 @@ static ObjClass *vm_register_builtin_exception(VM *vm, const char *name, ObjClas
     ObjClass *cls = new_class(name, NULL);
     if (base) {
         cls->base = base;
-        retain_obj((Object*)base);
         /* Copy prototype fields from base */
         if (base->prototype) {
             ObjInstance *bp = base->prototype;
@@ -589,9 +506,7 @@ static ObjClass *vm_register_builtin_exception(VM *vm, const char *name, ObjClas
         instance_set_field(cls->prototype, "file", make_null());
         instance_set_field(cls->prototype, "line", make_int(0));
     }
-    retain_obj((Object*)cls->prototype);
     Value cls_val = make_obj((Object*)cls);
-    retain_obj((Object*)cls);
     vm_set_global(vm, name, cls_val, false);
     return cls;
 }
@@ -612,7 +527,6 @@ void vm_init(VM *vm) {
     vm->argument_error_class = vm_register_builtin_exception(vm, "ArgumentError", vm->exception_class);
 
     vm->module_cache = new_dict();
-    retain_obj((Object*)vm->module_cache);
     vm_register_math_module(vm);
     vm_register_random_module(vm);
     vm_register_noise_module(vm);
@@ -645,24 +559,15 @@ void vm_free(VM *vm) {
         GlobalEntry *e = vm->globals[i];
         while (e) {
             GlobalEntry *nx = e->next;
-            if (IS_OBJ(e->value) && AS_OBJ(e->value)) release_obj(AS_OBJ(e->value));
             free(e->name); free(e); e = nx;
         }
         vm->globals[i] = NULL;
     }
 
-    if (vm->module_cache) {
-        release_obj((Object*)vm->module_cache);
-        vm->module_cache = NULL;
-    }
+    vm->module_cache = NULL;
 
     close_upvalues(vm, 0);
 
-    // Release any values still on the stack so their refcounts drop
-    for (int i = 0; i < vm->stack_count; i++) {
-        if (IS_OBJ(vm->stack[i]) && AS_OBJ(vm->stack[i]))
-            release_obj(AS_OBJ(vm->stack[i]));
-    }
     free(vm->stack);
     vm->stack = NULL;
 
@@ -672,14 +577,11 @@ void vm_free(VM *vm) {
         free(tf);
     }
 
-    if (vm->exception_class) {
-        release_obj((Object*)vm->exception_class);
-        vm->exception_class = NULL;
-    }
+    vm->exception_class = NULL;
 
     value_free_intern_table();
 
-    // Free any remaining objects (shutdown path — no cascading releases).
+    // Free any remaining objects (shutdown path).
     gc_collecting = true;
     Object *obj = all_objects;
     while (obj) {
@@ -711,7 +613,6 @@ static void vm_globals_restore(VM *vm, GlobalEntry **saved) {
         GlobalEntry *e = vm->globals[i];
         while (e) {
             GlobalEntry *next = e->next;
-            release_value(e->value);
             free(e->name);
             free(e);
             e = next;
@@ -739,19 +640,11 @@ static ObjDict *vm_globals_to_dict(VM *vm) {
 static void frame_set_refs(CallFrame *frame, ObjClosure *closure, ObjFunction *fn) {
     frame->closure = closure;
     frame->fn = fn;
-    if (closure) retain_obj((Object*)closure);
-    if (fn) retain_obj((Object*)fn);
 }
 
 static void frame_release_refs(CallFrame *frame) {
-    if (frame->closure) {
-        release_obj((Object*)frame->closure);
-        frame->closure = NULL;
-    }
-    if (frame->fn) {
-        release_obj((Object*)frame->fn);
-        frame->fn = NULL;
-    }
+    frame->closure = NULL;
+    frame->fn = NULL;
 }
 
 /* Extract directory component from a file path (modifies buf in-place).
@@ -783,33 +676,17 @@ static void path_dirname(const char *path, char *buf, size_t buf_size) {
 #define IP          (FRAME.ip)
 #define REG(i)      (vm->stack[FRAME.base + (i)])
 #define SET_REG(i, v) do { \
-    Value _new = (v); \
-    retain_value(_new); \
-    Value _old = REG(i); \
-    REG(i) = _new; \
-    release_value(_old); \
-} while (0)
-/* For values that are guaranteed NOT to be heap objects (int, bool, null, double).
-   Skips the no-op retain_value branch. */
-#define SET_REG_PRIM(i, v) do { \
-    Value _old = REG(i); \
     REG(i) = (v); \
-    release_value(_old); \
+} while (0)
+#define SET_REG_PRIM(i, v) do { \
+    REG(i) = (v); \
 } while (0)
 #define SET_STACK(idx, v) do { \
-    Value _new = (v); \
-    retain_value(_new); \
-    Value _old = vm->stack[idx]; \
-    vm->stack[idx] = _new; \
-    release_value(_old); \
+    vm->stack[idx] = (v); \
 } while (0)
 #define CONST(i)    (CHUNK->constants[(i)])
 #define SET_FIELD(inst, idx, v) do { \
-    Value _new = (v); \
-    retain_value(_new); \
-    Value _old = (inst)->fields[idx]; \
-    (inst)->fields[idx] = _new; \
-    release_value(_old); \
+    (inst)->fields[idx] = (v); \
 } while (0)
 #define KSTR(n)     (((ObjString*)AS_OBJ(CONST(n)))->chars)
 #define KSTROBJ(n)  ((ObjString*)AS_OBJ(CONST(n)))
@@ -1005,7 +882,6 @@ static VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 
 #define CHECK_FRAME_OVERFLOW() do { \
     if (LUNA_UNLIKELY((vm)->frame_count >= MAX_FRAMES)) { \
-        release_value(_exc); \
         _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow"); \
         goto op_throw; \
     } \
@@ -1110,7 +986,6 @@ ObjUpvalue *capture_upvalue(VM *vm, int stack_idx) {
     ObjUpvalue *created = new_upvalue(stack_idx);
     created->next = uv;
     created->frame_depth = vm->frame_count;
-    retain_obj((Object*)created); // Owned by the open_upvalues list
     if (prev) prev->next = created;
     else vm->open_upvalues = created;
     return created;
@@ -1120,10 +995,8 @@ static void close_upvalues(VM *vm, int frame_depth) {
     while (vm->open_upvalues && vm->open_upvalues->frame_depth >= frame_depth) {
         ObjUpvalue *uv = vm->open_upvalues;
         uv->closed = vm->stack[uv->stack_index];
-        if (IS_OBJ(uv->closed) && AS_OBJ(uv->closed)) retain_obj(AS_OBJ(uv->closed));
         uv->is_open = false;
         vm->open_upvalues = uv->next;
-        release_obj((Object*)uv); // No longer owned by the list
     }
 }
 

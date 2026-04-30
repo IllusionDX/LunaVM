@@ -123,7 +123,6 @@ Object *userdata_objects = NULL;
 
 static void init_object(Object *obj, ObjType type, size_t size) {
     obj->type = type;
-    obj->refcount = 0;
     obj->is_marked = false;
     obj->size = size;
     bytes_allocated += size;
@@ -232,7 +231,6 @@ ObjClass *new_class(const char *name, const char *base_name) {
     cls->method_count = 0;
     cls->method_capacity = 0;
     cls->fields = new_dict();
-    retain_obj((Object*)cls->fields);
     return cls;
 }
 
@@ -242,7 +240,6 @@ ObjInstance *new_instance(ObjClass *klass, int cap) {
     init_object((Object*)inst, OBJ_INSTANCE, sizeof(ObjInstance) + sizeof(Value) * cap);
     inst->class_name    = strdup(klass->name);
     inst->klass         = klass;
-    retain_obj((Object*)klass);
     inst->field_capacity = cap > 0 ? cap : 4;
     inst->field_count   = 0;
     inst->field_names   = calloc(inst->field_capacity, sizeof(char *));
@@ -259,8 +256,6 @@ ObjInstance *new_instance(ObjClass *klass, int cap) {
             }
             inst->field_names[inst->field_count] = strdup(proto->field_names[i]);
             inst->fields[inst->field_count] = proto->fields[i];
-            if (IS_OBJ(proto->fields[i]) && AS_OBJ(proto->fields[i]))
-                retain_obj(AS_OBJ(proto->fields[i]));
             inst->field_count++;
         }
     }
@@ -321,7 +316,6 @@ ObjClosure *new_closure(ObjFunction *function) {
     if (!cl) { fprintf(stderr, "OOM\n"); exit(1); }
     init_object((Object*)cl, OBJ_CLOSURE, sizeof(ObjClosure) + sizeof(ObjUpvalue*) * function->upvalue_count);
     cl->function = function;
-    retain_obj((Object*)function);
     cl->upvalue_count = function->upvalue_count;
     cl->upvalues = cl->upvalue_count > 0
         ? calloc(cl->upvalue_count, sizeof(ObjUpvalue*))
@@ -334,9 +328,7 @@ ObjBoundMethod *new_bound_method(Value self, ObjFunction *fn) {
     if (!bm) { fprintf(stderr, "OOM\n"); exit(1); }
     init_object((Object*)bm, OBJ_BOUND_METHOD, sizeof(ObjBoundMethod));
     bm->self = self;
-    if (IS_OBJ(self) && AS_OBJ(self)) retain_obj(AS_OBJ(self));
     bm->fn = fn;
-    if (fn) retain_obj((Object*)fn);
     return bm;
 }
 
@@ -356,9 +348,7 @@ ObjModule *new_module(const char *name) {
     if (!mod) { fprintf(stderr, "OOM\n"); exit(1); }
     init_object((Object*)mod, OBJ_MODULE, sizeof(ObjModule));
     mod->name = new_string(name, (int)strlen(name));
-    retain_obj((Object*)mod->name);   /* ObjModule owns its name string */
     mod->exports = new_dict();
-    retain_obj((Object*)mod->exports); /* ObjModule owns its exports dict */
     return mod;
 }
 
@@ -449,7 +439,7 @@ Value make_exception_instance(struct VM *vm, ObjClass *cls, const char *message)
 }
 
 /* ============================================================ */
-/* ARC memory management                                         */
+/* Memory management                                             */
 /* ============================================================ */
 
 static void userdata_run_finalizer(ObjUserdata *ud) {
@@ -463,11 +453,10 @@ static void userdata_run_finalizer(ObjUserdata *ud) {
 
 
 /* Free container memory without releasing children.
- * Used by the GC sweep after children have already been released. */
+ * Used exclusively by the GC sweep. This function only frees raw memory. */
 void free_object_container(Object *obj) {
-    /* WARNING: This function MUST NOT call release_obj on child objects.
-     * Children are released by free_object() (ARC path) or by the GC sweep
-     * phase 1 in mark_and_sweep(). This function only frees raw memory. */
+    /* WARNING: This function MUST NOT release child objects.
+     * Only frees raw container memory. */
     if (!obj) return;
 
     if (obj->prev) {
@@ -586,92 +575,10 @@ void free_object_container(Object *obj) {
     }
 }
 
-/* ARC path: release children, then free container. */
-void free_object(Object *obj) {
-    if (!obj) return;
-    switch (obj->type) {
-        case OBJ_LIST: {
-            ObjList *l = (ObjList *)obj;
-            if (l->items) {
-                for (int i = 0; i < l->count; i++) release_value(l->items[i]);
-            } else {
-                for (int i = 0; i < l->count; i++) release_value(l->inline_items[i]);
-            }
-            break;
-        }
-        case OBJ_DICT: {
-            ObjDict *d = (ObjDict *)obj;
-            if (d->indices == NULL) {
-                for (int i = 0; i < d->entry_count; i++) {
-                    release_value(d->inline_entries[i].key);
-                    release_value(d->inline_entries[i].value);
-                }
-            } else {
-                for (int i = 0; i < d->next_entry; i++) {
-                    if (d->entries[i].key != EMPTY_VAL) {
-                        release_value(d->entries[i].key);
-                        release_value(d->entries[i].value);
-                    }
-                }
-            }
-            break;
-        }
-        case OBJ_INSTANCE: {
-            ObjInstance *inst = (ObjInstance *)obj;
-            for (int i = 0; i < inst->field_count; i++) {
-                release_value(inst->fields[i]);
-            }
-            if (inst->klass) release_obj((Object*)inst->klass);
-            break;
-        }
-        case OBJ_UPVALUE: {
-            ObjUpvalue *uv = (ObjUpvalue *)obj;
-            release_value(uv->closed);
-            break;
-        }
-        case OBJ_CLOSURE: {
-            ObjClosure *cl = (ObjClosure *)obj;
-            for (int i = 0; i < cl->upvalue_count; i++) {
-                if (cl->upvalues[i]) release_obj((Object*)cl->upvalues[i]);
-            }
-            release_obj((Object*)cl->function);
-            break;
-        }
-        case OBJ_ENUM: break; /* no child Values to release */
-        case OBJ_CLASS: {
-            ObjClass *cls = (ObjClass *)obj;
-            if (cls->prototype) release_obj((Object*)cls->prototype);
-            if (cls->base) release_obj((Object*)cls->base);
-            for (int i = 0; i < cls->method_count; i++) {
-                if (cls->methods[i]) release_obj((Object*)cls->methods[i]);
-            }
-            if (cls->fields) release_obj((Object*)cls->fields);
-            cls->fields = NULL;
-            break;
-        }
-        case OBJ_BOUND_METHOD: {
-            ObjBoundMethod *bm = (ObjBoundMethod *)obj;
-            release_value(bm->self);
-            if (bm->fn) release_obj((Object*)bm->fn);
-            break;
-        }
-        case OBJ_MODULE: {
-            ObjModule *mod = (ObjModule *)obj;
-            if (mod->name) release_obj((Object*)mod->name);
-            if (mod->exports) release_obj((Object*)mod->exports);
-            break;
-        }
-        case OBJ_BUFFER: break;
-        case OBJ_INT64: break;
-        case OBJ_USERDATA: break;
-        case OBJ_VECTOR: break;
-        case OBJ_MATRIX: break;
-        default: break;
-    }
 
-    free_object_container(obj);
-}
 
+/* ============================================================ */
+/* Value predicates                                              */
 
 /* ============================================================ */
 /* Value predicates                                              */
@@ -852,8 +759,6 @@ Value instance_get_field(ObjInstance *inst, const char *name) {
 void instance_set_field(ObjInstance *inst, const char *name, Value value) {
     for (int i = 0; i < inst->field_count; i++) {
         if (inst->field_names[i] && strcmp(inst->field_names[i], name) == 0) {
-            release_value(inst->fields[i]);
-            if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
             inst->fields[i] = value;
             return;
         }
@@ -863,7 +768,6 @@ void instance_set_field(ObjInstance *inst, const char *name, Value value) {
         inst->field_names = realloc(inst->field_names, inst->field_capacity * sizeof(char *));
         inst->fields      = realloc(inst->fields,      inst->field_capacity * sizeof(Value));
     }
-    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     inst->field_names[inst->field_count] = strdup(name);
     inst->fields     [inst->field_count] = value;
     inst->field_count++;
@@ -917,7 +821,6 @@ void list_add(ObjList *list, Value value) {
         }
         list->capacity = new_cap;
     }
-    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     if (list->items) {
         list->items[list->count] = value;
     } else {
@@ -948,21 +851,18 @@ void list_insert(ObjList *list, int index, Value value) {
         memmove(&list->inline_items[index + 1], &list->inline_items[index], (list->count - index) * sizeof(Value));
         list->inline_items[index] = value;
     }
-    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     list->count++;
 }
 
 Value list_remove(ObjList *list, int index) {
     if (index < 0 || index >= list->count) { fprintf(stderr, "list.remove: out of bounds\n"); return make_null(); }
     Value v = list->items ? list->items[index] : list->inline_items[index];
-    if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
     if (list->items) {
         memmove(&list->items[index], &list->items[index + 1], (list->count - index - 1) * sizeof(Value));
     } else {
         memmove(&list->inline_items[index], &list->inline_items[index + 1], (list->count - index - 1) * sizeof(Value));
     }
     list->count--;
-    release_value(v);
     return v;
 }
 
@@ -972,11 +872,6 @@ Value list_pop(ObjList *list) {
 }
 
 void list_clear(ObjList *list) {
-    if (list->items) {
-        for (int i = 0; i < list->count; i++) release_value(list->items[i]);
-    } else {
-        for (int i = 0; i < list->count; i++) release_value(list->inline_items[i]);
-    }
     list->count = 0;
 }
 
@@ -988,13 +883,10 @@ Value list_get(ObjList *list, int index) {
 void list_set(ObjList *list, int index, Value value) {
     if (index < 0 || index >= list->count) { fprintf(stderr, "list: index out of bounds\n"); return; }
     if (list->items) {
-        release_value(list->items[index]);
         list->items[index] = value;
     } else {
-        release_value(list->inline_items[index]);
         list->inline_items[index] = value;
     }
-    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
 }
 
 int list_length(ObjList *list) { return list->count; }
@@ -1054,9 +946,7 @@ void dict_set(ObjDict *d, Value key, Value value) {
     if (d->indices == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key)) {
-                release_value(d->inline_entries[i].value);
                 d->inline_entries[i].value = value;
-                if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
                 return;
             }
         }
@@ -1064,8 +954,6 @@ void dict_set(ObjDict *d, Value key, Value value) {
             d->inline_entries[d->entry_count].hash = hash_value(key);
             d->inline_entries[d->entry_count].key = key;
             d->inline_entries[d->entry_count].value = value;
-            if (IS_OBJ(key) && AS_OBJ(key)) retain_obj(AS_OBJ(key));
-            if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
             d->entry_count++;
             return;
         }
@@ -1089,8 +977,6 @@ void dict_set(ObjDict *d, Value key, Value value) {
         } else {
             int e_idx = d->indices[i];
             if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
-                release_value(d->entries[e_idx].value);
-                if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
                 d->entries[e_idx].value = value;
                 return;
             }
@@ -1106,8 +992,6 @@ void dict_set(ObjDict *d, Value key, Value value) {
     d->entries[e_idx].hash = hash;
     d->entries[e_idx].key = key;
     d->entries[e_idx].value = value;
-    if (IS_OBJ(key) && AS_OBJ(key)) retain_obj(AS_OBJ(key));
-    if (IS_OBJ(value) && AS_OBJ(value)) retain_obj(AS_OBJ(value));
     d->entry_count++;
 }
 
@@ -1170,9 +1054,6 @@ Value dict_remove(ObjDict *d, Value key) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key)) {
                 Value v = d->inline_entries[i].value;
-                if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
-                release_value(d->inline_entries[i].key);
-                release_value(d->inline_entries[i].value);
                 memmove(&d->inline_entries[i], &d->inline_entries[i + 1],
                         (d->entry_count - i - 1) * sizeof(ObjDictEntry));
                 d->entry_count--;
@@ -1193,9 +1074,6 @@ Value dict_remove(ObjDict *d, Value key) {
             if (d->entries[e_idx].hash == hash && values_equal(d->entries[e_idx].key, key)) {
                 d->indices[i] = -2;
                 Value v = d->entries[e_idx].value;
-                if (IS_OBJ(v) && AS_OBJ(v)) retain_obj(AS_OBJ(v));
-                release_value(d->entries[e_idx].key);
-                release_value(d->entries[e_idx].value);
                 d->entries[e_idx].key = EMPTY_VAL;
                 d->entries[e_idx].value = make_null();
                 d->entry_count--;
@@ -1211,17 +1089,13 @@ Value dict_remove(ObjDict *d, Value key) {
 
 void dict_clear(ObjDict *d) {
     if (d->indices == NULL) {
-        for (int i = 0; i < d->entry_count; i++) {
-            release_value(d->inline_entries[i].key);
-            release_value(d->inline_entries[i].value);
-        }
         d->entry_count = 0;
         return;
     }
     for (int i = 0; i < d->next_entry; i++) {
         if (d->entries[i].key != EMPTY_VAL) {
-            release_value(d->entries[i].key);
-            release_value(d->entries[i].value);
+            d->entries[i].key = EMPTY_VAL;
+            d->entries[i].value = make_null();
         }
     }
     for (int i = 0; i < d->capacity; i++) d->indices[i] = -1;

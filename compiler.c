@@ -1842,7 +1842,6 @@ static void compile_class(Compiler *c, Decl *decl) {
             && IS_CLASS(parent_val)) {
             ObjClass *parent = (ObjClass*)AS_OBJ(parent_val);
             cls->base = parent;
-            retain_obj((Object*)parent);
 
             /* Copy parent's prototype fields to new prototype */
             if (parent->prototype) {
@@ -1860,7 +1859,6 @@ static void compile_class(Compiler *c, Decl *decl) {
                 memcpy(cls->methods, parent->methods, sizeof(ObjFunction*) * parent->method_count);
                 for (int i = 0; i < parent->method_count; i++) {
                     cls->method_names[i] = strdup(parent->method_names[i]);
-                    if (cls->methods[i]) retain_obj((Object*)cls->methods[i]);
                 }
                 cls->method_count = parent->method_count;
                 cls->method_capacity = parent->method_count;
@@ -1944,7 +1942,6 @@ static void compile_class(Compiler *c, Decl *decl) {
         }
         cls->method_names[cls->method_count] = strdup(m->data.function.name);
         cls->methods[cls->method_count] = mf;
-        retain_obj((Object*)mf);
         cls->method_count++;
     }
 

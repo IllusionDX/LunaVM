@@ -170,12 +170,11 @@ typedef enum {
 
 typedef struct Object {
     ObjType        type;
-    int            refcount;
     bool           is_marked;
     size_t         size;
-    struct Object *next;    /* intrusive GC linked list */
-    struct Object *prev;    /* doubly linked for O(1) removal */
-    struct Object *finalizer_next; /* intrusive userdata finalizer list */
+    struct Object *next;
+    struct Object *prev;
+    struct Object *finalizer_next;
     struct Object *finalizer_prev;
 } Object;
 
@@ -455,7 +454,7 @@ bool  values_equal(Value a, Value b);
 char *value_to_string(Value v);     /* caller must free() */
 
 /* ============================================================ */
-/* ARC memory management                                         */
+/* GC memory management                                          */
 /* ============================================================ */
 
 extern Object *all_objects;
@@ -465,35 +464,7 @@ extern size_t bytes_allocated;
 extern size_t next_gc_threshold;
 extern bool gc_collecting;
 
-void free_object(Object *obj);
 void free_object_container(Object *obj);
-
-static inline void retain_obj(Object *obj) {
-    if (obj) obj->refcount++;
-}
-
-static inline void release_obj(Object *obj) {
-    if (!obj) return;
-    if (obj->refcount <= 0) {
-#ifndef NDEBUG
-        fprintf(stderr, "BUG: invalid release! obj=%p type=%d refcount=%d\n", (void*)obj, obj->type, obj->refcount);
-        abort();
-#else
-        return;
-#endif
-    }
-    if (--obj->refcount <= 0 && !gc_collecting) {
-        free_object(obj);
-    }
-}
-
-static inline void retain_value(Value v) {
-    if (IS_OBJ(v)) retain_obj(AS_OBJ(v));
-}
-
-static inline void release_value(Value v) {
-    if (IS_OBJ(v)) release_obj(AS_OBJ(v));
-}
 
 static inline double value_to_double(Value v) {
     if (IS_INT(v)) return (double)AS_INT(v);

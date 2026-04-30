@@ -763,7 +763,6 @@ void vm_register_os_module(VM *vm) {
 
     /* File class */
     file_class = new_class("File", NULL);
-    retain_obj((Object*)file_class);
 
     class_add_native_method(file_class, "read_line", file_read_line);
     class_add_native_method(file_class, "read_all",  file_read_all);

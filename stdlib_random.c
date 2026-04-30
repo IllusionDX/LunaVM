@@ -128,12 +128,8 @@ static void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn
 
 static void class_add_static(ObjClass *cls, const char *name, NativeFn fn) {
     ObjFunction *f = new_native_function(name, fn);
-    retain_obj((Object*)f);
     ObjString *key = new_string(name, (int)strlen(name));
-    retain_obj((Object*)key);
     dict_set(cls->fields, make_obj((Object*)key), make_obj((Object*)f));
-    release_obj((Object*)key);
-    release_obj((Object*)f);
 }
 
 static ObjList *get_state_list(Value self) {
@@ -257,14 +253,12 @@ static Value make_rng_instance(VM *vm, RngAlgo algo, uint64_t seed) {
 
     int state_slots = (algo == RNG_PCG32) ? 5 : 2;
     ObjList *state_list = new_list(state_slots);
-    retain_obj((Object*)state_list);
 
     for (int i = 0; i < state_slots; i++) list_add(state_list, make_int(0));
 
     rng_init(state_list, algo, seed);
 
     instance_set_field(inst, "_state", make_obj((Object*)state_list));
-    release_obj((Object*)state_list);
 
     return make_obj((Object*)inst);
 }
@@ -364,7 +358,6 @@ static Value rng_shuffle(VM *vm, Value *args, int n) {
 
 void vm_register_random_module(VM *vm) {
     rng_class = new_class("Random", NULL);
-    retain_obj((Object*)rng_class);
 
     class_add_native_method(rng_class, "int",    rng_int);
     class_add_native_method(rng_class, "float",  rng_float);

@@ -30,9 +30,7 @@ void vm_set_global(VM *vm, const char *name, Value value, bool is_const) {
     for (GlobalEntry *e = vm->globals[bucket]; e; e = e->next) {
         if (strcmp(e->name, name) == 0) {
             if (e->is_const) { fprintf(stderr, "vm: cannot reassign const '%s'\n", name); return; }
-            if (IS_OBJ(e->value)) release_obj(AS_OBJ(e->value));
             e->value = value;
-            if (IS_OBJ(value)) retain_obj(AS_OBJ(value));
             /* invalidate possible cache entry */
             int ic_idx = h & (IC_CACHE_SIZE - 1);
             if (vm->global_ic[ic_idx].entry == e) vm->global_ic[ic_idx].key = NULL;
@@ -45,7 +43,6 @@ void vm_set_global(VM *vm, const char *name, Value value, bool is_const) {
     ne->is_const = is_const;
     ne->next     = vm->globals[bucket];
     vm->globals[bucket] = ne;
-    if (IS_OBJ(value)) retain_obj(AS_OBJ(value));
 }
 
 bool vm_get_global(VM *vm, const char *name, Value *out) {
