@@ -387,7 +387,7 @@ This convention applies retroactively to `random` (→ exports `Random`), `buffe
 
 | Version | Milestone |
 |---------|-----------|
-| `0.5.x` | Reflection — `has_method(obj, "name")` for runtime duck-typing. |
+| `0.5.x` | Reflection — `has_method(obj, "name")` for runtime duck-typing. File-as-class pattern (`extends` at top-level makes the script a class, GDScript-style) for game engine embedding. |
 | `0.6.x` | Debugger / profiler. |
 | `0.7.x` | Coroutines / async (`await`, `async def`). |
 | `0.8.x` | Generation 2 optimized VM lands. Type specialization from hints. |
