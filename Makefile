@@ -2,7 +2,7 @@
 # Supports: Linux, macOS, Windows (MinGW)
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto -Isrc/stdlib -I.
+CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto -Isrc -Isrc/stdlib
 LDFLAGS = -lm -flto
 
 # Platform detection
@@ -18,10 +18,10 @@ else
 endif
 
 # Source files
-SOURCES = main.c value.c ast_free.c \
-    luna.c \
-    lexer.c parser.c chunk.c vm.c compiler.c \
-    parse_expr.c parse_stmt.c parse_decl.c fstring.c module.c \
+SOURCES = src/main.c src/value.c src/ast_free.c \
+    src/luna.c \
+    src/lexer.c src/parser.c src/chunk.c src/vm.c src/compiler.c \
+    src/parse_expr.c src/parse_stmt.c src/parse_decl.c src/fstring.c src/module.c \
     src/stdlib/stdlib_math.c src/stdlib/stdlib_random.c src/stdlib/stdlib_noise.c \
     src/stdlib/stdlib_io.c src/stdlib/stdlib_time.c src/stdlib/stdlib_os.c \
     src/stdlib/stdlib_buffer.c src/stdlib/stdlib_string.c \
@@ -31,14 +31,14 @@ SOURCES = main.c value.c ast_free.c \
 OBJECTS = $(SOURCES:.c=.o)
 
 # Header files
-HEADERS = ast.h value.h lexer.h parser.h chunk.h vm.h opcode.h compiler.h \
-    luna.h \
-    parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h \
+HEADERS = src/ast.h src/value.h src/lexer.h src/parser.h src/chunk.h src/vm.h src/opcode.h src/compiler.h \
+    src/luna.h \
+    src/parse_expr.h src/parse_stmt.h src/parse_decl.h src/fstring.h src/module.h \
     src/stdlib/stdlib_math.h src/stdlib/stdlib_random.h src/stdlib/stdlib_noise.h \
     src/stdlib/stdlib_io.h src/stdlib/stdlib_time.h src/stdlib/stdlib_os.h \
     src/stdlib/stdlib_buffer.h src/stdlib/stdlib_string.h \
     src/stdlib/stdlib_net.h src/stdlib/stdlib_json.h \
-    vm_opcodes.inc
+    src/vm_opcodes.inc
 
 # Default target
 all: $(TARGET)
