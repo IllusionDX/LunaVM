@@ -387,9 +387,7 @@ This convention applies retroactively to `random` (→ exports `Random`), `buffe
 
 | Version | Milestone |
 |---------|-----------|
-| `0.3.x` | Better error messages with line/column context and suggestions. Standard library expansion (io — done, os — done, time — done, noise — done, strings — deferred to unified class model). |
-| `0.4.x` | **ARC removal → shift to pure tracing GC.** Unified Classes Model — all values (primitives + objects) have a canonical class for method dispatch (`get_class()`). Reflection — `has_method(obj, "name")` for runtime duck-typing. Embedding / C API (`LunaState`, `luna_dofile`, `luna_push_xxx`, etc.). |
-| `0.5.x` | Incremental Tracing GC (tricolor mark-sweep). |
+| `0.5.x` | Reflection — `has_method(obj, "name")` for runtime duck-typing. |
 | `0.6.x` | Debugger / profiler. |
 | `0.7.x` | Coroutines / async (`await`, `async def`). |
 | `0.8.x` | Generation 2 optimized VM lands. Type specialization from hints. |
