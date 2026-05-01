@@ -53,7 +53,7 @@ $(TARGET): $(OBJECTS)
 
 # Clean build artifacts
 clean:
-	del /Q $(subst /,\,$(OBJECTS)) $(TARGET) 2>nul || true
+	del /Q $(subst /,\,$(OBJECTS)) $(TARGET) || true
 
 # Rebuild
 rebuild: clean all
