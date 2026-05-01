@@ -10,11 +10,15 @@ ifeq ($(OS),Windows_NT)
     TARGET = luna.exe
     RM = del /Q
     EXE_EXT = .exe
+    SHARED_LIB = luna.dll
+    SHARED_IMPLIB = luna.lib
     LDFLAGS += -lws2_32
 else
     TARGET = luna
     RM = rm -f
     EXE_EXT =
+    SHARED_LIB = libluna.so
+    SHARED_IMPLIB =
 endif
 
 # Source files
@@ -29,6 +33,7 @@ SOURCES = src/main.c src/value.c src/ast_free.c \
     src/stdlib/vm_builtins.c
 
 OBJECTS = $(SOURCES:.c=.o)
+LIB_OBJECTS = $(filter-out src/main.o, $(OBJECTS))
 
 # Header files
 HEADERS = src/ast.h src/value.h src/lexer.h src/parser.h src/chunk.h src/vm.h src/opcode.h src/compiler.h \
@@ -53,7 +58,7 @@ $(TARGET): $(OBJECTS)
 
 # Clean build artifacts
 clean:
-	cmd /c "del /Q $(subst /,\,$(OBJECTS)) $(TARGET) 2>nul" || true
+	cmd /c "del /Q $(subst /,\,$(OBJECTS)) $(TARGET) $(SHARED_LIB) $(SHARED_IMPLIB) 2>nul" || true
 
 # Rebuild
 rebuild: clean all
@@ -77,6 +82,15 @@ release: $(TARGET)
 # Static build (self-contained executable, no DLL dependencies)
 static: LDFLAGS = -lm -static
 static: $(TARGET)
+
+# Shared library (libluna.so / luna.dll)
+shared: CFLAGS += -fPIC
+shared: $(LIB_OBJECTS)
+ifeq ($(OS),Windows_NT)
+	$(CC) -shared -o $(SHARED_LIB) $(LIB_OBJECTS) $(LDFLAGS) -Wl,--out-implib,$(SHARED_IMPLIB)
+else
+	$(CC) -shared -o $(SHARED_LIB) $(LIB_OBJECTS) $(LDFLAGS)
+endif
 
 # Static analysis
 analyze:

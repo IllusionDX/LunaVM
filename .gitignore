@@ -1,5 +1,10 @@
 *.o
 *.exe
+*.dll
+*.lib
+*.so
+*.dylib
+*.a
 *.pyc
 __pycache__/
 *.luna
