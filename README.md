@@ -125,7 +125,7 @@ Use `?.[]` when you want safe lookup that returns `null`.
 
 **Comparison:** `==`, `!=`, `<`, `>`, `<=`, `>=`
 
-**Logical:** `and`, `or`, `not`
+**Logical:** `and`, `or`, `not` (also `&&`, `||`, `!`)
 
 **Assignment:** `=`, `+=`, `-=`, `*=`, `/=`
 
