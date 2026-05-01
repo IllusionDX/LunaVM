@@ -463,6 +463,13 @@ static void gc_step(VM *vm) {
                 e = e->next;
             }
         }
+        for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
+            GlobalEntry *e = vm->system_globals[i];
+            while (e) {
+                mark_value(e->value);
+                e = e->next;
+            }
+        }
         for (int i = 0; i < vm->frame_count; i++) {
             if (vm->frames[i].closure) mark_object((Object*)vm->frames[i].closure);
             if (vm->frames[i].fn) mark_object((Object*)vm->frames[i].fn);
@@ -829,6 +836,14 @@ void vm_free(VM *vm) {
             free(e->name); free(e); e = nx;
         }
         vm->globals[i] = NULL;
+    }
+    for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
+        GlobalEntry *e = vm->system_globals[i];
+        while (e) {
+            GlobalEntry *nx = e->next;
+            free(e->name); free(e); e = nx;
+        }
+        vm->system_globals[i] = NULL;
     }
 
     vm->module_cache = NULL;

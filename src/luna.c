@@ -465,6 +465,28 @@ void luna_set_global(luna_State *L, const char *name) {
 }
 
 /* ============================================================ */
+/* System globals (persist across modules)                       */
+/* ============================================================ */
+
+void luna_set_system_global(luna_State *L, const char *name) {
+    if (L->top < 1) return;
+    Value val = L->stack[L->top - 1];
+    vm_set_system_global(L->vm, name, val);
+    L->top--;
+}
+
+int luna_get_system_global(luna_State *L, const char *name) {
+    Value val;
+    if (!vm_get_global(L->vm, name, &val)) {
+        luna_push_nil(L);
+        return LUNA_TNIL;
+    }
+    if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
+    L->stack[L->top++] = val;
+    return luna_type(L, L->top - 1);
+}
+
+/* ============================================================ */
 /* C function dispatch — called from vm_opcodes.inc              */
 /* ============================================================ */
 

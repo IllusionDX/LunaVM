@@ -59,6 +59,10 @@ bool vm_get_global(VM *vm, const char *name, Value *out) {
     for (GlobalEntry *e = vm->globals[bucket]; e; e = e->next) {
         if (strcmp(e->name, name) == 0) { *out = e->value; return true; }
     }
+    /* fall back to system globals */
+    for (GlobalEntry *e = vm->system_globals[bucket]; e; e = e->next) {
+        if (strcmp(e->name, name) == 0) { *out = e->value; return true; }
+    }
     return false;
 }
 
@@ -79,6 +83,13 @@ bool vm_get_global_fast(VM *vm, ObjString *name, Value *out) {
             return true;
         }
     }
+    /* fall back to system globals (no inline cache for system globals) */
+    for (GlobalEntry *e = vm->system_globals[bucket]; e; e = e->next) {
+        if (e->name == name->chars || strcmp(e->name, name->chars) == 0) {
+            *out = e->value;
+            return true;
+        }
+    }
     return false;
 }
 
@@ -88,6 +99,23 @@ GlobalEntry *vm_resolve_global(VM *vm, const char *name) {
         if (strcmp(e->name, name) == 0) return e;
     }
     return NULL;
+}
+
+void vm_set_system_global(VM *vm, const char *name, Value value) {
+    uint32_t h = hash_cstr(name);
+    uint32_t bucket = h & (VM_GLOBAL_BUCKETS - 1);
+    for (GlobalEntry *e = vm->system_globals[bucket]; e; e = e->next) {
+        if (strcmp(e->name, name) == 0) {
+            e->value = value;
+            return;
+        }
+    }
+    GlobalEntry *ne = malloc(sizeof(GlobalEntry));
+    ne->name     = strdup(name);
+    ne->value    = value;
+    ne->is_const = false;
+    ne->next     = vm->system_globals[bucket];
+    vm->system_globals[bucket] = ne;
 }
 
 void vm_define_native(VM *vm, const char *name, NativeFn fn) {

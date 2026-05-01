@@ -97,6 +97,7 @@ typedef struct VM {
     int         frame_count;
 
     GlobalEntry *globals[VM_GLOBAL_BUCKETS];
+    GlobalEntry *system_globals[VM_GLOBAL_BUCKETS]; /* never swapped on import */
 
     /* Shared value stack */
     Value      *stack;
@@ -182,6 +183,7 @@ void     vm_set_global(VM *vm, const char *name, Value value, bool is_const);
 bool     vm_get_global(VM *vm, const char *name, Value *out);
 bool     vm_get_global_fast(VM *vm, ObjString *name, Value *out);
 GlobalEntry *vm_resolve_global(VM *vm, const char *name);
+void     vm_set_system_global(VM *vm, const char *name, Value value);
 
 VMResult vm_run_chunk(VM *vm, Chunk *chunk);
 

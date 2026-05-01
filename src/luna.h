@@ -109,6 +109,10 @@ void   *luna_to_lightuserdata(luna_State *L, int idx);
 int  luna_get_global(luna_State *L, const char *name);
 void luna_set_global(luna_State *L, const char *name);
 
+/* System globals — persist across modules, visible from all scripts without import */
+void luna_set_system_global(luna_State *L, const char *name);
+int  luna_get_system_global(luna_State *L, const char *name);
+
 /* Call a function (args already on stack, function at bottom) */
 luna_Status luna_pcall(luna_State *L, int nargs, int nresults);
 
