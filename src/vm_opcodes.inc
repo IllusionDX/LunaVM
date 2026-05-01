@@ -44,6 +44,8 @@
         Value _R = RKC;
         if (is_int_type(_L) && is_int_type(_R)) {
             SET_REG(RA, make_int_result(to_i64(_L) + to_i64(_R)));
+        } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
+            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
         } else {
             SET_REG(RA, do_arith(_L, _R, OP_ADD));
         }
@@ -52,9 +54,9 @@
     }
 
     /* 8.  OP_SUB */
-    op_sub: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)-to_i64(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
+    op_sub: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)-to_i64(_R)));}else if(IS_DOUBLE(_L)&&IS_DOUBLE(_R)){SET_REG_PRIM(RA,make_double(AS_DOUBLE(_L)-AS_DOUBLE(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
     /* 9.  OP_MUL */
-    op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)*to_i64(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_MUL));} CHECK_GC; DECODE; goto *op_labels[OP(instr)]; }
+    op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)*to_i64(_R)));}else if(IS_DOUBLE(_L)&&IS_DOUBLE(_R)){SET_REG_PRIM(RA,make_double(AS_DOUBLE(_L)*AS_DOUBLE(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_MUL));} CHECK_GC; DECODE; goto *op_labels[OP(instr)]; }
 
     /* 10. OP_DIV */
     op_div: {
@@ -128,6 +130,8 @@
         Value _R = CONST(RC);
         if (is_int_type(_L) && is_int_type(_R)) {
             SET_REG(RA, make_int_result(to_i64(_L) + to_i64(_R)));
+        } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
+            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
         } else {
             SET_REG(RA, do_arith(_L, _R, OP_ADD));
         }
@@ -140,6 +144,8 @@
         Value _R = CONST(RC);
         if (is_int_type(_L) && is_int_type(_R)) {
             SET_REG(RA, make_int_result(to_i64(_L) * to_i64(_R)));
+        } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
+            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
         } else {
             SET_REG(RA, do_arith(_L, _R, OP_MUL));
         }
@@ -1311,9 +1317,8 @@
         switch (AS_OBJ(obj)->type) {
             case OBJ_INSTANCE: {
                 ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-                uint32_t h = ((uint32_t)(uintptr_t)inst->klass ^ field->hash);
-                int idx = h & (IC_CACHE_SIZE - 1);
-                IC_MemberEntry *ic = &vm->member_ic[idx];
+                uint32_t ic_idx = ((uint32_t)(uintptr_t)CHUNK ^ (uint32_t)IP) & (IC_CACHE_SIZE - 1);
+                IC_MemberEntry *ic = &vm->member_ic[ic_idx];
                 if (ic->klass == inst->klass && ic->name == field) {
                     SET_REG(RA, inst->fields[ic->index]);
                 } else {
@@ -1579,9 +1584,8 @@
         ObjString *field = KSTROBJ(RC);
         if (IS_INSTANCE(obj)) {
             ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-            uint32_t h = ((uint32_t)(uintptr_t)inst->klass ^ field->hash);
-            int idx = h & (IC_CACHE_SIZE - 1);
-            IC_MemberEntry *ic = &vm->member_ic[idx];
+            uint32_t ic_idx = ((uint32_t)(uintptr_t)CHUNK ^ (uint32_t)IP) & (IC_CACHE_SIZE - 1);
+            IC_MemberEntry *ic = &vm->member_ic[ic_idx];
             if (ic->klass == inst->klass && ic->name == field) {
                 SET_FIELD(inst, ic->index, REG(RB));
             } else {
