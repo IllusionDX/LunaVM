@@ -363,7 +363,8 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.4.1-alpha` | Done | ADDK/MULK super instructions (fuse LOADK+arith, ~2.5% on entities, ~13% on fib cumulative). Incremental tri-color GC with write barrier. |
 | `0.4.2-alpha` | Done | Leaf call fast path — skip PUSH_FRAME/RET for methods that make no calls, have no upvalues, no defaults, no try/catch. Saves ~20% on entity update benchmark (0.117s → 0.094s). |
 | `0.4.3-alpha` | Done | Embeddable C API (`luna.h`/`luna.c`): `LunaState`, `luna_dofile`, `luna_push_xxx`, userdata, dict, and C function support for embedding Luna in C apps. Bug fixes: native function dispatch crash (`malloc()` leaves `cfunc` uninitialized; garbage non-NULL causes silent failures via `luna_cfunc_dispatch()`), GC threshold fix, inline cache klass-based, IC_CACHE_SIZE 1024, field_slot_map optimization. `fflush(stdout)` in `bn_print` for immediate output. `make clean` no longer creates spurious `nul` file on Windows (Git Bash). |
-| `0.4.4-alpha` | **Current** | **Performance optimizations:** Arithmetic fast-paths for `Double` precision floats in `OP_ADD`, `OP_SUB`, `OP_MUL`, `OP_ADDK`, and `OP_MULK` (skips `do_arith()` call overhead). Improved property access caching by switching `member_ic` from class-keyed to call-site-keyed (`CHUNK ^ IP`), eliminating cache collisions in hot loops with many entities. bench_entities: 0.112s → 0.084s (~25%). |
+| `0.4.4-alpha` | Done | Performance optimizations: Arithmetic fast-paths for `Double` precision floats in `OP_ADD`, `OP_SUB`, `OP_MUL`, `OP_ADDK`, and `OP_MULK` (skips `do_arith()` call overhead). Improved property access caching by switching `member_ic` from class-keyed to call-site-keyed (`CHUNK ^ IP`), eliminating cache collisions in hot loops with many entities. bench_entities: 0.112s → 0.084s (~25%). |
+| `0.4.5-alpha` | **Current** | **VM Core Optimization:** Threaded dispatch refinement with local register caching (caching `pc` and `REG_BASE` in registers to minimize memory access). Optimized arithmetic fast-paths (`OP_ADDI`, `OP_SUBI`). Stack cleanup overhead reduction. Exception unwinding robustification (PC synchronization). bench_entities: 0.084s → 0.061s. fib30: 0.08s → 0.056s. |
 
 ## The Wave Naming Convention
 
@@ -449,6 +450,10 @@ This convention applies retroactively to `random` (→ exports `Random`), `buffe
 | Medium | **Polymorphic Inline Cache (PIC)** | **S** *Pending* — Cache 2-3 shape entries instead of 1. Makes polymorphic calls (`entity.update()` where entity is `Player|Enemy|NPC`) nearly as fast as monomorphic. | Medium — extends existing IC structures |
 | Low | **Compact String Representation** | **M** *Pending* — Inline strings < 8 bytes directly in `Value` (no heap allocation). **Consumes 1 of 2 free sub-tags (6 or 7), leaving only 1 as general reserve.** The other free sub-tag would ideally be `CHAR` (Unicode code point, 32-bit payload). | Medium — consumes a sub-tag slot |
 | Medium | **Bytecode Peephole (Aggressive)** | **S** *Partial* — `OP_LT`/`OP_LE`/`OP_GT`/`OP_GE` + `OP_JZ` fused (Done). `OP_INCR r0` pending. | Medium — new opcodes + compiler pattern matching |
+| High | **Local VM State Caching** | **S** *Done in 0.4.5-alpha* — Cached `pc` and `REG_BASE` in local registers for faster VM loop dispatch. | Low — VM loop refactor |
+| High | **Exception Unwinding Robustness** | **S** *Done in 0.4.5-alpha* — Fixed `OP_TRY`/`OP_THROW` for correct PC synchronization during stack unwinding. | Medium — VM state management |
+| High | **Arithmetic Fast-paths** | **S** *Done in 0.4.5-alpha* — Optimized `OP_ADDI` and `OP_SUBI` with integer overflow checks, skipping `do_arith()` for common small-integer cases. | Low — opcode handler optimization |
+| Medium | **Tail-call Elimination** | **S** *Pending* — Transform `CALL` + `RET` into direct jumps for tail-recursive functions. Reduces stack overhead for deep recursion. | High — VM frame management change |
 
 ## Future Ideas & Evolution
 
