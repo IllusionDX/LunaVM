@@ -20,6 +20,9 @@
 #include <stdint.h>
 #include <string.h>
 
+/* Forward declaration for embedder C function callback */
+struct luna_State;
+
 #if defined(__GNUC__) || defined(__clang__)
 #define LUNA_LIKELY(x)   __builtin_expect(!!(x), 1)
 #define LUNA_UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -390,6 +393,8 @@ typedef struct ObjFunction {
     bool is_native;
     bool is_leaf;
     NativeFn native_fn;
+    /* Embedder callback (non-NULL for luna_CFunction wrappers) */
+    int (*cfunc)(struct luna_State *L);
     /* Closure metadata */
     int upvalue_count;
     UpvalueDesc *upvalue_descriptors;

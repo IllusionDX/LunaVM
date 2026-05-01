@@ -115,6 +115,9 @@ typedef struct VM {
     /* Last unhandled exception */
     Value       last_exception;
 
+    /* Last return value from executed chunk (set by OP_RET top-level path) */
+    Value       last_return_value;
+
     /* Process arguments visible to stdlib modules */
     int         process_argc;
     char      **process_argv;
@@ -158,6 +161,9 @@ typedef struct VM {
 
     /* Native exception jump stack (for longjmp from C builtins) */
     LunaJump *native_jump;
+
+    /* Opaque pointer for embedder (used by luna.h GC marking) */
+    void *api_state;
 } VM;
 
 /* ---- Result codes ---- */
@@ -179,12 +185,24 @@ GlobalEntry *vm_resolve_global(VM *vm, const char *name);
 
 VMResult vm_run_chunk(VM *vm, Chunk *chunk);
 
+/* Call a Luna function/closure/bound-method/native from C.
+ * Handles frame setup, execution, and result extraction.
+ * Returns VM_OK on success, VM_EXCEPTION on unhandled error. */
+VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *out);
+
 /* Native exception throw — usable from C builtin functions */
 void luna_throw(VM *vm, struct ObjClass *error_class, const char *format, ...);
 bool vm_call_native(VM *vm, NativeFn fn, Value *args, int arg_count, Value *out);
 
 /* Stack trace — formats the call stack into a string buffer (GCC-style) */
 void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error_msg);
+
+/* GC: mark a single value from outside vm.c (e.g., embedder API stack) */
+void vm_mark_value(VM *vm, Value v);
+void mark_and_sweep(VM *vm);
+
+/* C function dispatch — called by VM when fn->cfunc is non-NULL */
+Value luna_cfunc_dispatch(VM *vm, struct ObjFunction *fn, Value *args, int arg_count);
 
 /* Upvalue capture — declared here because vm.c defines it after vm_run_chunk */
 ObjUpvalue *capture_upvalue(VM *vm, int stack_idx);

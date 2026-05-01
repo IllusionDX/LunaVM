@@ -19,6 +19,7 @@ endif
 
 # Source files
 SOURCES = main.c value.c ast_free.c \
+    luna.c \
     lexer.c parser.c chunk.c vm.c compiler.c \
     parse_expr.c parse_stmt.c parse_decl.c fstring.c module.c \
     src/stdlib/stdlib_math.c src/stdlib/stdlib_random.c src/stdlib/stdlib_noise.c \
@@ -31,6 +32,7 @@ OBJECTS = $(SOURCES:.c=.o)
 
 # Header files
 HEADERS = ast.h value.h lexer.h parser.h chunk.h vm.h opcode.h compiler.h \
+    luna.h \
     parse_expr.h parse_stmt.h parse_decl.h fstring.h module.h \
     src/stdlib/stdlib_math.h src/stdlib/stdlib_random.h src/stdlib/stdlib_noise.h \
     src/stdlib/stdlib_io.h src/stdlib/stdlib_time.h src/stdlib/stdlib_os.h \

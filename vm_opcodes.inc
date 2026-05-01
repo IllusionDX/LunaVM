@@ -461,6 +461,12 @@
                     FRAME.base = cf->base + fn_reg + 1;
                     CHUNK = fn->chunk;
                     IP = 0;
+                    int _needed = FRAME.base + fn->chunk->max_registers;
+                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                    }
+                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                         vm->stack[FRAME.base + _i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
@@ -477,7 +483,11 @@
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
                 Value result;
-                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                if (fn->cfunc) {
+                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
+                } else {
+                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                }
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             }
@@ -494,6 +504,12 @@
                 FRAME.base = cf->base + fn_reg + 1;
                 CHUNK = fn->chunk;
                 IP = 0;
+                int _needed = FRAME.base + fn->chunk->max_registers;
+                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                     vm->stack[FRAME.base + _i] = make_null();
                 DECODE; goto *op_labels[OP(instr)];
@@ -508,7 +524,11 @@
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
                 Value result;
-                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                if (fn->cfunc) {
+                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
+                } else {
+                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                }
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             }
@@ -525,6 +545,12 @@
                 FRAME.base = cf->base + fn_reg + 1;
                 CHUNK = fn->chunk;
                 IP = 0;
+                int _needed = FRAME.base + fn->chunk->max_registers;
+                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                     vm->stack[FRAME.base + _i] = make_null();
                 DECODE; goto *op_labels[OP(instr)];
@@ -540,7 +566,11 @@
                 scratch[0] = bm->self;
                 for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
                 Value result;
-                if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+                if (fn->cfunc) {
+                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
+                } else {
+                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+                }
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             }
@@ -557,6 +587,12 @@
                 FRAME.base = cf->base + fn_reg;
                 CHUNK = fn->chunk;
                 IP = 0;
+                int _needed = FRAME.base + fn->chunk->max_registers;
+                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                 for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
                     vm->stack[FRAME.base + _i] = make_null();
                 DECODE; goto *op_labels[OP(instr)];
@@ -579,7 +615,11 @@
                     scratch[0] = fn_val;
                     for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
                     Value result;
-                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+                    if (fn->cfunc) {
+                        result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
+                    } else {
+                        if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+                    }
                     SET_REG(ret_reg, result);
                     DECODE; goto *op_labels[OP(instr)];
                 }
@@ -595,6 +635,12 @@
                     FRAME.base = cf->base + fn_reg;
                     CHUNK = fn->chunk;
                     IP = 0;
+                    int _needed = FRAME.base + fn->chunk->max_registers;
+                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                    }
+                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
                         vm->stack[FRAME.base + _i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
@@ -652,6 +698,7 @@
             DECODE; goto *op_labels[OP(instr)];
         }
         if (vm->frame_count <= 1) {
+            vm->last_return_value = retval;
             if (LUNA_UNLIKELY(vm->open_upvalues)) close_upvalues(vm, 0);
             for (int i = 0; i < FRAME.chunk->max_registers; i++) {
                 vm->stack[FRAME.base + i] = make_null();
@@ -1033,8 +1080,17 @@
         Value key = REG(RB);
         Value val = REG(RC);
         if (IS_OBJ(obj) && AS_OBJ(obj)) {
-            if (IS_LIST(obj) && IS_INT(key)) list_set((ObjList*)AS_OBJ(obj), AS_INT(key), val);
-            else if (IS_DICT(obj)) dict_set((ObjDict*)AS_OBJ(obj), key, val);
+            if (IS_LIST(obj) && IS_INT(key)) {
+                list_set((ObjList*)AS_OBJ(obj), AS_INT(key), val);
+            } else if (IS_DICT(obj)) {
+                dict_set((ObjDict*)AS_OBJ(obj), key, val);
+            } else {
+                _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: invalid index assignment");
+                goto op_throw;
+            }
+        } else {
+            _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: invalid index assignment");
+            goto op_throw;
         }
         gc_write_barrier(obj, val);
         DECODE; goto *op_labels[OP(instr)];
@@ -1552,6 +1608,9 @@
                 _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: vector has no field");
                 goto op_throw;
             }
+        } else {
+            _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: cannot set field on this type");
+            goto op_throw;
         }
         gc_write_barrier(obj, REG(RB));
         DECODE; goto *op_labels[OP(instr)];
@@ -1627,7 +1686,11 @@
                     if (IS_FUNCTION(fn_val)) {
                         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
                         if (fn->is_native) {
-                            if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                            if (fn->cfunc) {
+                                result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
+                            } else {
+                                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                            }
                         } else if (vm->frame_count < MAX_FRAMES) {
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(fn->is_leaf)) {
@@ -1642,6 +1705,12 @@
                                 FRAME.base = cf->base + obj_reg + 2;
                                 CHUNK = fn->chunk;
                                 IP = 0;
+                                int _needed = FRAME.base + fn->chunk->max_registers;
+                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                                     vm->stack[FRAME.base + _i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
@@ -1675,7 +1744,11 @@
                         ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
                         ObjFunction *fn = cl->function;
                         if (fn->is_native) {
-                            if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                            if (fn->cfunc) {
+                                result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
+                            } else {
+                                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                            }
                         } else if (vm->frame_count < MAX_FRAMES) {
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(fn->is_leaf)) {
@@ -1690,6 +1763,12 @@
                                 FRAME.base = cf->base + obj_reg + 2;
                                 CHUNK = fn->chunk;
                                 IP = 0;
+                                int _needed = FRAME.base + fn->chunk->max_registers;
+                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                                     vm->stack[FRAME.base + _i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
@@ -1729,13 +1808,17 @@
                     }
                     break;
                 }
-                case OBJ_MODULE: {
+case OBJ_MODULE: {
                     ObjModule *mod = (ObjModule*)AS_OBJ(obj);
                     Value fn_val = dict_get(mod->exports, make_obj((Object*)((ObjString*)AS_OBJ(method_val))));
                     if (IS_FUNCTION(fn_val)) {
                         ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
                         if (fn->is_native) {
-                            if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                            if (fn->cfunc) {
+                                result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
+                            } else {
+                                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                            }
                         } else if (vm->frame_count < MAX_FRAMES) {
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(fn->is_leaf)) {
@@ -1750,6 +1833,12 @@
                                 FRAME.base = cf->base + obj_reg + 2;
                                 CHUNK = fn->chunk;
                                 IP = 0;
+                                int _needed = FRAME.base + fn->chunk->max_registers;
+                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                                     vm->stack[FRAME.base + _i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
@@ -1783,7 +1872,11 @@
                         ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
                         ObjFunction *fn = cl->function;
                         if (fn->is_native) {
-                            if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                            if (fn->cfunc) {
+                                result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
+                            } else {
+                                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                            }
                         } else if (vm->frame_count < MAX_FRAMES) {
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(fn->is_leaf)) {
@@ -1798,6 +1891,12 @@
                                 FRAME.base = cf->base + obj_reg + 2;
                                 CHUNK = fn->chunk;
                                 IP = 0;
+                                int _needed = FRAME.base + fn->chunk->max_registers;
+                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                                     vm->stack[FRAME.base + _i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
@@ -1868,6 +1967,12 @@
                                     FRAME.base = cf->base + obj_reg + 1;
                                     CHUNK = method->chunk;
                                     IP = 0;
+                                    int _needed = FRAME.base + method->chunk->max_registers;
+                                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                    }
+                                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                     for (int _i = 1 + nargs; _i < method->chunk->max_registers; _i++)
                                         vm->stack[FRAME.base + _i] = make_null();
                                     DECODE; goto *op_labels[OP(instr)];
@@ -1943,6 +2048,12 @@
                                 CHUNK = method->chunk;
                                 IP = 0;
                                 vm->stack[FRAME.base] = obj; /* self at reg 0 */
+                                int _needed = FRAME.base + method->chunk->max_registers;
+                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = 1 + nargs; _i < method->chunk->max_registers; _i++)
                                     vm->stack[FRAME.base + _i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
@@ -2036,6 +2147,12 @@
                                 FRAME.base = cf->base + self_reg + 1;
                                 CHUNK = m->chunk;
                                 IP = 0;
+                                int _needed = FRAME.base + m->chunk->max_registers;
+                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                }
+                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = 1 + nargs; _i < m->chunk->max_registers; _i++)
                                     vm->stack[FRAME.base + _i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
@@ -2220,7 +2337,11 @@
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
                 Value result;
-                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                if (fn->cfunc) {
+                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
+                } else {
+                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                }
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -2237,6 +2358,12 @@
                     FRAME.base = cf->base + fn_reg + 1;
                     CHUNK = fn->chunk;
                     IP = 0;
+                    int _needed = FRAME.base + fn->chunk->max_registers;
+                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                    }
+                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                         vm->stack[FRAME.base + _i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
@@ -2278,7 +2405,11 @@
                 Value scratch[256];
                 for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
                 Value result;
-                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                if (fn->cfunc) {
+                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
+                } else {
+                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
+                }
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -2295,6 +2426,12 @@
                     FRAME.base = cf->base + fn_reg + 1;
                     CHUNK = fn->chunk;
                     IP = 0;
+                    int _needed = FRAME.base + fn->chunk->max_registers;
+                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                    }
+                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
                         vm->stack[FRAME.base + _i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
@@ -2337,7 +2474,11 @@
                 scratch[0] = bm->self;
                 for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
                 Value result;
-                if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+                if (fn->cfunc) {
+                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
+                } else {
+                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+                }
                 SET_REG(ret_reg, result);
                 DECODE; goto *op_labels[OP(instr)];
             } else {
@@ -2355,6 +2496,12 @@
                     FRAME.base = cf->base + fn_reg;
                     CHUNK = fn->chunk;
                     IP = 0;
+                    int _needed = FRAME.base + fn->chunk->max_registers;
+                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                    }
+                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
                         vm->stack[FRAME.base + _i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
@@ -2592,7 +2739,11 @@
             scratch[0] = obj;
             for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(obj_reg + 2 + i);
             Value result;
-            if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+            if (fn->cfunc) {
+                result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
+            } else {
+                if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+            }
         } else if (vm->frame_count < MAX_FRAMES) {
             /* Leaf fast path: skip full frame push */
             if (LUNA_LIKELY(fn->is_leaf)) {
@@ -2605,6 +2756,12 @@
                 CHUNK = fn->chunk;
                 IP = 0;
                 vm->stack[FRAME.base] = obj;
+                int _needed = FRAME.base + fn->chunk->max_registers;
+                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
+                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
+                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                }
+                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                 for (int _i = 1 + nargs; _i < fn->chunk->max_registers; _i++)
                     vm->stack[FRAME.base + _i] = make_null();
                 DECODE; goto *op_labels[OP(instr)];
@@ -2646,6 +2803,7 @@
     /* 68. OP_HALT */
     op_halt: {
         CallFrame *frame = &FRAME;
+        vm->last_return_value = REG(0);
         close_upvalues(vm, 0);
         
         frame->kw_args = make_null();
