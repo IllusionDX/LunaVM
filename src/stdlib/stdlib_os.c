@@ -241,6 +241,14 @@ static void set_file_handle(ObjInstance *inst, FILE *fp, const char *path, const
 }
 
 static void clear_file_handle(ObjInstance *inst) {
+    Value handle = instance_get_field(inst, "_handle");
+    if (IS_USERDATA(handle) && AS_OBJ(handle)) {
+        ObjUserdata *ud = (ObjUserdata*)AS_OBJ(handle);
+        if (ud->data) {
+            LunaFile *file = (LunaFile*)ud->data;
+            if (file->fp) { fclose(file->fp); file->fp = NULL; }
+        }
+    }
     instance_set_field(inst, "_handle", make_null());
 }
 

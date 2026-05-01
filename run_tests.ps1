@@ -31,7 +31,7 @@ Get-ChildItem "tests\*.luna" | ForEach-Object {
     Remove-Item $tmpFile -ErrorAction SilentlyContinue
 
     # Strip DEBUG: lines from output (keep errors/vm messages)
-    $cleanOutput = ($output -split "`r?`n" | Where-Object { $_ -notmatch '^DEBUG:' }) -join "`n"
+    $cleanOutput = $output
     if ($cleanOutput) { $cleanOutput = $cleanOutput.TrimEnd() }
 
     Add-Content -Path $OutFile -Value "===== $testName ====="

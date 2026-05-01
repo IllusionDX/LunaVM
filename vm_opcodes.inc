@@ -1311,19 +1311,20 @@
         switch (AS_OBJ(obj)->type) {
             case OBJ_INSTANCE: {
                 ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-                uint32_t h = ((uint32_t)(uintptr_t)inst ^ field->hash);
+                uint32_t h = ((uint32_t)(uintptr_t)inst->klass ^ field->hash);
                 int idx = h & (IC_CACHE_SIZE - 1);
                 IC_MemberEntry *ic = &vm->member_ic[idx];
-                if (ic->inst == inst && ic->name == field) {
+                if (ic->klass == inst->klass && ic->name == field) {
                     SET_REG(RA, inst->fields[ic->index]);
                 } else {
                     int fi = -1;
-                    for (int i = 0; i < inst->field_count; i++) {
-                        if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
+                    if (inst->klass && inst->klass->field_slot_map) {
+                        Value slot_v = dict_get(inst->klass->field_slot_map, make_obj((Object*)field));
+                        if (IS_INT(slot_v)) fi = AS_INT(slot_v);
                     }
                     if (fi >= 0) {
                         SET_REG(RA, inst->fields[fi]);
-                        ic->inst = inst; ic->name = field; ic->index = fi;
+                        ic->klass = inst->klass; ic->name = field; ic->index = fi;
                     } else {
                         int mi = -1;
                         if (inst->klass) {
@@ -1489,8 +1490,14 @@
             case OBJ_INSTANCE: {
                 ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
                 int fi = -1;
-                for (int i = 0; i < inst->field_count; i++) {
+                if (inst->klass && inst->klass->field_slot_map) {
+                    Value slot_v = dict_get(inst->klass->field_slot_map, make_obj((Object*)field));
+                    if (IS_INT(slot_v)) fi = AS_INT(slot_v);
+                }
+                if (fi < 0) {
+                    for (int i = 0; i < inst->field_count; i++) {
                     if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
+                }
                 }
                 if (fi >= 0) { SET_REG(RA, inst->fields[fi]); break; }
                 int mi = -1;
@@ -1572,19 +1579,25 @@
         ObjString *field = KSTROBJ(RC);
         if (IS_INSTANCE(obj)) {
             ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-            uint32_t h = ((uint32_t)(uintptr_t)inst ^ field->hash);
+            uint32_t h = ((uint32_t)(uintptr_t)inst->klass ^ field->hash);
             int idx = h & (IC_CACHE_SIZE - 1);
             IC_MemberEntry *ic = &vm->member_ic[idx];
-            if (ic->inst == inst && ic->name == field) {
+            if (ic->klass == inst->klass && ic->name == field) {
                 SET_FIELD(inst, ic->index, REG(RB));
             } else {
                 int fi = -1;
-                for (int i = 0; i < inst->field_count; i++) {
-                    if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
+                if (inst->klass && inst->klass->field_slot_map) {
+                    Value slot_v = dict_get(inst->klass->field_slot_map, make_obj((Object*)field));
+                    if (IS_INT(slot_v)) fi = AS_INT(slot_v);
+                }
+                if (fi < 0) {
+                    for (int i = 0; i < inst->field_count; i++) {
+                        if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
+                    }
                 }
                 if (fi >= 0) {
                     SET_FIELD(inst, fi, REG(RB));
-                    ic->inst = inst; ic->name = field; ic->index = fi;
+                    ic->klass = inst->klass; ic->name = field; ic->index = fi;
                 } else {
                     instance_set_field(inst, field->chars, REG(RB));
                 }

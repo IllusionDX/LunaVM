@@ -116,6 +116,9 @@ static int execute_native_program(const char *source, const char *filepath, int 
     fprintf(stderr, "DEBUG: about to run chunk\n");
 #endif
     if (dump_bytecode) chunk_disassemble(&chunk);
+#ifdef DEBUG
+    fprintf(stderr, "DEBUG: calling vm_run_chunk, chunk_count=%d\n", chunk.count);
+#endif
     VMResult result = vm_run_chunk(&vm, &chunk);
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: vm_run_chunk returned %d\n", result);

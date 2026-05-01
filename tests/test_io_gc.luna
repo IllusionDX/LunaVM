@@ -1,69 +1,46 @@
 import os
-
 var path = "tests/_io_gc_test.txt"
-
-# Test 1: Open, write, close explicitly, verify data is written
 var f = os.File(path, "w")
 f.write("gc test data")
 f.close()
-
 var content = os.read_file(path)
 print(content == "gc test data")
-
-# Test 2: Verify file can be removed after explicit close
 print(os.remove(path))
 print(os.exists(path) == false)
-
-# Test 3: Multiple files, explicit close
 var p1 = "tests/_io_gc_1.txt"
 var p2 = "tests/_io_gc_2.txt"
-
 var f1 = os.File(p1, "w")
 f1.write("file1")
 f1.close()
-
 var f2 = os.File(p2, "w")
 f2.write("file2")
 f2.close()
-
 var c1 = os.read_file(p1)
 var c2 = os.read_file(p2)
 print(c1 == "file1")
 print(c2 == "file2")
-
 os.remove(p1)
 os.remove(p2)
-
-# Test 4: GC finalizer — write without close, create garbage to trigger GC
 var f3 = os.File(path, "w")
 f3.write("gc finalizer test data")
 f3.flush()
-# f3 not closed — finalizer should close it on GC
-
 var i = 0
 while i < 2000:
     var _ = [i, i + 1]
     i = i + 1
-
 var after_gc = os.read_file(path)
 print(after_gc == "gc finalizer test data")
-
-# Cleanup — try to close if still open, then remove
 try:
     f3.close()
 except:
     pass
 os.remove(path)
-
-# Test 5: Closed file cannot be written to
 var f4 = os.File(path, "w")
 f4.write("before close")
 f4.close()
-
 try:
     f4.write("after close")
     print(false)
 except:
     print(true)
-
 os.remove(path)

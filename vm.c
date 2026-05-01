@@ -1034,11 +1034,10 @@ void mat4_mul_scale(float *m, float sx, float sy, float sz) {
 
 VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     (void)chunk;
-
     uint32_t instr;
     volatile Value _exc = make_null();
 
-#define DECODE do { instr = CHUNK->code[IP++]; } while (0)
+#define DECODE (instr = CHUNK->code[IP++])
 
 #define A        DECODE_A(instr)
 #define B        DECODE_B(instr)
@@ -1211,7 +1210,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 #undef KSTR
 }
 VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
-    if (allocated_objects > 1000) {
+    if (bytes_allocated > next_gc_threshold) {
         mark_and_sweep(vm);
     }
     if (vm->frame_count >= MAX_FRAMES) {

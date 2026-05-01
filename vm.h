@@ -66,7 +66,7 @@ typedef struct TryFrame {
 } TryFrame;
 
 /* ---- Inline caches ---- */
-#define IC_CACHE_SIZE 64  /* must be power of 2 */
+#define IC_CACHE_SIZE 1024  /* must be power of 2 */
 
 typedef struct {
     ObjString   *key;      /* interned string (pointer compare) */
@@ -74,7 +74,7 @@ typedef struct {
 } IC_GlobalEntry;
 
 typedef struct {
-    ObjInstance *inst;     /* cached instance */
+    struct ObjClass *klass;   /* cached class (pointer compare) */
     ObjString   *name;     /* field/method name */
     int          index;    /* cached index */
 } IC_MemberEntry;

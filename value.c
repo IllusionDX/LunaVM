@@ -314,6 +314,11 @@ ObjFunction *new_function(const char *name) {
     f->is_native = false;
     f->is_leaf = false;
     f->native_fn = NULL;
+    f->cfunc = NULL;
+    f->params = NULL;
+    f->body = NULL;
+    f->body_count = 0;
+    f->closure = NULL;
     return f;
 }
 

@@ -106,7 +106,7 @@ static Value bn_print(VM *vm, Value *args, int n) {
         char *s = value_to_string(args[i]); printf("%s", s); free(s);
         if (i < n-1) printf(" ");
     }
-    printf("\n"); return make_null();
+    printf("\n"); fflush(stdout); return make_null();
 }
 
 static Value bn_input(VM *vm, Value *args, int n) {
