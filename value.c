@@ -314,7 +314,7 @@ ObjFunction *new_function(const char *name) {
     f->is_native = false;
     f->is_leaf = false;
     f->native_fn = NULL;
-    f->cfunc = NULL;
+    f->cfunc = NULL; /* MUST be NULL for native functions: malloc() garbage can match a non-null dispatch check in vm_opcodes.inc, causing silent failures */
     f->params = NULL;
     f->body = NULL;
     f->body_count = 0;
