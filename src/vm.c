@@ -1050,9 +1050,15 @@ void mat4_mul_scale(float *m, float sx, float sy, float sz) {
 VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     (void)chunk;
     uint32_t instr;
-    volatile Value _exc = make_null();
+    Value _exc = make_null();
 
-#define DECODE (instr = CHUNK->code[IP++])
+    /* Local hot state */
+    CallFrame *current_frame = &vm->frames[vm->frame_count - 1];
+    register uint32_t *pc    = current_frame->chunk->code + current_frame->ip;
+    register Value    *REG_BASE = vm->stack + current_frame->base;
+    register Chunk    *current_chunk = current_frame->chunk;
+
+#define DECODE (instr = *pc++)
 
 #define A        DECODE_A(instr)
 #define B        DECODE_B(instr)
@@ -1169,15 +1175,19 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     goto *op_labels[OP(instr)];
 
 
-#define CHECK_FRAME_OVERFLOW() do { \
+#define SYNC_LOCALS() do { \
+    current_frame = &vm->frames[vm->frame_count - 1]; \
+    pc            = current_frame->chunk->code + current_frame->ip; \
+    REG_BASE      = (vm)->stack + current_frame->base; \
+    current_chunk = current_frame->chunk; \
+} while (0)
+
+#define PUSH_FRAME(fn, cl, base_reg, retreg, n, extra) do { \
+    current_frame->ip = (int)(pc - current_chunk->code); \
     if (LUNA_UNLIKELY((vm)->frame_count >= MAX_FRAMES)) { \
         _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow"); \
         goto op_throw; \
     } \
-} while (0)
-
-#define PUSH_FRAME(fn, cl, base_reg, retreg, n, extra) do { \
-    CHECK_FRAME_OVERFLOW(); \
     CallFrame *_c = &(vm)->frames[(vm)->frame_count]; \
     _c->chunk = (fn)->chunk; \
     _c->ip = 0; \
@@ -1202,15 +1212,14 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         (vm)->stack[_c->base + _i] = make_null(); \
     (vm)->stack_count = _needed > (vm)->stack_count ? _needed : (vm)->stack_count; \
     (vm)->frame_count++; \
-    CHUNK = _c->chunk; \
-    IP = 0; \
+    SYNC_LOCALS(); \
 } while (0)
 
 #include "vm_opcodes.inc"
 
     
 #undef PUSH_FRAME
-#undef CHECK_FRAME_OVERFLOW
+#undef SYNC_LOCALS
 #undef DECODE
 #undef FRAME
 #undef CHUNK

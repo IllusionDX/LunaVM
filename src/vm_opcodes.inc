@@ -42,19 +42,35 @@
     op_add: {
         Value _L = RKB;
         Value _R = RKC;
-        if (is_int_type(_L) && is_int_type(_R)) {
-            SET_REG(RA, make_int_result(to_i64(_L) + to_i64(_R)));
-        } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
-            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
-        } else {
-            SET_REG(RA, do_arith(_L, _R, OP_ADD));
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            int64_t res = (int64_t)AS_INT(_L) + (int64_t)AS_INT(_R);
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                REG(RA) = INT_VAL((int32_t)res);
+                DECODE; goto *op_labels[OP(instr)];
+            }
         }
-        CHECK_GC;
+        Value _v = do_arith(_L, _R, OP_ADD);
+        if (LUNA_UNLIKELY(!IS_NIL(_exc))) goto op_throw;
+        SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 8.  OP_SUB */
-    op_sub: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)-to_i64(_R)));}else if(IS_DOUBLE(_L)&&IS_DOUBLE(_R)){SET_REG_PRIM(RA,make_double(AS_DOUBLE(_L)-AS_DOUBLE(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_SUB));} DECODE; goto *op_labels[OP(instr)]; }
+    op_sub: {
+        Value _L = RKB;
+        Value _R = RKC;
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            int64_t res = (int64_t)AS_INT(_L) - (int64_t)AS_INT(_R);
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                REG(RA) = INT_VAL((int32_t)res);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+        }
+        Value _v = do_arith(_L, _R, OP_SUB);
+        if (LUNA_UNLIKELY(!IS_NIL(_exc))) goto op_throw;
+        SET_REG(RA, _v);
+        DECODE; goto *op_labels[OP(instr)];
+    }
     /* 9.  OP_MUL */
     op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)*to_i64(_R)));}else if(IS_DOUBLE(_L)&&IS_DOUBLE(_R)){SET_REG_PRIM(RA,make_double(AS_DOUBLE(_L)*AS_DOUBLE(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_MUL));} CHECK_GC; DECODE; goto *op_labels[OP(instr)]; }
 
@@ -157,11 +173,15 @@
     /* 19. OP_ADDI */
     op_addi: {
         Value v = REG(RA);
-        if (is_int_type(v)) {
-            Value _r = make_int_result(to_i64(v) + (int8_t)B);
-            REG(RA) = _r;
-        } else if (IS_DOUBLE(v)) {
-            REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)B);
+        if (LUNA_LIKELY(IS_INT(v))) {
+            int64_t res = (int64_t)AS_INT(v) + (int8_t)RB;
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                REG(RA) = INT_VAL((int32_t)res);
+            } else {
+                REG(RA) = make_int64(res);
+            }
+        } else {
+            REG(RA) = do_arith(v, make_int((int8_t)RB), OP_ADD);
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -169,11 +189,15 @@
     /* 20. OP_SUBI */
     op_subi: {
         Value v = REG(RA);
-        if (is_int_type(v)) {
-            Value _r = make_int_result(to_i64(v) - (int8_t)B);
-            REG(RA) = _r;
-        } else if (IS_DOUBLE(v)) {
-            REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)B);
+        if (LUNA_LIKELY(IS_INT(v))) {
+            int64_t res = (int64_t)AS_INT(v) - (int8_t)RB;
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                REG(RA) = INT_VAL((int32_t)res);
+            } else {
+                REG(RA) = make_int64(res);
+            }
+        } else {
+            REG(RA) = do_arith(v, make_int((int8_t)RB), OP_SUB);
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -193,11 +217,17 @@
     /* OP_SUBI_FROM */
     op_subi_from: {
         Value v = REG(RB);
-        if (is_int_type(v)) {
-            Value _r = make_int_result(to_i64(v) - (int8_t)C);
-            REG(RA) = _r;
-        } else if (IS_DOUBLE(v)) {
+        if (LUNA_LIKELY(IS_INT(v))) {
+            int64_t res = (int64_t)AS_INT(v) - (int8_t)C;
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                REG(RA) = INT_VAL((int32_t)res);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+        }
+        if (IS_DOUBLE(v)) {
             REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)C);
+        } else {
+            SET_REG(RA, make_int_result(to_i64(v) - (int8_t)C));
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -246,197 +276,181 @@
     /* ---- Control Flow ---- */
     /* 29. OP_JMP */
     op_jmp:
-        IP += sBx;
+        pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
     /* 30. OP_JZ */
     op_jz:
-        if (!is_truthy(REG(RA))) IP += sBx;
+        if (!is_truthy(REG(RA))) pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
     /* 31. OP_JNZ */
     op_jnz:
-        if (is_truthy(REG(RA))) IP += sBx;
+        if (is_truthy(REG(RA))) pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
     /* 32. OP_JNIL */
     op_jnil:
-        if (IS_NIL(REG(RA))) IP += sBx;
+        if (IS_NIL(REG(RA))) pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
     /* ---- Compare-and-branch (ABC: A=left, B=right, C=offset) ---- */
     op_lt_jz: {
         Value _L = REG(RA), _R = REG(RB);
         bool _c;
-        if (is_int_type(_L) && is_int_type(_R)) {
-            _c = to_i64(_L) < to_i64(_R);
-        } else if (is_num(_L) && is_num(_R)) {
-            _c = to_f64(_L) < to_f64(_R);
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            _c = AS_INT(_L) < AS_INT(_R);
         } else {
-            _c = is_truthy(do_cmp(_L, _R, OP_LT));
+            if (is_num(_L) && is_num(_R)) _c = to_f64(_L) < to_f64(_R);
+            else _c = is_truthy(do_cmp(_L, _R, OP_LT));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += (int16_t)C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_le_jz: {
         Value _L = REG(RA), _R = REG(RB);
         bool _c;
-        if (is_int_type(_L) && is_int_type(_R)) {
-            _c = to_i64(_L) <= to_i64(_R);
-        } else if (is_num(_L) && is_num(_R)) {
-            _c = to_f64(_L) <= to_f64(_R);
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            _c = AS_INT(_L) <= AS_INT(_R);
         } else {
-            _c = is_truthy(do_cmp(_L, _R, OP_LE));
+            if (is_num(_L) && is_num(_R)) _c = to_f64(_L) <= to_f64(_R);
+            else _c = is_truthy(do_cmp(_L, _R, OP_LE));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_gt_jz: {
         Value _L = REG(RA), _R = REG(RB);
         bool _c;
-        if (is_int_type(_L) && is_int_type(_R)) {
-            _c = to_i64(_L) > to_i64(_R);
-        } else if (is_num(_L) && is_num(_R)) {
-            _c = to_f64(_L) > to_f64(_R);
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            _c = AS_INT(_L) > AS_INT(_R);
         } else {
-            _c = is_truthy(do_cmp(_L, _R, OP_GT));
+            if (is_num(_L) && is_num(_R)) _c = to_f64(_L) > to_f64(_R);
+            else _c = is_truthy(do_cmp(_L, _R, OP_GT));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_ge_jz: {
         Value _L = REG(RA), _R = REG(RB);
         bool _c;
-        if (is_int_type(_L) && is_int_type(_R)) {
-            _c = to_i64(_L) >= to_i64(_R);
-        } else if (is_num(_L) && is_num(_R)) {
-            _c = to_f64(_L) >= to_f64(_R);
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            _c = AS_INT(_L) >= AS_INT(_R);
         } else {
-            _c = is_truthy(do_cmp(_L, _R, OP_GE));
+            if (is_num(_L) && is_num(_R)) _c = to_f64(_L) >= to_f64(_R);
+            else _c = is_truthy(do_cmp(_L, _R, OP_GE));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_eq_jz: {
         Value _L = REG(RA), _R = REG(RB);
         bool _c;
         if (_L == _R) {
-            _c = true;  /* bitwise identical — NaN boxing: ints, bools, nil, same-object pointers */
+            _c = true;
         } else if (IS_STRING(_L) && IS_STRING(_R)) {
-            _c = false;  /* different interned string pointers → cannot be equal */
+            _c = false;
         } else {
             _c = is_truthy(do_cmp(_L, _R, OP_EQ));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_ne_jz: {
         Value _L = REG(RA), _R = REG(RB);
         bool _c;
         if (_L == _R) {
-            _c = false;  /* bitwise identical → not different */
+            _c = false;
         } else if (IS_STRING(_L) && IS_STRING(_R)) {
-            _c = true;  /* different interned string pointers → not equal → NE is true */
+            _c = true;
         } else {
             _c = is_truthy(do_cmp(_L, _R, OP_NE));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_lt_jz_imm: {
         Value _L = REG(RA);
         int64_t _imm = (int8_t)RB;
         bool _c;
-        if (is_int_type(_L)) {
-            _c = to_i64(_L) < _imm;
+        if (LUNA_LIKELY(IS_INT(_L))) {
+            _c = (int64_t)AS_INT(_L) < _imm;
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) < (double)_imm;
         } else {
             _c = is_truthy(do_cmp(_L, make_int(_imm), OP_LT));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += (int16_t)C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_le_jz_imm: {
         Value _L = REG(RA);
         int64_t _imm = (int8_t)RB;
         bool _c;
-        if (is_int_type(_L)) {
-            _c = to_i64(_L) <= _imm;
+        if (LUNA_LIKELY(IS_INT(_L))) {
+            _c = (int64_t)AS_INT(_L) <= _imm;
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) <= (double)_imm;
         } else {
             _c = is_truthy(do_cmp(_L, make_int(_imm), OP_LE));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_gt_jz_imm: {
         Value _L = REG(RA);
         int64_t _imm = (int8_t)RB;
         bool _c;
-        if (is_int_type(_L)) {
-            _c = to_i64(_L) > _imm;
+        if (LUNA_LIKELY(IS_INT(_L))) {
+            _c = (int64_t)AS_INT(_L) > _imm;
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) > (double)_imm;
         } else {
             _c = is_truthy(do_cmp(_L, make_int(_imm), OP_GT));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_ge_jz_imm: {
         Value _L = REG(RA);
         int64_t _imm = (int8_t)RB;
         bool _c;
-        if (is_int_type(_L)) {
-            _c = to_i64(_L) >= _imm;
+        if (LUNA_LIKELY(IS_INT(_L))) {
+            _c = (int64_t)AS_INT(_L) >= _imm;
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) >= (double)_imm;
         } else {
             _c = is_truthy(do_cmp(_L, make_int(_imm), OP_GE));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_eq_jz_imm: {
         Value _L = REG(RA);
         int64_t _imm = (int8_t)RB;
         bool _c;
-        if (is_int_type(_L)) {
-            _c = to_i64(_L) == _imm;
+        if (LUNA_LIKELY(IS_INT(_L))) {
+            _c = (int64_t)AS_INT(_L) == _imm;
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) == (double)_imm;
-        } else if (IS_NIL(_L)) {
-            _c = false;
-        } else if (IS_BOOL(_L)) {
-            _c = false;
-        } else if (IS_OBJ(_L)) {
-            _c = false;
         } else {
             _c = is_truthy(do_cmp(_L, make_int(_imm), OP_EQ));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_ne_jz_imm: {
         Value _L = REG(RA);
         int64_t _imm = (int8_t)RB;
         bool _c;
-        if (is_int_type(_L)) {
-            _c = to_i64(_L) != _imm;
+        if (LUNA_LIKELY(IS_INT(_L))) {
+            _c = (int64_t)AS_INT(_L) != _imm;
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) != (double)_imm;
-        } else if (IS_NIL(_L)) {
-            _c = true;
-        } else if (IS_BOOL(_L)) {
-            _c = true;
-        } else if (IS_OBJ(_L)) {
-            _c = true;
         } else {
             _c = is_truthy(do_cmp(_L, make_int(_imm), OP_NE));
         }
-        if (!_c) IP += C;
+        if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -449,7 +463,7 @@
         Value fn_val = REG(fn_reg);
 
         /* Inline cache: monomorphic call-site cache */
-        uint32_t ic_idx = ((uint32_t)(uintptr_t)CHUNK ^ (uint32_t)IP) & (IC_CACHE_SIZE - 1);
+        uint32_t ic_idx = ((uint32_t)(uintptr_t)current_chunk ^ (uint32_t)(pc - current_chunk->code)) & (IC_CACHE_SIZE - 1);
         IC_CallEntry *ic = &vm->call_ic[ic_idx];
         if (LUNA_LIKELY(ic->fn_val == fn_val)) {
             ObjFunction *fn = ic->fn;
@@ -457,24 +471,27 @@
                 /* Leaf fast path: skip full frame push */
                 if (LUNA_LIKELY(fn->is_leaf)) {
                     CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = IP;
-                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                    cf->leaf_ret_chunk = current_chunk;
                     cf->leaf_ret_base = FRAME.base;
                     cf->leaf_ret_reg = ret_reg;
                     cf->leaf_ret_closure = FRAME.closure;
                     cf->leaf_ret_fn      = FRAME.fn;
                     frame_set_refs(&FRAME, ic->cl, fn);
                     FRAME.base = cf->base + fn_reg + 1;
-                    CHUNK = fn->chunk;
-                    IP = 0;
+                    FRAME.nargs = nargs;
+                    FRAME.chunk = fn->chunk;
+                    FRAME.ip = 0;
+                    SYNC_LOCALS();
                     int _needed = FRAME.base + fn->chunk->max_registers;
                     if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                         vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                         vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                        REG_BASE = vm->stack + FRAME.base;
                     }
                     vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                        vm->stack[FRAME.base + _i] = make_null();
+                        REG_BASE[_i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
                 }
                 PUSH_FRAME(fn, ic->cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
@@ -500,24 +517,27 @@
             ic->fn_val = fn_val; ic->fn = fn; ic->cl = NULL;
             if (LUNA_LIKELY(fn->is_leaf)) {
                 CallFrame *cf = &FRAME;
-                cf->leaf_ret_ip   = IP;
-                cf->leaf_ret_chunk = CHUNK;
+                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                cf->leaf_ret_chunk = current_chunk;
                 cf->leaf_ret_base = FRAME.base;
                 cf->leaf_ret_reg = ret_reg;
                 cf->leaf_ret_closure = FRAME.closure;
                 cf->leaf_ret_fn      = FRAME.fn;
                 frame_set_refs(&FRAME, NULL, fn);
                 FRAME.base = cf->base + fn_reg + 1;
-                CHUNK = fn->chunk;
-                IP = 0;
+                FRAME.nargs = nargs;
+                FRAME.chunk = fn->chunk;
+                FRAME.ip = 0;
+                SYNC_LOCALS();
                 int _needed = FRAME.base + fn->chunk->max_registers;
                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                     vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                    REG_BASE = vm->stack + FRAME.base; // Refresh after realloc
                 }
                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                    vm->stack[FRAME.base + _i] = make_null();
+                    REG_BASE[_i] = make_null();
                 DECODE; goto *op_labels[OP(instr)];
             }
             PUSH_FRAME(fn, NULL, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
@@ -541,16 +561,18 @@
             ic->fn_val = fn_val; ic->fn = fn; ic->cl = cl;
             if (LUNA_LIKELY(fn->is_leaf)) {
                 CallFrame *cf = &FRAME;
-                cf->leaf_ret_ip   = IP;
-                cf->leaf_ret_chunk = CHUNK;
+                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                cf->leaf_ret_chunk = current_chunk;
                 cf->leaf_ret_base = FRAME.base;
                 cf->leaf_ret_reg = ret_reg;
                 cf->leaf_ret_closure = FRAME.closure;
                 cf->leaf_ret_fn      = FRAME.fn;
                 frame_set_refs(&FRAME, cl, fn);
                 FRAME.base = cf->base + fn_reg + 1;
-                CHUNK = fn->chunk;
-                IP = 0;
+                FRAME.nargs = nargs;
+                FRAME.chunk = fn->chunk;
+                FRAME.ip = 0;
+                SYNC_LOCALS();
                 int _needed = FRAME.base + fn->chunk->max_registers;
                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
@@ -558,7 +580,7 @@
                 }
                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                    vm->stack[FRAME.base + _i] = make_null();
+                    REG_BASE[_i] = make_null();
                 DECODE; goto *op_labels[OP(instr)];
             }
             PUSH_FRAME(fn, cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
@@ -583,16 +605,19 @@
             SET_REG(fn_reg, bm->self);
             if (LUNA_LIKELY(fn->is_leaf)) {
                 CallFrame *cf = &FRAME;
-                cf->leaf_ret_ip   = IP;
-                cf->leaf_ret_chunk = CHUNK;
+                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                cf->leaf_ret_chunk = current_chunk;
                 cf->leaf_ret_base = FRAME.base;
                 cf->leaf_ret_reg = ret_reg;
                 cf->leaf_ret_closure = FRAME.closure;
                 cf->leaf_ret_fn      = FRAME.fn;
                 frame_set_refs(&FRAME, NULL, fn);
                 FRAME.base = cf->base + fn_reg;
-                CHUNK = fn->chunk;
-                IP = 0;
+                FRAME.nargs = nargs + 1;
+                FRAME.chunk = fn->chunk;
+                FRAME.ip = 0;
+                SYNC_LOCALS();
+                REG_BASE[0] = bm->self; /* Set self */
                 int _needed = FRAME.base + fn->chunk->max_registers;
                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
@@ -600,7 +625,7 @@
                 }
                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                 for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
-                    vm->stack[FRAME.base + _i] = make_null();
+                    REG_BASE[_i] = make_null();
                 DECODE; goto *op_labels[OP(instr)];
             }
             PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
@@ -631,16 +656,19 @@
                 }
                 if (LUNA_LIKELY(fn->is_leaf)) {
                     CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = IP;
-                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                    cf->leaf_ret_chunk = current_chunk;
                     cf->leaf_ret_base = FRAME.base;
                     cf->leaf_ret_reg = ret_reg;
                     cf->leaf_ret_closure = FRAME.closure;
                     cf->leaf_ret_fn      = FRAME.fn;
                     frame_set_refs(&FRAME, NULL, fn);
                     FRAME.base = cf->base + fn_reg;
-                    CHUNK = fn->chunk;
-                    IP = 0;
+                    FRAME.nargs = nargs + 1;
+                    FRAME.chunk = fn->chunk;
+                    FRAME.ip = 0;
+                    SYNC_LOCALS();
+                    REG_BASE[0] = fn_val; /* Set self */
                     int _needed = FRAME.base + fn->chunk->max_registers;
                     if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                         vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
@@ -648,7 +676,7 @@
                     }
                     vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
-                        vm->stack[FRAME.base + _i] = make_null();
+                        REG_BASE[_i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
                 }
                 PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
@@ -698,16 +726,18 @@
             cf->leaf_ret_fn = NULL;
             frame_set_refs(cf, leaf_rclosure, leaf_rfn);
             FRAME.base = leaf_rbase;
-            CHUNK = leaf_rchunk;
-            IP = leaf_rip;
+            FRAME.chunk = leaf_rchunk;
+            FRAME.ip = leaf_rip;
+            SYNC_LOCALS();
+
             SET_REG(leaf_rreg, retval);
             DECODE; goto *op_labels[OP(instr)];
         }
         if (vm->frame_count <= 1) {
             vm->last_return_value = retval;
             if (LUNA_UNLIKELY(vm->open_upvalues)) close_upvalues(vm, 0);
-            for (int i = 0; i < FRAME.chunk->max_registers; i++) {
-                vm->stack[FRAME.base + i] = make_null();
+            for (int i = 0; i < current_chunk->max_registers; i++) {
+                REG_BASE[i] = make_null();
             }
             vm->stack_count = 0;
             vm->frame_count = 0;
@@ -734,15 +764,9 @@
             free(captured_name);
         }
 
-        for (int i = 0; i < callee->chunk->max_registers; i++) {
-            vm->stack[callee->base + i] = make_null();
-        }
-        
         vm_pop_try_frames(vm, vm->frame_count - 1);
         vm->frame_count--;
-        CallFrame *caller = &FRAME;
-        CHUNK = caller->chunk;
-        IP = caller->ip;
+        SYNC_LOCALS();
         SET_REG(callee->ret_reg, retval);
         frame_release_refs(callee);
         vm->stack_count = old_base;
@@ -979,7 +1003,7 @@
         }
 
         if (LUNA_LIKELY(has_next)) {
-            IP += SBX;
+            pc += SBX;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -1317,7 +1341,7 @@
         switch (AS_OBJ(obj)->type) {
             case OBJ_INSTANCE: {
                 ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-                uint32_t ic_idx = ((uint32_t)(uintptr_t)CHUNK ^ (uint32_t)IP) & (IC_CACHE_SIZE - 1);
+                uint32_t ic_idx = ((uint32_t)(uintptr_t)current_chunk ^ (uint32_t)(pc - current_chunk->code)) & (IC_CACHE_SIZE - 1);
                 IC_MemberEntry *ic = &vm->member_ic[ic_idx];
                 if (ic->klass == inst->klass && ic->name == field) {
                     SET_REG(RA, inst->fields[ic->index]);
@@ -1712,24 +1736,27 @@
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(fn->is_leaf)) {
                                 CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = IP;
-                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                                cf->leaf_ret_chunk = current_chunk;
                                 cf->leaf_ret_base = FRAME.base;
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
                                 frame_set_refs(&FRAME, NULL, fn);
                                 FRAME.base = cf->base + obj_reg + 2;
-                                CHUNK = fn->chunk;
-                                IP = 0;
+                                FRAME.nargs = nargs;
+                                FRAME.chunk = fn->chunk;
+                                FRAME.ip = 0;
+                                SYNC_LOCALS();
                                 int _needed = FRAME.base + fn->chunk->max_registers;
                                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                                     vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                    REG_BASE = vm->stack + FRAME.base;
                                 }
                                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                                    vm->stack[FRAME.base + _i] = make_null();
+                                    REG_BASE[_i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
                             }
                             CallFrame *caller = &FRAME;
@@ -1750,9 +1777,9 @@
                             for (int j = nargs; j < fn->chunk->max_registers; j++)
                                 vm->stack[callee->base + j] = make_null();
                             vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            caller->ip = (int)(pc - current_chunk->code);
                             vm->frame_count++;
-                            CHUNK = callee->chunk;
-                            IP = 0;
+                            SYNC_LOCALS();
                             DECODE;
                             goto *op_labels[OP(instr)];
                         }
@@ -1770,24 +1797,27 @@
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(fn->is_leaf)) {
                                 CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = IP;
-                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                                cf->leaf_ret_chunk = current_chunk;
                                 cf->leaf_ret_base = FRAME.base;
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
                                 frame_set_refs(&FRAME, cl, fn);
                                 FRAME.base = cf->base + obj_reg + 2;
-                                CHUNK = fn->chunk;
-                                IP = 0;
+                                FRAME.nargs = nargs;
+                                FRAME.chunk = fn->chunk;
+                                FRAME.ip = 0;
+                                SYNC_LOCALS();
                                 int _needed = FRAME.base + fn->chunk->max_registers;
                                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                                     vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                    REG_BASE = vm->stack + FRAME.base;
                                 }
                                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                                    vm->stack[FRAME.base + _i] = make_null();
+                                    REG_BASE[_i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
                             }
                             CallFrame *caller = &FRAME;
@@ -1808,9 +1838,9 @@
                             for (int j = nargs; j < fn->chunk->max_registers; j++)
                                 vm->stack[callee->base + j] = make_null();
                             vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            caller->ip = (int)(pc - current_chunk->code);
                             vm->frame_count++;
-                            CHUNK = callee->chunk;
-                            IP = 0;
+                            SYNC_LOCALS();
                             DECODE;
                             goto *op_labels[OP(instr)];
                         }
@@ -1840,24 +1870,27 @@ case OBJ_MODULE: {
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(fn->is_leaf)) {
                                 CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = IP;
-                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                                cf->leaf_ret_chunk = current_chunk;
                                 cf->leaf_ret_base = FRAME.base;
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
                                 frame_set_refs(&FRAME, NULL, fn);
                                 FRAME.base = cf->base + obj_reg + 2;
-                                CHUNK = fn->chunk;
-                                IP = 0;
+                                FRAME.nargs = nargs;
+                                FRAME.chunk = fn->chunk;
+                                FRAME.ip = 0;
+                                SYNC_LOCALS();
                                 int _needed = FRAME.base + fn->chunk->max_registers;
                                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                                     vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                    REG_BASE = vm->stack + FRAME.base;
                                 }
                                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                                    vm->stack[FRAME.base + _i] = make_null();
+                                    REG_BASE[_i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
                             }
                             CallFrame *caller = &FRAME;
@@ -1878,9 +1911,9 @@ case OBJ_MODULE: {
                             for (int j = nargs; j < fn->chunk->max_registers; j++)
                                 vm->stack[callee->base + j] = make_null();
                             vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            caller->ip = (int)(pc - current_chunk->code);
                             vm->frame_count++;
-                            CHUNK = callee->chunk;
-                            IP = 0;
+                            SYNC_LOCALS();
                             DECODE;
                             goto *op_labels[OP(instr)];
                         }
@@ -1898,24 +1931,27 @@ case OBJ_MODULE: {
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(fn->is_leaf)) {
                                 CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = IP;
-                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                                cf->leaf_ret_chunk = current_chunk;
                                 cf->leaf_ret_base = FRAME.base;
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
                                 frame_set_refs(&FRAME, cl, fn);
                                 FRAME.base = cf->base + obj_reg + 2;
-                                CHUNK = fn->chunk;
-                                IP = 0;
+                                FRAME.nargs = nargs;
+                                FRAME.chunk = fn->chunk;
+                                FRAME.ip = 0;
+                                SYNC_LOCALS();
                                 int _needed = FRAME.base + fn->chunk->max_registers;
                                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                                     vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                    REG_BASE = vm->stack + FRAME.base;
                                 }
                                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                                    vm->stack[FRAME.base + _i] = make_null();
+                                    REG_BASE[_i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
                             }
                             CallFrame *caller = &FRAME;
@@ -1936,9 +1972,9 @@ case OBJ_MODULE: {
                             for (int j = nargs; j < fn->chunk->max_registers; j++)
                                 vm->stack[callee->base + j] = make_null();
                             vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            caller->ip = (int)(pc - current_chunk->code);
                             vm->frame_count++;
-                            CHUNK = callee->chunk;
-                            IP = 0;
+                            SYNC_LOCALS();
                             DECODE;
                             goto *op_labels[OP(instr)];
                         }
@@ -1952,7 +1988,7 @@ case OBJ_MODULE: {
                     ObjClass *k = obj_inst->klass;
                     if (k) {
                         ObjFunction *method = NULL;
-                        uint32_t ic_idx = ((uint32_t)(uintptr_t)CHUNK ^ (uint32_t)IP) & (IC_CACHE_SIZE - 1);
+                        uint32_t ic_idx = ((uint32_t)(uintptr_t)current_chunk ^ (uint32_t)(pc - current_chunk->code)) & (IC_CACHE_SIZE - 1);
                         IC_InvokeEntry *ic = &vm->invoke_ic[ic_idx];
                         if (ic->klass == k && ic->name == mname_obj) {
                             method = ic->method;
@@ -1974,24 +2010,28 @@ case OBJ_MODULE: {
                                 /* Leaf fast path: skip full frame push */
                                 if (LUNA_LIKELY(method->is_leaf)) {
                                     CallFrame *cf = &FRAME;
-                                    cf->leaf_ret_ip   = IP;
-                                    cf->leaf_ret_chunk = CHUNK;
+                                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                                    cf->leaf_ret_chunk = current_chunk;
                                     cf->leaf_ret_base = FRAME.base;
                                     cf->leaf_ret_reg = ret_reg;
                                     cf->leaf_ret_closure = FRAME.closure;
                                     cf->leaf_ret_fn      = FRAME.fn;
                                     frame_set_refs(&FRAME, NULL, method);
                                     FRAME.base = cf->base + obj_reg + 1;
-                                    CHUNK = method->chunk;
-                                    IP = 0;
+                                    FRAME.nargs = nargs + 1;
+                                    FRAME.chunk = method->chunk;
+                                    FRAME.ip = 0;
+                                    SYNC_LOCALS();
+                                    REG_BASE[0] = obj; /* Set self */
                                     int _needed = FRAME.base + method->chunk->max_registers;
                                     if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                                         vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                                         vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                        REG_BASE = vm->stack + FRAME.base;
                                     }
                                     vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                     for (int _i = 1 + nargs; _i < method->chunk->max_registers; _i++)
-                                        vm->stack[FRAME.base + _i] = make_null();
+                                        REG_BASE[_i] = make_null();
                                     DECODE; goto *op_labels[OP(instr)];
                                 }
                                 if (vm->frame_count < MAX_FRAMES) {
@@ -2001,7 +2041,7 @@ case OBJ_MODULE: {
                                     callee->ip = 0;
                                     callee->base = caller->base + obj_reg + 1;
                                     callee->ret_reg = ret_reg;
-                                    callee->nargs = nargs;
+                                    callee->nargs = nargs + 1;
                                     callee->kw_args = make_null();
                                     frame_set_refs(callee, NULL, method);
                                     callee->saved_globals = NULL;
@@ -2014,9 +2054,9 @@ case OBJ_MODULE: {
                                     for (int j = 1 + nargs; j < method->chunk->max_registers; j++)
                                         vm->stack[callee->base + j] = make_null();
                                     vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                                    caller->ip = (int)(pc - current_chunk->code);
                                     vm->frame_count++;
-                                    CHUNK = callee->chunk;
-                                    IP = 0;
+                                    SYNC_LOCALS();
                                     DECODE;
                                     goto *op_labels[OP(instr)];
                                 }
@@ -2054,25 +2094,28 @@ case OBJ_MODULE: {
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(method->is_leaf)) {
                                 CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = IP;
-                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                                cf->leaf_ret_chunk = current_chunk;
                                 cf->leaf_ret_base = FRAME.base;
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
                                 frame_set_refs(&FRAME, NULL, method);
                                 FRAME.base = cf->base + obj_reg + 1;
-                                CHUNK = method->chunk;
-                                IP = 0;
-                                vm->stack[FRAME.base] = obj; /* self at reg 0 */
+                                FRAME.nargs = nargs + 1;
+                                FRAME.chunk = method->chunk;
+                                FRAME.ip = 0;
+                                SYNC_LOCALS();
+                                REG_BASE[0] = obj; /* self at reg 0 */
                                 int _needed = FRAME.base + method->chunk->max_registers;
                                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                                     vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                    REG_BASE = vm->stack + FRAME.base;
                                 }
                                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = 1 + nargs; _i < method->chunk->max_registers; _i++)
-                                    vm->stack[FRAME.base + _i] = make_null();
+                                    REG_BASE[_i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
                             }
                             if (vm->frame_count < MAX_FRAMES) {
@@ -2082,7 +2125,7 @@ case OBJ_MODULE: {
                                 callee->ip = 0;
                                 callee->base = caller->base + obj_reg + 1;
                                 callee->ret_reg = ret_reg;
-                                callee->nargs = nargs;
+                                callee->nargs = nargs + 1;
                                 callee->kw_args = make_null();
                                 frame_set_refs(callee, NULL, method);
                                 callee->saved_globals = NULL;
@@ -2095,9 +2138,9 @@ case OBJ_MODULE: {
                                 for (int j = 1 + nargs; j < method->chunk->max_registers; j++)
                                     vm->stack[callee->base + j] = make_null();
                                 vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                                caller->ip = (int)(pc - current_chunk->code);
                                 vm->frame_count++;
-                                CHUNK = callee->chunk;
-                                IP = 0;
+                                SYNC_LOCALS();
                                 DECODE;
                                 goto *op_labels[OP(instr)];
                             }
@@ -2146,32 +2189,37 @@ case OBJ_MODULE: {
                     if (m && strcmp(base->method_names[i], mname) == 0) {
                         SET_REG(self_reg + 1, self);
                         if (m->is_native) {
-                            Value scratch[256];
+                            Value native_scratch[256];
+                            native_scratch[0] = self;
                             for (int j = 0; j < nargs; j++)
-                                scratch[j] = REG(ret_reg + 2 + j);
-                            if (!vm_call_native(vm, m->native_fn, scratch, nargs, &result)) goto op_throw;
+                                native_scratch[j + 1] = REG(ret_reg + 2 + j);
+                            if (!vm_call_native(vm, m->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
                         } else {
                             /* Leaf fast path: skip full frame push */
                             if (LUNA_LIKELY(m->is_leaf)) {
                                 CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = IP;
-                                cf->leaf_ret_chunk = CHUNK;
+                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                                cf->leaf_ret_chunk = current_chunk;
                                 cf->leaf_ret_base = FRAME.base;
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
                                 frame_set_refs(&FRAME, NULL, m);
                                 FRAME.base = cf->base + self_reg + 1;
-                                CHUNK = m->chunk;
-                                IP = 0;
+                                FRAME.nargs = nargs + 1;
+                                FRAME.chunk = m->chunk;
+                                FRAME.ip = 0;
+                                SYNC_LOCALS();
+                                REG_BASE[0] = self;
                                 int _needed = FRAME.base + m->chunk->max_registers;
                                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                                     vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                                    REG_BASE = vm->stack + FRAME.base;
                                 }
                                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                                 for (int _i = 1 + nargs; _i < m->chunk->max_registers; _i++)
-                                    vm->stack[FRAME.base + _i] = make_null();
+                                    REG_BASE[_i] = make_null();
                                 DECODE; goto *op_labels[OP(instr)];
                             }
                         if (vm->frame_count < MAX_FRAMES) {
@@ -2181,7 +2229,7 @@ case OBJ_MODULE: {
                             callee->ip = 0;
                             callee->base = caller->base + self_reg + 1;
                             callee->ret_reg = ret_reg;
-                            callee->nargs = nargs;
+                            callee->nargs = nargs + 1;
                             callee->kw_args = make_null();
                             frame_set_refs(callee, NULL, m);
                             callee->saved_globals = NULL;
@@ -2194,9 +2242,9 @@ case OBJ_MODULE: {
                             for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
                                 vm->stack[callee->base + j] = make_null();
                             vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+                            caller->ip = (int)(pc - current_chunk->code);
                             vm->frame_count++;
-                            CHUNK = callee->chunk;
-                            IP = 0;
+                            SYNC_LOCALS();
                             DECODE;
                             goto *op_labels[OP(instr)];
                         }
@@ -2249,12 +2297,11 @@ case OBJ_MODULE: {
                 }
                 vm->stack_count = tf->stack_count;
                 SET_REG(tf->exc_reg, _exc);
-                int catch_ip = tf->catch_ip;
+                vm->frames[vm->frame_count - 1].ip = tf->catch_ip;
                 vm->try_stack = tf->next;
                 free(tf);
                 _exc = make_null();
-                CHUNK = FRAME.chunk;
-                IP = catch_ip;
+                SYNC_LOCALS();
                 DECODE;
                 goto *op_labels[OP(instr)];
             }
@@ -2268,7 +2315,7 @@ case OBJ_MODULE: {
     /* 55. OP_TRY */
     op_try: {
         TryFrame *tf = malloc(sizeof(TryFrame));
-        tf->catch_ip   = IP + sBx;
+        tf->catch_ip   = (int)(pc - current_chunk->code) + sBx;
         tf->frame_depth = vm->frame_count;
         tf->stack_count = vm->stack_count;
         tf->exc_reg    = RA;
@@ -2319,7 +2366,7 @@ case OBJ_MODULE: {
             has_arg = !IS_NIL(v);
         }
         if (has_arg) {
-            IP += skip;
+            pc += skip;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -2365,24 +2412,28 @@ case OBJ_MODULE: {
                 /* Leaf fast path for kcall */
                 if (LUNA_LIKELY(fn->is_leaf)) {
                     CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = IP;
-                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                    cf->leaf_ret_chunk = current_chunk;
                     cf->leaf_ret_base = FRAME.base;
                     cf->leaf_ret_reg = ret_reg;
                     cf->leaf_ret_closure = FRAME.closure;
                     cf->leaf_ret_fn      = FRAME.fn;
                     frame_set_refs(&FRAME, NULL, fn);
                     FRAME.base = cf->base + fn_reg + 1;
-                    CHUNK = fn->chunk;
-                    IP = 0;
+                    FRAME.nargs = nargs;
+                    FRAME.kw_args = kw_args_val;
+                    FRAME.chunk = fn->chunk;
+                    FRAME.ip = 0;
+                    SYNC_LOCALS();
                     int _needed = FRAME.base + fn->chunk->max_registers;
                     if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                         vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                         vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                        REG_BASE = vm->stack + FRAME.base;
                     }
                     vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                        vm->stack[FRAME.base + _i] = make_null();
+                        REG_BASE[_i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
                 }
                 if (vm->frame_count >= MAX_FRAMES) {
@@ -2409,9 +2460,9 @@ case OBJ_MODULE: {
                 for (int i = nargs; i < fn->chunk->max_registers; i++)
                     vm->stack[callee->base + i] = make_null();
                 vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                caller->ip = (int)(pc - current_chunk->code);
                 vm->frame_count++;
-                CHUNK = callee->chunk;
-                IP = 0;
+                SYNC_LOCALS();
                 DECODE;
                 goto *op_labels[OP(instr)];
             }
@@ -2433,24 +2484,28 @@ case OBJ_MODULE: {
                 /* Leaf fast path for kcall closure */
                 if (LUNA_LIKELY(fn->is_leaf)) {
                     CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = IP;
-                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                    cf->leaf_ret_chunk = current_chunk;
                     cf->leaf_ret_base = FRAME.base;
                     cf->leaf_ret_reg = ret_reg;
                     cf->leaf_ret_closure = FRAME.closure;
                     cf->leaf_ret_fn      = FRAME.fn;
                     frame_set_refs(&FRAME, cl, fn);
                     FRAME.base = cf->base + fn_reg + 1;
-                    CHUNK = fn->chunk;
-                    IP = 0;
+                    FRAME.nargs = nargs;
+                    FRAME.kw_args = kw_args_val;
+                    FRAME.chunk = fn->chunk;
+                    FRAME.ip = 0;
+                    SYNC_LOCALS();
                     int _needed = FRAME.base + fn->chunk->max_registers;
                     if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                         vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                         vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                        REG_BASE = vm->stack + FRAME.base;
                     }
                     vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                        vm->stack[FRAME.base + _i] = make_null();
+                        REG_BASE[_i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
                 }
                 if (vm->frame_count >= MAX_FRAMES) {
@@ -2477,9 +2532,9 @@ case OBJ_MODULE: {
                 for (int i = nargs; i < fn->chunk->max_registers; i++)
                     vm->stack[callee->base + i] = make_null();
                 vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                caller->ip = (int)(pc - current_chunk->code);
                 vm->frame_count++;
-                CHUNK = callee->chunk;
-                IP = 0;
+                SYNC_LOCALS();
                 DECODE;
                 goto *op_labels[OP(instr)];
             }
@@ -2502,8 +2557,8 @@ case OBJ_MODULE: {
                 /* Leaf fast path for bound-method kcall */
                 if (LUNA_LIKELY(fn->is_leaf)) {
                     CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = IP;
-                    cf->leaf_ret_chunk = CHUNK;
+                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                    cf->leaf_ret_chunk = current_chunk;
                     cf->leaf_ret_base = FRAME.base;
                     cf->leaf_ret_reg = ret_reg;
                     cf->leaf_ret_closure = FRAME.closure;
@@ -2511,16 +2566,20 @@ case OBJ_MODULE: {
                     frame_set_refs(&FRAME, NULL, fn);
                     SET_REG(fn_reg, bm->self);
                     FRAME.base = cf->base + fn_reg;
-                    CHUNK = fn->chunk;
-                    IP = 0;
+                    FRAME.nargs = nargs + 1;
+                    FRAME.kw_args = kw_args_val;
+                    FRAME.chunk = fn->chunk;
+                    FRAME.ip = 0;
+                    SYNC_LOCALS();
                     int _needed = FRAME.base + fn->chunk->max_registers;
                     if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                         vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                         vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                        REG_BASE = vm->stack + FRAME.base;
                     }
                     vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                     for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
-                        vm->stack[FRAME.base + _i] = make_null();
+                        REG_BASE[_i] = make_null();
                     DECODE; goto *op_labels[OP(instr)];
                 }
                 if (vm->frame_count >= MAX_FRAMES) {
@@ -2535,7 +2594,7 @@ case OBJ_MODULE: {
                 SET_REG(fn_reg, bm->self);
                 callee->base = caller->base + fn_reg;
                 callee->ret_reg = ret_reg;
-                callee->nargs = nargs;
+                callee->nargs = nargs + 1;
                 callee->kw_args = kw_args_val;
                 
                 frame_set_refs(callee, NULL, fn);
@@ -2548,9 +2607,9 @@ case OBJ_MODULE: {
                 for (int i = nargs + 1; i < fn->chunk->max_registers; i++)
                     vm->stack[callee->base + i] = make_null();
                 vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+                caller->ip = (int)(pc - current_chunk->code);
                 vm->frame_count++;
-                CHUNK = callee->chunk;
-                IP = 0;
+                SYNC_LOCALS();
                 DECODE;
                 goto *op_labels[OP(instr)];
             }
@@ -2573,7 +2632,7 @@ case OBJ_MODULE: {
     /* 62. OP_COALESCE */
     op_coalesce: {
         if (!IS_NIL(REG(RA))) {
-            IP += sBx;
+            pc += sBx;
             DECODE;
             goto *op_labels[OP(instr)];
         }
@@ -2714,9 +2773,9 @@ case OBJ_MODULE: {
         for (int i = 0; i < mod_fn->chunk->max_registers; i++)
             vm->stack[callee->base + i] = make_null();
         vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
+        caller->ip = (int)(pc - current_chunk->code);
         vm->frame_count++;
-        CHUNK = callee->chunk;
-        IP = 0;
+        SYNC_LOCALS();
         DECODE;
         goto *op_labels[OP(instr)];
     }
@@ -2765,22 +2824,27 @@ case OBJ_MODULE: {
             /* Leaf fast path: skip full frame push */
             if (LUNA_LIKELY(fn->is_leaf)) {
                 CallFrame *cf = &FRAME;
-                cf->leaf_ret_ip   = IP;
-                cf->leaf_ret_chunk = CHUNK;
+                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
+                cf->leaf_ret_chunk = current_chunk;
                 cf->leaf_ret_base = FRAME.base;
                 cf->leaf_ret_reg = (uint8_t)(obj_reg + nargs + 1);
+                frame_set_refs(&FRAME, NULL, fn);
                 FRAME.base = cf->base + obj_reg + 1;
-                CHUNK = fn->chunk;
-                IP = 0;
-                vm->stack[FRAME.base] = obj;
+                FRAME.nargs = nargs + 1;
+                FRAME.kw_args = make_null();
+                FRAME.chunk = fn->chunk;
+                FRAME.ip = 0;
+                SYNC_LOCALS();
+                REG_BASE[0] = obj; /* self */
                 int _needed = FRAME.base + fn->chunk->max_registers;
                 if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
                     vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
                     vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
+                    REG_BASE = vm->stack + FRAME.base;
                 }
                 vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
                 for (int _i = 1 + nargs; _i < fn->chunk->max_registers; _i++)
-                    vm->stack[FRAME.base + _i] = make_null();
+                    REG_BASE[_i] = make_null();
                 DECODE; goto *op_labels[OP(instr)];
             }
             CallFrame *caller = &FRAME;
@@ -2791,7 +2855,7 @@ case OBJ_MODULE: {
             /* Use a dummy ret_reg past the args so _init's nil return
              * doesn't overwrite the instance at obj_reg. */
             callee->ret_reg = (uint8_t)(obj_reg + nargs + 1);
-            callee->nargs = nargs;
+            callee->nargs = nargs + 1;
             callee->kw_args = make_null();
             frame_set_refs(callee, NULL, fn);
             callee->saved_globals = NULL;
@@ -2804,9 +2868,9 @@ case OBJ_MODULE: {
             for (int j = 1 + nargs; j < fn->chunk->max_registers; j++)
                 vm->stack[callee->base + j] = make_null();
             vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
+            caller->ip = (int)(pc - current_chunk->code);
             vm->frame_count++;
-            CHUNK = callee->chunk;
-            IP = 0;
+            SYNC_LOCALS();
             DECODE;
             goto *op_labels[OP(instr)];
         } else {

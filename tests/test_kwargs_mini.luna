@@ -1,0 +1,8 @@
+def greet(name, greeting = "Hello"):
+    print(greeting + ", " + name)
+
+greet("World")
+greet("World", "Hi")
+greet(name="World")
+greet("World", greeting="Hi")
+greet(greeting="Hi", name="World")
