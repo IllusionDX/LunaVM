@@ -190,6 +190,8 @@ static int execute_repl_line(VM *vm, const char *source) {
         vm_format_stack_trace(vm, trace, sizeof(trace), exc_str);
         fprintf(stderr, "%s\n", trace);
         free(exc_str);
+        vm->frame_count = 0;
+        vm->stack_count = 0;
         chunk_free(&chunk);
         free_program(program);
         parser_free(parser);

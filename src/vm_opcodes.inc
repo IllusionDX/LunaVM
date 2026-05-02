@@ -50,6 +50,13 @@
             }
         }
         Value _v = do_arith(_L, _R, OP_ADD);
+        if (IS_NIL(_v) && IS_LIST(_L) && !IS_LIST(_R)) {
+            const char *tn = val_type_name(_R);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "can only concatenate list (not \"%s\") to list", tn);
+            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            goto op_throw;
+        }
         if (LUNA_UNLIKELY(!IS_NIL(_exc))) goto op_throw;
         SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
@@ -149,7 +156,15 @@
         } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
             SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
         } else {
-            SET_REG(RA, do_arith(_L, _R, OP_ADD));
+            Value _v = do_arith(_L, _R, OP_ADD);
+            if (IS_NIL(_v) && IS_LIST(_L) && !IS_LIST(_R)) {
+                const char *tn = val_type_name(_R);
+                char buf[256];
+                snprintf(buf, sizeof(buf), "can only concatenate list (not \"%s\") to list", tn);
+                _exc = make_exception_instance(vm, vm->type_error_class, buf);
+                goto op_throw;
+            }
+            SET_REG(RA, _v);
         }
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
@@ -181,7 +196,14 @@
                 REG(RA) = make_int64(res);
             }
         } else {
-            REG(RA) = do_arith(v, make_int((int8_t)RB), OP_ADD);
+            Value _v = do_arith(v, make_int((int8_t)RB), OP_ADD);
+            if (IS_NIL(_v) && IS_LIST(v)) {
+                char buf[256];
+                snprintf(buf, sizeof(buf), "can only concatenate list (not \"int\") to list");
+                _exc = make_exception_instance(vm, vm->type_error_class, buf);
+                goto op_throw;
+            }
+            REG(RA) = _v;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -210,6 +232,11 @@
             REG(RA) = _r;
         } else if (IS_DOUBLE(v)) {
             REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)C);
+        } else if (IS_LIST(v)) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "can only concatenate list (not \"int\") to list");
+            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
     }

@@ -75,6 +75,38 @@ static inline Value make_int_result(int64_t v) {
     return fits_int32(v) ? make_int((int32_t)v) : make_int64(v);
 }
 
+static const char *val_type_name(Value v) {
+    if (IS_NIL(v)) return "null";
+    if (IS_BOOL(v)) return "bool";
+    if (IS_INT(v) || IS_INT64(v)) return "int";
+    if (IS_DOUBLE(v)) return "float";
+    if (IS_STRING(v)) return "str";
+    if (IS_LIST(v)) return "list";
+    if (IS_DICT(v)) return "dict";
+    if (IS_OBJ(v)) {
+        Object *obj = AS_OBJ(v);
+        switch (obj->type) {
+            case OBJ_FUNCTION: return "function";
+            case OBJ_UPVALUE: return "upvalue";
+            case OBJ_CLOSURE: return "closure";
+            case OBJ_ENUM: return "enum";
+            case OBJ_CLASS: return "class";
+            case OBJ_BOUND_METHOD: return "method";
+            case OBJ_MODULE: return "module";
+            case OBJ_BUFFER: return "buffer";
+            case OBJ_USERDATA: return "userdata";
+            case OBJ_VECTOR: return "vector";
+            case OBJ_MATRIX: return "matrix";
+            case OBJ_INSTANCE: {
+                ObjInstance *inst = (ObjInstance*)obj;
+                return inst->class_name;
+            }
+            default: return "object";
+        }
+    }
+    return "unknown";
+}
+
 static inline Value do_arith(Value L, Value R, OpCode op) {
     /* String concat for ADD */
     if (op == OP_ADD && IS_STRING(L)) {
