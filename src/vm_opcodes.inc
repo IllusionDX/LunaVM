@@ -1041,14 +1041,14 @@
         Value key = REG(RC);
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
             
-                _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: cannot index null value");
+                _exc = make_exception_instance(vm, vm->type_error_class, "cannot index null value");
             goto op_throw;
         }
         switch (AS_OBJ(obj)->type) {
             case OBJ_LIST: {
                 if (!IS_INT(key)) {
                     
-                    _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: list index must be integer");
+                    _exc = make_exception_instance(vm, vm->type_error_class, "list index must be integer");
                     goto op_throw;
                 }
                 int idx = (int)AS_INT(key);
@@ -1057,7 +1057,7 @@
                 if (idx < 0) idx += len;
                 if (idx < 0 || idx >= len) {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "IndexError: list index out of bounds (index: %d, size: %d)", idx, len);
+                    snprintf(buf, sizeof(buf), "list index out of bounds (index: %d, size: %d)", idx, len);
                     
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
@@ -1070,7 +1070,7 @@
                 if (!dict_has(d, key)) {
                     char *ks = value_to_string(key);
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "KeyError: %s not found in dict", ks);
+                    snprintf(buf, sizeof(buf), "%s not found in dict", ks);
                     free(ks);
                     
                     _exc = make_exception_instance(vm, vm->key_error_class, buf);
@@ -1083,14 +1083,14 @@
                 ObjString *s = (ObjString*)AS_OBJ(obj);
                 if (!IS_INT(key)) {
                     
-                    _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: string index must be integer");
+                    _exc = make_exception_instance(vm, vm->type_error_class, "string index must be integer");
                     goto op_throw;
                 }
                 int idx = (int)AS_INT(key);
                 if (idx < 0) idx += s->length;
                 if (idx < 0 || idx >= s->length) {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "IndexError: string index out of bounds (index: %d, length: %d)", idx, s->length);
+                    snprintf(buf, sizeof(buf), "string index out of bounds (index: %d, length: %d)", idx, s->length);
                     
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
@@ -1100,7 +1100,7 @@
             }
             default: {
                 
-                _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: value is not indexable");
+                _exc = make_exception_instance(vm, vm->type_error_class, "value is not indexable");
                 goto op_throw;
             }
         }
@@ -1142,11 +1142,11 @@
             } else if (IS_DICT(obj)) {
                 dict_set((ObjDict*)AS_OBJ(obj), key, val);
             } else {
-                _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: invalid index assignment");
+                _exc = make_exception_instance(vm, vm->type_error_class, "invalid index assignment");
                 goto op_throw;
             }
         } else {
-            _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: invalid index assignment");
+            _exc = make_exception_instance(vm, vm->type_error_class, "invalid index assignment");
             goto op_throw;
         }
         gc_write_barrier(obj, val);
@@ -1362,7 +1362,7 @@
         ObjString *field = KSTROBJ(RC);
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
             
-                _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: cannot access member of null value");
+                _exc = make_exception_instance(vm, vm->attribute_error_class, "cannot access member of null value");
             goto op_throw;
         }
         switch (AS_OBJ(obj)->type) {
@@ -1394,7 +1394,7 @@
                         } else {
                             
                             char buf[256];
-                            snprintf(buf, sizeof(buf), "AttributeError: instance has no field or method '%s'", field->chars);
+                            snprintf(buf, sizeof(buf), "instance has no field or method '%s'", field->chars);
                             _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                             goto op_throw;
                         }
@@ -1409,7 +1409,7 @@
                     SET_REG(RA, export_val);
                 } else {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "AttributeError: module '%s' has no attribute '%s'", mod->name->chars, field->chars);
+                    snprintf(buf, sizeof(buf), "module '%s' has no attribute '%s'", mod->name->chars, field->chars);
 
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
@@ -1427,7 +1427,7 @@
                     Value val = dict_get((ObjDict*)AS_OBJ(obj), make_obj((Object*)field));
                     if (IS_NIL(val)) {
                         char buf[256];
-                        snprintf(buf, sizeof(buf), "KeyError: '%s' not found in dict", field->chars);
+                        snprintf(buf, sizeof(buf), "'%s' not found in dict", field->chars);
                         _exc = make_exception_instance(vm, vm->key_error_class, buf);
                         goto op_throw;
                     }
@@ -1453,7 +1453,7 @@
                     }
                 } else {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "AttributeError: %s has no field '%s'",
+                    snprintf(buf, sizeof(buf), "%s has no field '%s'",
                              AS_OBJ(obj)->type == OBJ_STRING ? "string" : "list", field->chars);
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
@@ -1469,7 +1469,7 @@
                 if (fi >= 0) SET_REG_PRIM(RA, make_int(e->values[fi]));
                 else {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "AttributeError: enum has no variant '%s'", field->chars);
+                    snprintf(buf, sizeof(buf), "enum has no variant '%s'", field->chars);
                     
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
@@ -1488,14 +1488,14 @@
                         SET_REG(RA, val);
                     } else {
                         char buf[256];
-                        snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no field '%s'", cls->name, field->chars);
+                        snprintf(buf, sizeof(buf), "class '%s' has no field '%s'", cls->name, field->chars);
                         
                         _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                         goto op_throw;
                     }
                 } else {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no field '%s'", cls->name, field->chars);
+                    snprintf(buf, sizeof(buf), "class '%s' has no field '%s'", cls->name, field->chars);
                     
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
@@ -1513,7 +1513,7 @@
                     else if (c == 'w') v = vec->data[3];
                     else {
                         char buf[256];
-                        snprintf(buf, sizeof(buf), "AttributeError: vector has no field '%s'", field->chars);
+                        snprintf(buf, sizeof(buf), "vector has no field '%s'", field->chars);
                         
                         _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                         goto op_throw;
@@ -1521,7 +1521,7 @@
                     SET_REG_PRIM(RA, make_double((double)v));
                 } else {
                     char buf[256];
-                    snprintf(buf, sizeof(buf), "AttributeError: vector has no field '%s'", field->chars);
+                    snprintf(buf, sizeof(buf), "vector has no field '%s'", field->chars);
                     
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
@@ -1530,7 +1530,7 @@
             }
             default: {
                 
-                _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: value has no fields");
+                _exc = make_exception_instance(vm, vm->attribute_error_class, "value has no fields");
                 goto op_throw;
             }
         }
@@ -1668,16 +1668,16 @@
                 else if (c == 'w') vec->data[3] = v;
                 else {
                     
-                    _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: vector has no field");
+                    _exc = make_exception_instance(vm, vm->attribute_error_class, "vector has no field");
                     goto op_throw;
                 }
             } else {
                 
-                _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: vector has no field");
+                _exc = make_exception_instance(vm, vm->attribute_error_class, "vector has no field");
                 goto op_throw;
             }
         } else {
-            _exc = make_exception_instance(vm, vm->attribute_error_class, "AttributeError: cannot set field on this type");
+            _exc = make_exception_instance(vm, vm->attribute_error_class, "cannot set field on this type");
             goto op_throw;
         }
         gc_write_barrier(obj, REG(RB));
@@ -1875,7 +1875,7 @@
                     }
                     if (!handled) {
                         char buf[256];
-                        snprintf(buf, sizeof(buf), "AttributeError: class '%s' has no method '%s'", cls->name, mname_obj->chars);
+                        snprintf(buf, sizeof(buf), "class '%s' has no method '%s'", cls->name, mname_obj->chars);
                         
                         _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                         goto op_throw;
@@ -2814,7 +2814,7 @@ case OBJ_MODULE: {
         Value obj = REG(obj_reg);
         if (!IS_INSTANCE(obj)) {
             
-            _exc = make_exception_instance(vm, vm->type_error_class, "TypeError: tryinit on non-instance");
+            _exc = make_exception_instance(vm, vm->type_error_class, "tryinit on non-instance");
             goto op_throw;
         }
         ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
@@ -2831,7 +2831,7 @@ case OBJ_MODULE: {
             }
             
             char buf[256];
-            snprintf(buf, sizeof(buf), "RuntimeError: class '%s' has no _init constructor but %d argument(s) were provided",
+            snprintf(buf, sizeof(buf), "class '%s' has no _init constructor but %d argument(s) were provided",
                      cls ? cls->name : "?", nargs);
             _exc = make_exception_instance(vm, vm->runtime_error_class, buf);
             goto op_throw;
