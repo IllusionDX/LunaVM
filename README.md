@@ -488,6 +488,7 @@ math.sign(-42)        # -1.0
 math.deg_to_rad(180)  # 3.14159...
 math.rad_to_deg(pi)   # 180.0
 math.log(1)           # 0.0
+math.log10(100)       # 2.0
 math.exp(1)           # 2.71828...
 
 print(math.pi)        # 3.141592653589793

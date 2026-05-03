@@ -99,6 +99,16 @@ static Value math_log(VM *vm, Value *args, int n) {
     return make_double(log(v));
 }
 
+static Value math_log10(VM *vm, Value *args, int n) {
+    check_arity(vm, n, 1, "log10");
+    double v = to_double_checked(vm, args[0], "log10", 1);
+    if (v <= 0.0) {
+        luna_throw(vm, vm->value_error_class,
+            "Math domain error: log10() argument must be positive");
+    }
+    return make_double(log10(v));
+}
+
 static Value math_exp(VM *vm, Value *args, int n) {
     check_arity(vm, n, 1, "exp");
     double v = to_double_checked(vm, args[0], "exp", 1);
@@ -245,6 +255,7 @@ void vm_register_math_module(VM *vm) {
     math_add_fn(vm, mod->exports, "sqrt",       math_sqrt);
     math_add_fn(vm, mod->exports, "pow",        math_pow);
     math_add_fn(vm, mod->exports, "log",        math_log);
+    math_add_fn(vm, mod->exports, "log10",      math_log10);
     math_add_fn(vm, mod->exports, "exp",        math_exp);
     math_add_fn(vm, mod->exports, "floor",      math_floor);
     math_add_fn(vm, mod->exports, "ceil",       math_ceil);
