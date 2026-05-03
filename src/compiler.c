@@ -489,11 +489,6 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         break;
     }
 
-    case EXPR_CHAR: {
-        emit_loadi(c, (uint8_t)target, (int32_t)expr->data.char_lit.value);
-        break;
-    }
-
     case EXPR_BOOL: {
         emit_loadbool(c, (uint8_t)target, expr->data.boolean.value);
         break;
@@ -1380,7 +1375,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             ExprKind vk = expr->data.multi_assign.values[i]->kind;
             bool is_literal = (vk == EXPR_INTEGER || vk == EXPR_FLOAT ||
                                vk == EXPR_STRING || vk == EXPR_BOOL ||
-                               vk == EXPR_NULL || vk == EXPR_CHAR);
+                               vk == EXPR_NULL);
             if (is_literal) {
                 direct[i] = true;
                 temps[i] = -1;

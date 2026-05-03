@@ -177,12 +177,6 @@ static Expr *parse_primary(Parser *parser) {
         }
         return expr;
     }
-    case TOK_CHAR_LITERAL: {
-        advance(parser);
-        Expr *expr = make_expr(EXPR_CHAR, peek(parser)->line);
-        expr->data.char_lit.value = tok->value[0];
-        return expr;
-    }
     case TOK_TRUE: {
         advance(parser);
         Expr *expr = make_expr(EXPR_BOOL, peek(parser)->line);

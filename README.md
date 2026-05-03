@@ -34,7 +34,7 @@ var x: int = 5                  # recommended
 var x : int = 5                 # also valid
 ```
 
-> Note: `list`, `dict`, `int`, `float`, `string`, `bool`, and `char` are context-sensitive type-hint keywords. They are valid as identifiers everywhere except after `:` in declarations (e.g., `var x: int = 5`).
+> Note: `list`, `dict`, `int`, `float`, `string`, and `bool` are context-sensitive type-hint keywords. They are valid as identifiers everywhere except after `:` in declarations (e.g., `var x: int = 5`).
 
 ### Base Types
 
@@ -62,10 +62,61 @@ var x : int = 5                 # also valid
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `string` | UTF-8 string | `var name = "Luna"` |
+| `string` | UTF-8 string (both `"..."` and `'...'` produce strings) | `var name = "Luna"` or `var c = 'x'` |
 | `null` | null value | `var player = null` |
 
 > Basic types above are available now. Granular types (int8, int16, int32, int64, uint8, etc.) are planned for a future release.
+
+### String Methods
+
+All strings have these built-in methods:
+
+```luna
+var s = "Hello, Luna!"
+
+s.length       # number of Unicode code points (characters)
+s.size         # number of raw UTF-8 bytes
+s.byte()       # first byte as integer (0 if empty)
+s.byte(3)      # byte at position 3 as integer
+s.to_buffer()  # convert to buffer object
+```
+
+`.length` counts code points (the "visible characters"), while `.size` gives the raw byte count:
+
+```luna
+var emoji = "😀"
+print(emoji.length)   # 1 (one code point)
+print(emoji.size)      # 4 (4 UTF-8 bytes)
+print(emoji.byte(0))   # 240 (first byte of the 4-byte sequence)
+print(emoji.byte(3))   # 191 (last byte)
+```
+
+### Built-in Functions
+
+Global functions available without any import:
+
+```luna
+len("hello")       # 5 — length (code points for strings, elements for list/dict)
+type(42)           # "int" — runtime type name
+ord("A")           # 65 — Unicode code point of first character
+chr(65)            # "A" — code point to UTF-8 string (0..0x10FFFF)
+
+print(x)           # print to stdout
+input()            # read a line from stdin
+range(0, 10)       # [0, 1, 2, ..., 9] — lazy iterable
+range(0, 10, 2)    # step parameter
+
+isnan(x)           # true if x is NaN
+isinf(x)           # true if x is +/-Inf
+gc()               # force garbage collection cycle
+```
+
+`ord()` and `chr()` support the full Unicode range:
+
+```luna
+print(ord("😀"))    # 128512
+print(chr(128512))  # "😀"
+```
 
 ### Collections
 
@@ -564,8 +615,6 @@ b.read_long()                        # Read 64-bit
 ```luna
 import string
 
-string.from_byte(65)           # "A"
-
 # Constants (Python-style)
 string.ascii_letters           # "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 string.digits                  # "0123456789"
@@ -574,7 +623,7 @@ string.whitespace              # " \t\n\r\x0b\x0c"
 string.hexdigits               # "0123456789abcdefABCDEF"
 ```
 
-> **Pattern A — Functional.** Constants on the module; methods like `split`, `trim`, `upper` go on string instances.
+> **Pattern A — Functional.** Constants only on the module. String methods (`length`, `size`, `byte`) are on string instances; for Unicode conversion use the builtins `ord()` and `chr()`.
 
 #### `random`
 

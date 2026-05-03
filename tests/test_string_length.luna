@@ -1,3 +1,14 @@
 var s = "abc"
-
 print(s.length == 3)
+print(s.size == 3)
+
+var emoji = "😀"
+print(emoji.length == 1)
+print(emoji.size == 4)
+
+var mixed = "a😀b"
+print(mixed.length == 3)
+print(mixed.size == 6)
+
+print(len("hello") == 5)
+print(len("😀😀") == 2)

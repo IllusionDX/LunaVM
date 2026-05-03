@@ -262,7 +262,7 @@ static Token *scan_string(Lexer *lexer) {
     
     advance(lexer);
     
-    TokenType type = (quote == '"') ? TOK_STRING_LITERAL : TOK_CHAR_LITERAL;
+    TokenType type = TOK_STRING_LITERAL;
     int raw_length = (int)(lexer->current - start - 2);
     int length = 0;
     char *value = unescape_string_literal(start + 1, raw_length, &length);
@@ -603,7 +603,6 @@ const char *token_type_name(TokenType type) {
         case TOK_FLOAT_LITERAL: return "FLOAT";
         case TOK_STRING_LITERAL: return "STRING";
         case TOK_FSTRING_LITERAL: return "FSTRING";
-        case TOK_CHAR_LITERAL: return "CHAR";
         case TOK_TRUE: return "TRUE";
         case TOK_FALSE: return "FALSE";
         case TOK_NULL: return "NULL";

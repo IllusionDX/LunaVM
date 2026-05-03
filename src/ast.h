@@ -23,7 +23,6 @@ typedef enum {
     EXPR_INTEGER,
     EXPR_FLOAT,
     EXPR_STRING,
-    EXPR_CHAR,
     EXPR_BOOL,
     EXPR_NULL,
     EXPR_IDENTIFIER,
@@ -63,9 +62,6 @@ typedef struct Expr {
             char *value;
             int length;
         } string;
-        struct {
-            char value;
-        } char_lit;
         struct {
             bool value;
         } boolean;

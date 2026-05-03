@@ -14,6 +14,8 @@
 #include "value.h"
 #include "chunk.h"
 
+static int utf8_code_point_count(const char *s, int byte_len);
+
 /* Extern declarations for static mat4 helpers in vm.c */
 extern void mat4_mul_translate(float *m, float x, float y, float z);
 extern void mat4_mul_rotate_x(float *m, float angle);
@@ -212,7 +214,10 @@ static Value bn_len(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n || !IS_OBJ(args[0])) return make_int(0);
     switch (AS_OBJ(args[0])->type) {
-        case OBJ_STRING:  return make_int(((ObjString*)AS_OBJ(args[0]))->length);
+        case OBJ_STRING: {
+            ObjString *s = (ObjString*)AS_OBJ(args[0]);
+            return make_int(utf8_code_point_count(s->chars, s->length));
+        }
         case OBJ_LIST:    return make_int(((ObjList*)  AS_OBJ(args[0]))->count);
         case OBJ_DICT:    return make_int(((ObjDict*)  AS_OBJ(args[0]))->entry_count);
         default:          return make_int(0);
@@ -294,6 +299,69 @@ static Value bn_isinf(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n) return make_bool(false);
     return make_bool(IS_INF(args[0]));
+}
+
+static Value bn_chr(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (n != 1) {
+        luna_throw(vm, vm->argument_error_class, "chr() expects exactly 1 argument");
+    }
+    if (!IS_INT(args[0]) && !IS_INT64(args[0])) {
+        luna_throw(vm, vm->type_error_class, "chr() argument must be an integer");
+    }
+    int32_t cp = (int32_t)as_int64(args[0]);
+    if (cp < 0 || cp > 0x10FFFF) {
+        luna_throw(vm, vm->value_error_class, "chr() argument must be in range 0..1114111");
+    }
+    char buf[4];
+    int len;
+    if (cp < 0x80) {
+        buf[0] = (char)cp; len = 1;
+    } else if (cp < 0x800) {
+        buf[0] = (char)(0xC0 | (cp >> 6));
+        buf[1] = (char)(0x80 | (cp & 0x3F));
+        len = 2;
+    } else if (cp < 0x10000) {
+        buf[0] = (char)(0xE0 | (cp >> 12));
+        buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = (char)(0x80 | (cp & 0x3F));
+        len = 3;
+    } else {
+        buf[0] = (char)(0xF0 | (cp >> 18));
+        buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[3] = (char)(0x80 | (cp & 0x3F));
+        len = 4;
+    }
+    return make_obj((Object*)new_string(buf, len));
+}
+
+static Value bn_ord(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (n != 1) {
+        luna_throw(vm, vm->argument_error_class, "ord() expects exactly 1 argument");
+    }
+    if (!IS_STRING(args[0])) {
+        luna_throw(vm, vm->type_error_class, "ord() argument must be a string");
+    }
+    ObjString *str = (ObjString*)AS_OBJ(args[0]);
+    if (str->length == 0) {
+        luna_throw(vm, vm->value_error_class, "ord() argument must not be empty");
+    }
+    uint8_t c = (uint8_t)str->chars[0];
+    int32_t cp;
+    if ((c & 0x80) == 0) {
+        cp = c;
+    } else if ((c & 0xE0) == 0xC0 && str->length >= 2) {
+        cp = ((c & 0x1F) << 6) | ((uint8_t)str->chars[1] & 0x3F);
+    } else if ((c & 0xF0) == 0xE0 && str->length >= 3) {
+        cp = ((c & 0x0F) << 12) | (((uint8_t)str->chars[1] & 0x3F) << 6) | ((uint8_t)str->chars[2] & 0x3F);
+    } else if ((c & 0xF8) == 0xF0 && str->length >= 4) {
+        cp = ((c & 0x07) << 18) | (((uint8_t)str->chars[1] & 0x3F) << 12) | (((uint8_t)str->chars[2] & 0x3F) << 6) | ((uint8_t)str->chars[3] & 0x3F);
+    } else {
+        luna_throw(vm, vm->value_error_class, "ord(): invalid UTF-8");
+    }
+    return make_int64(cp);
 }
 
 /* ============================================================ */
@@ -453,19 +521,36 @@ static Value string_method_to_buffer(VM *vm, Value *args, int nargs) {
     buffer_append_data(buf, (const uint8_t*)str->chars, (size_t)str->length);
     return make_obj((Object*)buf);
 }
-static Value string_method_byte_at(VM *vm, Value *args, int nargs) {
+static Value string_method_byte(VM *vm, Value *args, int nargs) {
     if (nargs < 1 || !IS_STRING(args[0])) return make_null();
-    if (nargs < 2 || (!IS_INT(args[1]) && !IS_INT64(args[1]))) {
-        luna_throw(vm, vm->type_error_class, "string.byte_at() expects an integer index"); return make_null();
+    int64_t idx64 = 0;
+    if (nargs >= 2) {
+        if (!IS_INT(args[1]) && !IS_INT64(args[1])) {
+            luna_throw(vm, vm->type_error_class, "string.byte() expects an integer index"); return make_null();
+        }
+        idx64 = as_int64(args[1]);
     }
     ObjString *str = (ObjString*)AS_OBJ(args[0]);
-    int64_t idx64 = as_int64(args[1]);
     if (idx64 < 0 || idx64 >= str->length) {
-        luna_throw(vm, vm->index_error_class, "string.byte_at() index out of range"); return make_null();
+        luna_throw(vm, vm->index_error_class, "string.byte() index out of range"); return make_null();
     }
     return make_int((uint8_t)str->chars[idx64]);
 }
+static int utf8_code_point_count(const char *s, int byte_len) {
+    int count = 0;
+    for (int i = 0; i < byte_len; i++) {
+        if ((s[i] & 0xC0) != 0x80) count++;
+    }
+    return count;
+}
+
 static Value string_method_length(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs; if (!IS_STRING(args[0])) return make_null();
+    ObjString *str = (ObjString*)AS_OBJ(args[0]);
+    return make_int(utf8_code_point_count(str->chars, str->length));
+}
+
+static Value string_method_size(VM *vm, Value *args, int nargs) {
     (void)vm; (void)nargs; if (!IS_STRING(args[0])) return make_null();
     return make_int(((ObjString*)AS_OBJ(args[0]))->length);
 }
@@ -646,6 +731,8 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "gc", bn_gc);
     vm_define_native(vm, "isnan", bn_isnan);
     vm_define_native(vm, "isinf", bn_isinf);
+    vm_define_native(vm, "ord",   bn_ord);
+    vm_define_native(vm, "chr",   bn_chr);
     vm_define_native(vm, "vec2",  bn_vec2);
     vm_define_native(vm, "vec3",  bn_vec3);
     vm_define_native(vm, "vec4",  bn_vec4);
@@ -660,9 +747,9 @@ void vm_register_canonical_classes(VM *vm) {
     /* String canonical class */
     vm->string_class = new_class("String", NULL);
     class_add_native_method(vm->string_class, "to_buffer", string_method_to_buffer);
-    class_add_native_method(vm->string_class, "byte_at", string_method_byte_at);
+    class_add_native_method(vm->string_class, "byte", string_method_byte);
     class_add_native_method(vm->string_class, "length", string_method_length);
-    class_add_native_method(vm->string_class, "size", string_method_length);
+    class_add_native_method(vm->string_class, "size", string_method_size);
 
     /* List canonical class */
     vm->list_class = new_class("List", NULL);
