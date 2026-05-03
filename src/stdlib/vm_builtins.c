@@ -555,6 +555,35 @@ static Value string_method_size(VM *vm, Value *args, int nargs) {
     return make_int(((ObjString*)AS_OBJ(args[0]))->length);
 }
 
+static Value string_method_reverse(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    if (!IS_STRING(args[0])) return make_null();
+    ObjString *str = (ObjString*)AS_OBJ(args[0]);
+    int len = str->length;
+    if (len <= 1) return make_obj((Object*)new_string(str->chars, len));
+    int cp_count = utf8_code_point_count(str->chars, len);
+    int *starts = malloc(cp_count * sizeof(int));
+    if (!starts) { fprintf(stderr, "OOM\n"); exit(1); }
+    int idx = 0;
+    for (int i = 0; i < len; i++) {
+        if ((str->chars[i] & 0xC0) != 0x80) starts[idx++] = i;
+    }
+    char *buf = malloc(len + 1);
+    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+    int pos = 0;
+    for (int i = cp_count - 1; i >= 0; i--) {
+        int cp_start = starts[i];
+        int cp_len = (i < cp_count - 1) ? starts[i + 1] - cp_start : len - cp_start;
+        memcpy(buf + pos, str->chars + cp_start, cp_len);
+        pos += cp_len;
+    }
+    buf[pos] = '\0';
+    ObjString *result = new_string(buf, len);
+    free(buf);
+    free(starts);
+    return make_obj((Object*)result);
+}
+
 /* ============================================================ */
 /* Buffer method native functions — args[0] = buffer (self)    */
 /* ============================================================ */
@@ -750,6 +779,7 @@ void vm_register_canonical_classes(VM *vm) {
     class_add_native_method(vm->string_class, "byte", string_method_byte);
     class_add_native_method(vm->string_class, "length", string_method_length);
     class_add_native_method(vm->string_class, "size", string_method_size);
+    class_add_native_method(vm->string_class, "reverse", string_method_reverse);
 
     /* List canonical class */
     vm->list_class = new_class("List", NULL);

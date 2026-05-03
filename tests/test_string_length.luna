@@ -12,3 +12,8 @@ print(mixed.size == 6)
 
 print(len("hello") == 5)
 print(len("😀😀") == 2)
+
+print("abc".reverse() == "cba")
+print("hello".reverse() == "olleh")
+print("".reverse() == "")
+print("😀😁".reverse() == "😁😀")
