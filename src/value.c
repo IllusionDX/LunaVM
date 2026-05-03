@@ -1237,3 +1237,15 @@ void runtime_error(const char *fmt, ...) {
     va_end(ap);
     fprintf(stderr, "\n");
 }
+
+/* ============================================================ */
+/* UTF-8 helpers                                                 */
+/* ============================================================ */
+
+int utf8_code_point_count(const char *s, int byte_len) {
+    int count = 0;
+    for (int i = 0; i < byte_len; i++) {
+        if ((s[i] & 0xC0) != 0x80) count++;
+    }
+    return count;
+}

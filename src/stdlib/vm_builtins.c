@@ -14,8 +14,6 @@
 #include "value.h"
 #include "chunk.h"
 
-static int utf8_code_point_count(const char *s, int byte_len);
-
 /* Extern declarations for static mat4 helpers in vm.c */
 extern void mat4_mul_translate(float *m, float x, float y, float z);
 extern void mat4_mul_rotate_x(float *m, float angle);
@@ -535,13 +533,6 @@ static Value string_method_byte(VM *vm, Value *args, int nargs) {
         luna_throw(vm, vm->index_error_class, "string.byte() index out of range"); return make_null();
     }
     return make_int((uint8_t)str->chars[idx64]);
-}
-static int utf8_code_point_count(const char *s, int byte_len) {
-    int count = 0;
-    for (int i = 0; i < byte_len; i++) {
-        if ((s[i] & 0xC0) != 0x80) count++;
-    }
-    return count;
 }
 
 static Value string_method_length(VM *vm, Value *args, int nargs) {

@@ -14,3 +14,8 @@ s = "hello"
 print(s[1:4])
 print(s[::-1])
 print(s[::2])
+
+var t = "Héroe"
+print(t[::-1] == "eoréH")
+print(t[1:4] == "éro")
+print(t[:2] == "Hé")

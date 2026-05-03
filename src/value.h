@@ -555,5 +555,11 @@ uint32_t hash_value(Value value);
 
 void runtime_error(const char *fmt, ...);
 
+/* ============================================================ */
+/* UTF-8 helpers                                                 */
+/* ============================================================ */
+
+int utf8_code_point_count(const char *s, int byte_len);
+
 #endif /* LUNA_VALUE_H */
 

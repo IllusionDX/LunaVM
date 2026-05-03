@@ -1212,7 +1212,9 @@
             }
         } else if (IS_STRING(obj)) {
             ObjString *s = (ObjString*)AS_OBJ(obj);
-            int len = s->length;
+            int byte_len = s->length;
+            int cp_count = utf8_code_point_count(s->chars, byte_len);
+            int len = cp_count;
             int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
             if (step == 0) {
                 SET_REG(RA, make_obj((Object*)new_string("", 0)));
@@ -1238,22 +1240,50 @@
                 } else {
                     stop = (step < 0) ? -1 : len;
                 }
-                int count = 0;
-                if (step > 0) {
-                    for (int i = start; i < stop; i += step) count++;
-                } else {
-                    for (int i = start; i > stop; i += step) count++;
+                int *cp_pos = (int*)malloc(cp_count * sizeof(int));
+                if (!cp_pos) { fprintf(stderr, "OOM\n"); exit(1); }
+                int ci = 0;
+                for (int i = 0; i < byte_len; i++) {
+                    if ((s->chars[i] & 0xC0) != 0x80) cp_pos[ci++] = i;
                 }
-                char *buf = (char*)malloc(count + 1);
+                int total_bytes = 0;
+                if (step > 0) {
+                    for (int i = start; i < stop; i += step) {
+                        int cp_start = cp_pos[i];
+                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                        total_bytes += cp_end - cp_start;
+                    }
+                } else {
+                    for (int i = start; i > stop; i += step) {
+                        int cp_start = cp_pos[i];
+                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                        total_bytes += cp_end - cp_start;
+                    }
+                }
+                char *buf = (char*)malloc(total_bytes + 1);
+                if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
                 int j = 0;
                 if (step > 0) {
-                    for (int i = start; i < stop; i += step) buf[j++] = s->chars[i];
+                    for (int i = start; i < stop; i += step) {
+                        int cp_start = cp_pos[i];
+                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                        int cp_len = cp_end - cp_start;
+                        memcpy(buf + j, s->chars + cp_start, cp_len);
+                        j += cp_len;
+                    }
                 } else {
-                    for (int i = start; i > stop; i += step) buf[j++] = s->chars[i];
+                    for (int i = start; i > stop; i += step) {
+                        int cp_start = cp_pos[i];
+                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                        int cp_len = cp_end - cp_start;
+                        memcpy(buf + j, s->chars + cp_start, cp_len);
+                        j += cp_len;
+                    }
                 }
                 buf[j] = '\0';
-                ObjString *result = new_string(buf, count);
+                ObjString *result = new_string(buf, j);
                 free(buf);
+                free(cp_pos);
                 SET_REG(RA, make_obj((Object*)result));
             }
         } else {
@@ -1314,7 +1344,9 @@
             }
         } else if (IS_STRING(obj)) {
             ObjString *s = (ObjString*)AS_OBJ(obj);
-            int len = s->length;
+            int byte_len = s->length;
+            int cp_count = utf8_code_point_count(s->chars, byte_len);
+            int len = cp_count;
             int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
             if (step == 0) {
                 SET_REG(RA, make_obj((Object*)new_string("", 0)));
@@ -1340,22 +1372,50 @@
                 } else {
                     stop = (step < 0) ? -1 : len;
                 }
-                int count = 0;
-                if (step > 0) {
-                    for (int i = start; i < stop; i += step) count++;
-                } else {
-                    for (int i = start; i > stop; i += step) count++;
+                int *cp_pos = (int*)malloc(cp_count * sizeof(int));
+                if (!cp_pos) { fprintf(stderr, "OOM\n"); exit(1); }
+                int ci = 0;
+                for (int i = 0; i < byte_len; i++) {
+                    if ((s->chars[i] & 0xC0) != 0x80) cp_pos[ci++] = i;
                 }
-                char *buf = (char*)malloc(count + 1);
+                int total_bytes = 0;
+                if (step > 0) {
+                    for (int i = start; i < stop; i += step) {
+                        int cp_start = cp_pos[i];
+                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                        total_bytes += cp_end - cp_start;
+                    }
+                } else {
+                    for (int i = start; i > stop; i += step) {
+                        int cp_start = cp_pos[i];
+                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                        total_bytes += cp_end - cp_start;
+                    }
+                }
+                char *buf = (char*)malloc(total_bytes + 1);
+                if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
                 int j = 0;
                 if (step > 0) {
-                    for (int i = start; i < stop; i += step) buf[j++] = s->chars[i];
+                    for (int i = start; i < stop; i += step) {
+                        int cp_start = cp_pos[i];
+                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                        int cp_len = cp_end - cp_start;
+                        memcpy(buf + j, s->chars + cp_start, cp_len);
+                        j += cp_len;
+                    }
                 } else {
-                    for (int i = start; i > stop; i += step) buf[j++] = s->chars[i];
+                    for (int i = start; i > stop; i += step) {
+                        int cp_start = cp_pos[i];
+                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                        int cp_len = cp_end - cp_start;
+                        memcpy(buf + j, s->chars + cp_start, cp_len);
+                        j += cp_len;
+                    }
                 }
                 buf[j] = '\0';
-                ObjString *result = new_string(buf, count);
+                ObjString *result = new_string(buf, j);
                 free(buf);
+                free(cp_pos);
                 SET_REG(RA, make_obj((Object*)result));
             }
         } else {
