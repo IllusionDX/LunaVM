@@ -57,6 +57,13 @@
             _exc = make_exception_instance(vm, vm->type_error_class, buf);
             goto op_throw;
         }
+        if (IS_NIL(_v)) {
+            const char *ln = val_type_name(_L), *rn = val_type_name(_R);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and '%s'", ln, rn);
+            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            goto op_throw;
+        }
         if (LUNA_UNLIKELY(!IS_NIL(_exc))) goto op_throw;
         SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
@@ -74,13 +81,38 @@
             }
         }
         Value _v = do_arith(_L, _R, OP_SUB);
+        if (IS_NIL(_v)) {
+            const char *ln = val_type_name(_L), *rn = val_type_name(_R);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and '%s'", ln, rn);
+            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            goto op_throw;
+        }
         if (LUNA_UNLIKELY(!IS_NIL(_exc))) goto op_throw;
         SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 9.  OP_MUL */
-    op_mul: { Value _L=RKB,_R=RKC; if(is_int_type(_L)&&is_int_type(_R)){SET_REG(RA, make_int_result(to_i64(_L)*to_i64(_R)));}else if(IS_DOUBLE(_L)&&IS_DOUBLE(_R)){SET_REG_PRIM(RA,make_double(AS_DOUBLE(_L)*AS_DOUBLE(_R)));}else{SET_REG(RA,do_arith(_L,_R,OP_MUL));} CHECK_GC; DECODE; goto *op_labels[OP(instr)]; }
-
+    op_mul: {
+        Value _L = RKB, _R = RKC;
+        if (is_int_type(_L) && is_int_type(_R)) {
+            SET_REG(RA, make_int_result(to_i64(_L) * to_i64(_R)));
+        } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
+            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
+        } else {
+            Value _v = do_arith(_L, _R, OP_MUL);
+            if (IS_NIL(_v)) {
+                const char *ln = val_type_name(_L), *rn = val_type_name(_R);
+                char buf[128];
+                snprintf(buf, sizeof(buf), "unsupported operand type(s) for *: '%s' and '%s'", ln, rn);
+                _exc = make_exception_instance(vm, vm->type_error_class, buf);
+                goto op_throw;
+            }
+            SET_REG(RA, _v);
+        }
+        CHECK_GC; DECODE; goto *op_labels[OP(instr)];
+    }
+    
     /* 10. OP_DIV */
     op_div: {
         Value _L = RKB, _R = RKC;
@@ -99,11 +131,15 @@
                 SET_REG_PRIM(RA, make_double(to_f64(_L) / r));
             }
         } else {
-            SET_REG_PRIM(RA, make_null());
+            const char *ln = val_type_name(_L), *rn = val_type_name(_R);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for /: '%s' and '%s'", ln, rn);
+            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
-
+    
     /* 11. OP_MOD */
     op_mod: {
         Value _L = RKB, _R = RKC;
@@ -119,7 +155,11 @@
                 SET_REG_PRIM(RA, make_double(fmod(to_f64(_L), r)));
             }
         } else {
-            SET_REG_PRIM(RA, make_null());
+            const char *ln = val_type_name(_L), *rn = val_type_name(_R);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for %%: '%s' and '%s'", ln, rn);
+            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -129,22 +169,24 @@
         Value v = REG(RB);
         if (is_int_type(v)) { SET_REG(RA, make_int_result(-to_i64(v))); DECODE; goto *op_labels[OP(instr)]; }
         if (IS_DOUBLE(v)) { SET_REG_PRIM(RA, make_double(-AS_DOUBLE(v))); DECODE; goto *op_labels[OP(instr)]; }
-        SET_REG_PRIM(RA, make_null());
-        DECODE; goto *op_labels[OP(instr)];
+        char buf[128];
+        snprintf(buf, sizeof(buf), "bad operand type for unary -: '%s'", val_type_name(v));
+        _exc = make_exception_instance(vm, vm->type_error_class, buf);
+        goto op_throw;
     }
 
     /* 13. OP_BAND */
-    op_band: SET_REG(RA, make_int_result(to_i64(REG(RB)) & to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_band: { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for &: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) & to_i64(_R)));  DECODE; goto *op_labels[OP(instr)]; }
     /* 14. OP_BOR */
-    op_bor:  SET_REG(RA, make_int_result(to_i64(REG(RB)) | to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_bor:  { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for |: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) | to_i64(_R)));  DECODE; goto *op_labels[OP(instr)]; }
     /* 15. OP_BXOR */
-    op_bxor: SET_REG(RA, make_int_result(to_i64(REG(RB)) ^ to_i64(REG(RC))));  DECODE; goto *op_labels[OP(instr)];
+    op_bxor: { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for ^: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) ^ to_i64(_R)));  DECODE; goto *op_labels[OP(instr)]; }
     /* 16. OP_BNOT */
-    op_bnot: SET_REG(RA, make_int_result(~to_i64(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
+    op_bnot: { Value v=REG(RB); if(!is_int_type(v)){_exc=make_exception_instance(vm,vm->type_error_class,"bad operand type for unary ~: non-integer");goto op_throw;} SET_REG(RA, make_int_result(~to_i64(v))); DECODE; goto *op_labels[OP(instr)]; }
     /* 17. OP_SHL */
-    op_shl:  SET_REG(RA, make_int_result(to_i64(REG(RB)) << to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
+    op_shl:  { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for <<: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) << to_i64(_R))); DECODE; goto *op_labels[OP(instr)]; }
     /* 18. OP_SHR */
-    op_shr:  SET_REG(RA, make_int_result(to_i64(REG(RB)) >> to_i64(REG(RC)))); DECODE; goto *op_labels[OP(instr)];
+    op_shr:  { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for >>: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) >> to_i64(_R))); DECODE; goto *op_labels[OP(instr)]; }
 
     /* ---- Arithmetic with constant pool operand ---- */
     /* OP_ADDK */
@@ -164,6 +206,13 @@
                 _exc = make_exception_instance(vm, vm->type_error_class, buf);
                 goto op_throw;
             }
+            if (IS_NIL(_v)) {
+                const char *ln = val_type_name(_L), *rn = val_type_name(_R);
+                char buf[128];
+                snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and '%s'", ln, rn);
+                _exc = make_exception_instance(vm, vm->type_error_class, buf);
+                goto op_throw;
+            }
             SET_REG(RA, _v);
         }
         CHECK_GC;
@@ -178,7 +227,15 @@
         } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
             SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
         } else {
-            SET_REG(RA, do_arith(_L, _R, OP_MUL));
+            Value _v = do_arith(_L, _R, OP_MUL);
+            if (IS_NIL(_v)) {
+                const char *ln = val_type_name(_L), *rn = val_type_name(_R);
+                char buf[128];
+                snprintf(buf, sizeof(buf), "unsupported operand type(s) for *: '%s' and '%s'", ln, rn);
+                _exc = make_exception_instance(vm, vm->type_error_class, buf);
+                goto op_throw;
+            }
+            SET_REG(RA, _v);
         }
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
@@ -197,10 +254,14 @@
             }
         } else {
             Value _v = do_arith(v, make_int((int8_t)RB), OP_ADD);
-            if (IS_NIL(_v) && IS_LIST(v)) {
-                char buf[256];
-                snprintf(buf, sizeof(buf), "can only concatenate list (not \"int\") to list");
-                _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            if (IS_NIL(_v)) {
+                if (IS_LIST(v)) {
+                    _exc = make_exception_instance(vm, vm->type_error_class, "can only concatenate list (not \"int\") to list");
+                } else {
+                    char buf[128];
+                    snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and 'int'", val_type_name(v));
+                    _exc = make_exception_instance(vm, vm->type_error_class, buf);
+                }
                 goto op_throw;
             }
             REG(RA) = _v;
@@ -219,7 +280,14 @@
                 REG(RA) = make_int64(res);
             }
         } else {
-            REG(RA) = do_arith(v, make_int((int8_t)RB), OP_SUB);
+            Value _v = do_arith(v, make_int((int8_t)RB), OP_SUB);
+            if (IS_NIL(_v)) {
+                char buf[128];
+                snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and 'int'", val_type_name(v));
+                _exc = make_exception_instance(vm, vm->type_error_class, buf);
+                goto op_throw;
+            }
+            REG(RA) = _v;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -233,8 +301,13 @@
         } else if (IS_DOUBLE(v)) {
             REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)C);
         } else if (IS_LIST(v)) {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "can only concatenate list (not \"int\") to list");
+            _exc = make_exception_instance(vm, vm->type_error_class, "can only concatenate list (not \"int\") to list");
+            goto op_throw;
+        } else if (IS_STRING(v)) {
+            REG(RA) = do_arith(v, make_int((int8_t)C), OP_ADD);
+        } else {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and 'int'", val_type_name(v));
             _exc = make_exception_instance(vm, vm->type_error_class, buf);
             goto op_throw;
         }
@@ -253,8 +326,13 @@
         }
         if (IS_DOUBLE(v)) {
             REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)C);
-        } else {
+        } else if (is_int_type(v)) {
             SET_REG(RA, make_int_result(to_i64(v) - (int8_t)C));
+        } else {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and 'int'", val_type_name(v));
+            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
