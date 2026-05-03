@@ -79,6 +79,7 @@ s.size         # number of raw UTF-8 bytes
 s.byte()       # first byte as integer (0 if empty)
 s.byte(3)      # byte at position 3 as integer
 s.to_buffer()  # convert to buffer object
+s.reverse()    # "abc" -> "cba" (Unicode-aware)
 ```
 
 `.length` counts code points (the "visible characters"), while `.size` gives the raw byte count:
