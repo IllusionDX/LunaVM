@@ -1138,7 +1138,16 @@
         Value val = REG(RC);
         if (IS_OBJ(obj) && AS_OBJ(obj)) {
             if (IS_LIST(obj) && IS_INT(key)) {
-                list_set((ObjList*)AS_OBJ(obj), AS_INT(key), val);
+                ObjList *lst = (ObjList*)AS_OBJ(obj);
+                int idx = (int)AS_INT(key);
+                if (idx < 0) idx += lst->count;
+                if (idx < 0 || idx >= lst->count) {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "list index out of bounds (index: %d, size: %d)", idx, lst->count);
+                    _exc = make_exception_instance(vm, vm->index_error_class, buf);
+                    goto op_throw;
+                }
+                list_set(lst, idx, val);
             } else if (IS_DICT(obj)) {
                 dict_set((ObjDict*)AS_OBJ(obj), key, val);
             } else {
