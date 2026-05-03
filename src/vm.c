@@ -132,6 +132,21 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         free(buf);
         return make_obj((Object*)s);
     }
+    /* Symmetric: R is string, L is anything else → convert L and concat */
+    if (op == OP_ADD && IS_STRING(R)) {
+        ObjString *rs = (ObjString*)AS_OBJ(R);
+        char *ls_tmp = value_to_string(L);
+        int ls_len = (int)strlen(ls_tmp);
+        int len = ls_len + rs->length;
+        char *buf = malloc(len + 1);
+        if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+        memcpy(buf, ls_tmp, ls_len);
+        memcpy(buf + ls_len, rs->chars, rs->length + 1);
+        ObjString *s = new_string(buf, len);
+        free(ls_tmp);
+        free(buf);
+        return make_obj((Object*)s);
+    }
     /* List concat for ADD */
     if (op == OP_ADD && IS_LIST(L) && IS_LIST(R)) {
         ObjList *ls = (ObjList*)AS_OBJ(L);
