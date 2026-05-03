@@ -1,0 +1,5 @@
+import math
+var x = math.exp(800)
+var exp = math.floor(math.log10(x))
+var mant = x / math.pow(10, exp)
+print(mant + "e" + exp)
