@@ -58,19 +58,19 @@ Token *expect(Parser *parser, TokenType type, const char *msg) {
 }
 
 void skip_newlines(Parser *parser) {
-    while (match(parser, TOK_NEWLINE)) {
+    while (match_eol(parser)) {
         advance(parser);
     }
 }
 
 void skip_whitespace_in_literal(Parser *parser) {
-    while (match(parser, TOK_NEWLINE) || match(parser, TOK_INDENT) || match(parser, TOK_DEDENT)) {
+    while (match_eol(parser) || match(parser, TOK_INDENT) || match(parser, TOK_DEDENT)) {
         advance(parser);
     }
 }
 
 void expect_newline(Parser *parser) {
-    if (match(parser, TOK_NEWLINE)) {
+    if (match_eol(parser)) {
         advance(parser);
     }
 }
@@ -157,7 +157,7 @@ bool is_type_hint_start(Parser *parser) {
     if (next && next->type == TOK_COLON) {
         offset++;
         Token *after_colon = peek_ahead(parser, offset);
-        while (after_colon && (after_colon->type == TOK_NEWLINE || after_colon->type == TOK_INDENT || after_colon->type == TOK_DEDENT)) {
+        while (after_colon && (after_colon->type == TOK_NEWLINE || after_colon->type == TOK_SEMICOLON || after_colon->type == TOK_INDENT || after_colon->type == TOK_DEDENT)) {
             offset++;
             after_colon = peek_ahead(parser, offset);
         }
@@ -165,6 +165,7 @@ bool is_type_hint_start(Parser *parser) {
             offset++;
             Token *after_name = peek_ahead(parser, offset);
             if (after_name && (after_name->type == TOK_ASSIGN || after_name->type == TOK_NEWLINE ||
+                               after_name->type == TOK_SEMICOLON ||
                                after_name->type == TOK_COLON || after_name->type == TOK_EOF)) {
                 return true;
             }
@@ -175,6 +176,7 @@ bool is_type_hint_start(Parser *parser) {
         offset++;
         Token *after_name = peek_ahead(parser, offset);
         if (after_name && (after_name->type == TOK_ASSIGN || after_name->type == TOK_NEWLINE ||
+                           after_name->type == TOK_SEMICOLON ||
                            after_name->type == TOK_COLON || after_name->type == TOK_EOF ||
                            after_name->type == TOK_COMMA || after_name->type == TOK_RPAREN)) {
             return true;

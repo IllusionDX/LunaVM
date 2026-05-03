@@ -63,4 +63,8 @@ bool is_type_hint_start(Parser *parser);
 void skip_type_hint(Parser *parser);
 bool is_valid_pattern(Expr *expr);
 
+static inline bool match_eol(Parser *parser) {
+    return match(parser, TOK_NEWLINE) || match(parser, TOK_SEMICOLON);
+}
+
 #endif /* LUNA_PARSER_H */

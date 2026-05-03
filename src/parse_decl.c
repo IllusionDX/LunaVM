@@ -79,7 +79,7 @@ static Decl *parse_function_declaration(Parser *parser) {
 
     int body_count = 0;
     Stmt **body = NULL;
-    if (match(parser, TOK_NEWLINE)) {
+    if (match_eol(parser)) {
         advance(parser);
         body = parse_block(parser, &body_count);
     } else {
@@ -120,12 +120,12 @@ static Decl *parse_class_declaration(Parser *parser) {
     int field_count = 0, method_count = 0;
 
     while (!match2(parser, TOK_DEDENT, TOK_EOF)) {
-        if (match(parser, TOK_NEWLINE)) { advance(parser); continue; }
+        if (match_eol(parser)) { advance(parser); continue; }
 
         if (match(parser, TOK_DEF)) {
             if (method_count >= method_cap) { method_cap *= 2; methods = realloc(methods, method_cap * sizeof(Decl *)); }
             methods[method_count++] = parse_function_declaration(parser);
-            if (match(parser, TOK_NEWLINE)) advance(parser);
+            if (match_eol(parser)) advance(parser);
         } else if (match(parser, TOK_VAR) || match(parser, TOK_IDENTIFIER)) {
             if (field_count >= field_cap) { field_cap *= 2; fields = realloc(fields, field_cap * sizeof(ClassField)); }
             if (match(parser, TOK_VAR)) advance(parser);
@@ -169,7 +169,7 @@ static Decl *parse_enum_declaration(Parser *parser) {
     int auto_value = 0;
 
     while (!match2(parser, TOK_DEDENT, TOK_EOF)) {
-        if (match(parser, TOK_NEWLINE)) { advance(parser); continue; }
+        if (match_eol(parser)) { advance(parser); continue; }
         if (variant_count >= capacity) { capacity *= 2; variants = realloc(variants, capacity * sizeof(EnumVariant)); }
 
         Token *vname = expect(parser, TOK_IDENTIFIER, "Expected variant name");

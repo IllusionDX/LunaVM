@@ -139,7 +139,7 @@ Stmt **parse_block(Parser *parser, int *count) {
     *count = 0;
 
     while (!match(parser, TOK_DEDENT) && !match(parser, TOK_EOF)) {
-        if (match(parser, TOK_NEWLINE)) {
+        if (match_eol(parser)) {
             advance(parser);
             continue;
         }
@@ -154,7 +154,7 @@ Stmt **parse_block(Parser *parser, int *count) {
             statements[(*count)++] = stmt;
         }
 
-        if (match(parser, TOK_NEWLINE)) {
+        if (match_eol(parser)) {
             advance(parser);
         }
     }
@@ -177,7 +177,7 @@ static Stmt *parse_if_statement(Parser *parser) {
     Stmt **else_body = NULL;
     int else_count = 0;
 
-    if (match(parser, TOK_NEWLINE)) advance(parser);
+    if (match_eol(parser)) advance(parser);
 
     if (match(parser, TOK_ELSE)) {
         advance(parser);
@@ -249,7 +249,7 @@ static Stmt *parse_switch_statement(Parser *parser) {
     int case_count = 0;
 
     while (!match(parser, TOK_DEDENT) && !match(parser, TOK_EOF)) {
-        if (match(parser, TOK_NEWLINE)) { advance(parser); continue; }
+        if (match_eol(parser)) { advance(parser); continue; }
 
         Expr *case_value = NULL;
         if (match(parser, TOK_CASE)) {
@@ -269,7 +269,7 @@ static Stmt *parse_switch_statement(Parser *parser) {
         int body_count = 0;
         Stmt **body = parse_block(parser, &body_count);
 
-        if (match(parser, TOK_NEWLINE)) advance(parser);
+        if (match_eol(parser)) advance(parser);
 
         if (case_count >= case_capacity) { case_capacity *= 2; cases = realloc(cases, case_capacity * sizeof(SwitchCase)); }
         cases[case_count].value = case_value;
@@ -313,7 +313,7 @@ static Stmt *parse_try_statement(Parser *parser) {
     Stmt **finally_body = NULL;
     int finally_count = 0;
 
-    if (match(parser, TOK_NEWLINE)) advance(parser);
+    if (match_eol(parser)) advance(parser);
 
     while (match(parser, TOK_EXCEPT)) {
         advance(parser);
@@ -352,7 +352,7 @@ static Stmt *parse_try_statement(Parser *parser) {
         int catch_body_count = 0;
         Stmt **catch_body = parse_block(parser, &catch_body_count);
 
-        if (match(parser, TOK_NEWLINE)) advance(parser);
+        if (match_eol(parser)) advance(parser);
 
         if (catch_count >= catch_capacity) { catch_capacity *= 2; catch_clauses = realloc(catch_clauses, catch_capacity * sizeof(CatchClause)); }
         catch_clauses[catch_count].type_name = type_name;
@@ -384,7 +384,7 @@ static Stmt *parse_try_statement(Parser *parser) {
 static Stmt *parse_return_statement(Parser *parser) {
     expect(parser, TOK_RETURN, "Expected 'return'");
     Expr *value = NULL;
-    if (!match(parser, TOK_NEWLINE) && !match(parser, TOK_DEDENT) && !match(parser, TOK_EOF)) {
+    if (!match_eol(parser) && !match(parser, TOK_DEDENT) && !match(parser, TOK_EOF)) {
         value = parse_expression(parser);
     }
     Stmt *stmt = make_stmt(STMT_RETURN, peek(parser)->line);

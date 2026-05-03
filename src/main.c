@@ -20,16 +20,19 @@
 
 static void print_usage(const char *program) {
     fprintf(stderr, "Usage: %s [options] <source_file>\n", program);
+    fprintf(stderr, "       %s -e <code>   # Execute inline code\n", program);
     fprintf(stderr, "       %s            # Run interactive REPL\n", program);
     fprintf(stderr, "\nOptions:\n");
+    fprintf(stderr, "  -e <code>   Execute inline LunaScript code\n");
     fprintf(stderr, "  -u          Unbuffered stdout/stderr\n");
     fprintf(stderr, "  --dump-bytecode  Print disassembled bytecode\n");
     fprintf(stderr, "  --version   Show version information\n");
     fprintf(stderr, "  --help      Show this help message\n");
     fprintf(stderr, "\nExamples:\n");
-    fprintf(stderr, "  %s program.luna    # Run Luna source file\n", program);
-    fprintf(stderr, "  %s -u program.luna # Run with unbuffered output\n", program);
-    fprintf(stderr, "  %s                 # Start REPL\n", program);
+    fprintf(stderr, "  %s program.luna            # Run Luna source file\n", program);
+    fprintf(stderr, "  %s -e \"print('hello')\"     # Run inline code\n", program);
+    fprintf(stderr, "  %s -u program.luna         # Run with unbuffered output\n", program);
+    fprintf(stderr, "  %s                         # Start REPL\n", program);
 }
 
 static char *read_file(const char *path) {
@@ -319,10 +322,21 @@ int main(int argc, char *argv[]) {
     int unbuffered = 0;
     int dump_bytecode = 0;
     int file_idx = -1;
+    char *inline_code = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-u") == 0) {
             unbuffered = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "-e") == 0) {
+            if (i + 1 < argc) {
+                inline_code = argv[++i];
+            } else {
+                fprintf(stderr, "Error: -e requires an argument\n");
+                print_usage(argv[0]);
+                return 1;
+            }
             continue;
         }
         if (strcmp(argv[i], "--dump-bytecode") == 0) {
@@ -358,6 +372,11 @@ int main(int argc, char *argv[]) {
             print_usage(argv[0]);
             return 0;
         }
+    }
+
+    if (inline_code) {
+        int result = execute_native_program(inline_code, "<command>", argc, argv, dump_bytecode);
+        return result;
     }
 
     if (file_idx < 0 || file_idx >= argc) {

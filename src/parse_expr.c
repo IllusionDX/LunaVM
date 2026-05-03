@@ -819,7 +819,7 @@ static Expr *parse_anonymous_function(Parser *parser) {
 
     int body_count = 0;
     Stmt **body = NULL;
-    if (match(parser, TOK_NEWLINE)) {
+    if (match_eol(parser)) {
         advance(parser);
         body = parse_block(parser, &body_count);
     } else {
