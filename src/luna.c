@@ -611,21 +611,31 @@ luna_Status lunaL_load_string(luna_State *L, const char *str) {
     }
 
     /* Compile */
-    Chunk chunk;
-    if (!compile_program(program, &chunk, vm, false, false)) {
+    Chunk *chunk = malloc(sizeof(Chunk));
+    if (!chunk) {
         luna_push_string(L, "compile error");
-        chunk_free(&chunk);
+        free_program(program);
+        parser_free(parser);
+        token_list_free(tokens);
+        lexer_free(lexer);
+        return LUNA_ERRMEM;
+    }
+    memset(chunk, 0, sizeof(Chunk));
+    if (!compile_program(program, chunk, vm, false, false)) {
+        luna_push_string(L, "compile error");
+        chunk_free(chunk);
+        free(chunk);
         free_program(program);
         parser_free(parser);
         token_list_free(tokens);
         lexer_free(lexer);
         return LUNA_ERRSYNTAX;
     }
-    chunk.source_path = NULL;
+    chunk->source_path = NULL;
 
     /* Create a function from the chunk */
     ObjFunction *fn = new_function("<load>");
-    fn->chunk = &chunk; /* Transfer ownership */
+    fn->chunk = chunk; /* Transfer ownership */
     fn->param_count = 0;
 
     /* Push as a closure */
