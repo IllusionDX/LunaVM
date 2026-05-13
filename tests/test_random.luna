@@ -1,5 +1,6 @@
 from random import Random
 
+# --- PCG64 ---
 var rng = Random.PCG(12345)
 
 # int range
@@ -11,7 +12,7 @@ print(r2 >= 1 and r2 <= 100)
 
 # float 0..1
 var f1 = rng.float()
-print(f1 >= 0.0 and f1 <= 1.0)
+print(f1 >= 0.0 and f1 < 1.0)
 
 # float range
 var f2 = rng.float(10.0, 20.0)
@@ -27,12 +28,28 @@ var rng_a = Random.PCG(42)
 var rng_b = Random.PCG(42)
 print(rng_a.int(1, 100) == rng_b.int(1, 100))
 
-# Xorshift also works
-var xs = Random.Xorshift(99)
-var xs_val = xs.int(1, 10)
-print(xs_val >= 1 and xs_val <= 10)
+# --- Xoshiro256** ---
+var xs = Random.Xoshiro256(99)
+var xs_val = xs.int(1, 100)
+print(xs_val >= 1 and xs_val <= 100)
 
-# rng.choice on list (uses seeded RNG, not C rand())
+# two Xoshiro RNGs with same seed produce same sequence
+var xs_a = Random.Xoshiro256(77)
+var xs_b = Random.Xoshiro256(77)
+print(xs_a.int(1, 100) == xs_b.int(1, 100))
+
+# --- WyRand ---
+var wr = Random.WyRand(42)
+var wr_val = wr.int(1, 100)
+print(wr_val >= 1 and wr_val <= 100)
+
+# two WyRand RNGs with same seed produce same sequence
+var wr_a = Random.WyRand(55)
+var wr_b = Random.WyRand(55)
+print(wr_a.int(1, 100) == wr_b.int(1, 100))
+
+# --- choice ---
+# rng.choice on list
 var items = ["apple", "banana", "cherry"]
 var picked = rng.choice(items)
 print(picked == "apple" or picked == "banana" or picked == "cherry")
@@ -49,6 +66,7 @@ var rng3 = Random.PCG(777)
 var c2 = rng3.choice([10, 20, 30])
 print(c1 == c2)
 
+# --- shuffle ---
 # rng.shuffle in-place
 var deck = [1, 2, 3, 4, 5]
 rng.shuffle(deck)
