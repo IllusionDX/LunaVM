@@ -311,7 +311,7 @@ static void class_add_static(ObjClass *cls, const char *name, NativeFn fn) {
 static ObjList *get_state_list(Value self) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     Value state_val = instance_get_field(inst, "_state");
-    if (!IS_OBJ(state_val) || AS_OBJ(state_val)->type != OBJ_LIST) {
+    if (!IS_OBJ(state_val) || AS_OBJ(state_val)->type->kind != OBJ_LIST) {
         return NULL;
     }
     return (ObjList*)AS_OBJ(state_val);
@@ -466,7 +466,7 @@ static Value rng_choice(VM *vm, Value *args, int n) {
         luna_throw(vm, vm->type_error_class, "choice(): argument must be a list or string");
 
     Object *obj = AS_OBJ(seq);
-    if (obj->type == OBJ_LIST) {
+    if (obj->type->kind == OBJ_LIST) {
         ObjList *list = (ObjList*)obj;
         int len = list_length(list);
         if (len == 0)
@@ -475,7 +475,7 @@ static Value rng_choice(VM *vm, Value *args, int n) {
         int idx = (int)lemire_range_64(raw, (uint64_t)len);
         return list_get(list, idx);
     }
-    if (obj->type == OBJ_STRING) {
+    if (obj->type->kind == OBJ_STRING) {
         ObjString *str = (ObjString*)obj;
         if (str->length == 0)
             luna_throw(vm, vm->value_error_class, "choice(): string is empty");
@@ -493,7 +493,7 @@ static Value rng_shuffle(VM *vm, Value *args, int n) {
     if (n < 2)
         luna_throw(vm, vm->argument_error_class, "shuffle() requires a list argument");
 
-    if (!IS_OBJ(args[1]) || AS_OBJ(args[1])->type != OBJ_LIST)
+    if (!IS_OBJ(args[1]) || AS_OBJ(args[1])->type->kind != OBJ_LIST)
         luna_throw(vm, vm->type_error_class, "shuffle(): argument must be a list");
 
     ObjList *list = (ObjList*)AS_OBJ(args[1]);

@@ -49,7 +49,7 @@
                 DECODE; goto *op_labels[OP(instr)];
             }
         }
-        Value _v = do_arith(_L, _R, OP_ADD);
+        Value _v = do_arith(vm, _L, _R, OP_ADD);
         if (IS_NIL(_v) && IS_LIST(_L) && !IS_LIST(_R)) {
             const char *tn = val_type_name(_R);
             char buf[256];
@@ -80,7 +80,7 @@
                 DECODE; goto *op_labels[OP(instr)];
             }
         }
-        Value _v = do_arith(_L, _R, OP_SUB);
+        Value _v = do_arith(vm, _L, _R, OP_SUB);
         if (IS_NIL(_v)) {
             const char *ln = val_type_name(_L), *rn = val_type_name(_R);
             char buf[128];
@@ -100,7 +100,7 @@
         } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
             SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
         } else {
-            Value _v = do_arith(_L, _R, OP_MUL);
+            Value _v = do_arith(vm, _L, _R, OP_MUL);
             if (IS_NIL(_v)) {
                 const char *ln = val_type_name(_L), *rn = val_type_name(_R);
                 char buf[128];
@@ -198,7 +198,7 @@
         } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
             SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
         } else {
-            Value _v = do_arith(_L, _R, OP_ADD);
+            Value _v = do_arith(vm, _L, _R, OP_ADD);
             if (IS_NIL(_v) && IS_LIST(_L) && !IS_LIST(_R)) {
                 const char *tn = val_type_name(_R);
                 char buf[256];
@@ -227,7 +227,7 @@
         } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
             SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
         } else {
-            Value _v = do_arith(_L, _R, OP_MUL);
+            Value _v = do_arith(vm, _L, _R, OP_MUL);
             if (IS_NIL(_v)) {
                 const char *ln = val_type_name(_L), *rn = val_type_name(_R);
                 char buf[128];
@@ -253,7 +253,7 @@
                 REG(RA) = make_int64(res);
             }
         } else {
-            Value _v = do_arith(v, make_int((int8_t)RB), OP_ADD);
+            Value _v = do_arith(vm, v, make_int((int8_t)RB), OP_ADD);
             if (IS_NIL(_v)) {
                 if (IS_LIST(v)) {
                     _exc = make_exception_instance(vm, vm->type_error_class, "can only concatenate list (not \"int\") to list");
@@ -280,7 +280,7 @@
                 REG(RA) = make_int64(res);
             }
         } else {
-            Value _v = do_arith(v, make_int((int8_t)RB), OP_SUB);
+            Value _v = do_arith(vm, v, make_int((int8_t)RB), OP_SUB);
             if (IS_NIL(_v)) {
                 char buf[128];
                 snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and 'int'", val_type_name(v));
@@ -304,7 +304,7 @@
             _exc = make_exception_instance(vm, vm->type_error_class, "can only concatenate list (not \"int\") to list");
             goto op_throw;
         } else if (IS_STRING(v)) {
-            REG(RA) = do_arith(v, make_int((int8_t)C), OP_ADD);
+            REG(RA) = do_arith(vm, v, make_int((int8_t)C), OP_ADD);
         } else {
             char buf[128];
             snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and 'int'", val_type_name(v));
@@ -341,23 +341,23 @@
     /* 21. OP_EQ */
     op_eq: {
         Value _L = RKB, _R = RKC;
-        SET_REG_PRIM(RA, (_L == _R) ? TRUE_VAL : (IS_STRING(_L) && IS_STRING(_R)) ? FALSE_VAL : do_cmp(_L, _R, OP_EQ));
+        SET_REG_PRIM(RA, (_L == _R) ? TRUE_VAL : (IS_STRING(_L) && IS_STRING(_R)) ? FALSE_VAL : do_cmp(vm, _L, _R, OP_EQ));
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 22. OP_NE */
     op_ne: {
         Value _L = RKB, _R = RKC;
-        SET_REG_PRIM(RA, (_L == _R) ? FALSE_VAL : (IS_STRING(_L) && IS_STRING(_R)) ? TRUE_VAL : do_cmp(_L, _R, OP_NE));
+        SET_REG_PRIM(RA, (_L == _R) ? FALSE_VAL : (IS_STRING(_L) && IS_STRING(_R)) ? TRUE_VAL : do_cmp(vm, _L, _R, OP_NE));
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 23. OP_LT */
-    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)< to_i64(_R)):do_cmp(_L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
+    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)< to_i64(_R)):do_cmp(vm, _L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 24. OP_LE */
-    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)<=to_i64(_R)):do_cmp(_L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
+    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)<=to_i64(_R)):do_cmp(vm, _L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
     /* 25. OP_GT */
-    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)> to_i64(_R)):do_cmp(_L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
+    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)> to_i64(_R)):do_cmp(vm, _L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 26. OP_GE */
-    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)>=to_i64(_R)):do_cmp(_L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
+    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)>=to_i64(_R)):do_cmp(vm, _L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
     /* 27. OP_IN */
     op_in: {
         Value needle = RKB;
@@ -407,7 +407,7 @@
             _c = AS_INT(_L) < AS_INT(_R);
         } else {
             if (is_num(_L) && is_num(_R)) _c = to_f64(_L) < to_f64(_R);
-            else _c = is_truthy(do_cmp(_L, _R, OP_LT));
+            else _c = is_truthy(do_cmp(vm, _L, _R, OP_LT));
         }
         if (!_c) pc += (int16_t)C;
         DECODE; goto *op_labels[OP(instr)];
@@ -419,7 +419,7 @@
             _c = AS_INT(_L) <= AS_INT(_R);
         } else {
             if (is_num(_L) && is_num(_R)) _c = to_f64(_L) <= to_f64(_R);
-            else _c = is_truthy(do_cmp(_L, _R, OP_LE));
+            else _c = is_truthy(do_cmp(vm, _L, _R, OP_LE));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -431,7 +431,7 @@
             _c = AS_INT(_L) > AS_INT(_R);
         } else {
             if (is_num(_L) && is_num(_R)) _c = to_f64(_L) > to_f64(_R);
-            else _c = is_truthy(do_cmp(_L, _R, OP_GT));
+            else _c = is_truthy(do_cmp(vm, _L, _R, OP_GT));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -443,7 +443,7 @@
             _c = AS_INT(_L) >= AS_INT(_R);
         } else {
             if (is_num(_L) && is_num(_R)) _c = to_f64(_L) >= to_f64(_R);
-            else _c = is_truthy(do_cmp(_L, _R, OP_GE));
+            else _c = is_truthy(do_cmp(vm, _L, _R, OP_GE));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -456,7 +456,7 @@
         } else if (IS_STRING(_L) && IS_STRING(_R)) {
             _c = false;
         } else {
-            _c = is_truthy(do_cmp(_L, _R, OP_EQ));
+            _c = is_truthy(do_cmp(vm, _L, _R, OP_EQ));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -469,7 +469,7 @@
         } else if (IS_STRING(_L) && IS_STRING(_R)) {
             _c = true;
         } else {
-            _c = is_truthy(do_cmp(_L, _R, OP_NE));
+            _c = is_truthy(do_cmp(vm, _L, _R, OP_NE));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -483,7 +483,7 @@
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) < (double)_imm;
         } else {
-            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_LT));
+            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_LT));
         }
         if (!_c) pc += (int16_t)C;
         DECODE; goto *op_labels[OP(instr)];
@@ -497,7 +497,7 @@
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) <= (double)_imm;
         } else {
-            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_LE));
+            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_LE));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -511,7 +511,7 @@
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) > (double)_imm;
         } else {
-            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_GT));
+            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_GT));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -525,7 +525,7 @@
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) >= (double)_imm;
         } else {
-            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_GE));
+            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_GE));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -539,7 +539,7 @@
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) == (double)_imm;
         } else {
-            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_EQ));
+            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_EQ));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -553,7 +553,7 @@
         } else if (IS_DOUBLE(_L)) {
             _c = AS_DOUBLE(_L) != (double)_imm;
         } else {
-            _c = is_truthy(do_cmp(_L, make_int(_imm), OP_NE));
+            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_NE));
         }
         if (!_c) pc += C;
         DECODE; goto *op_labels[OP(instr)];
@@ -798,7 +798,7 @@
             char *s = value_to_string(fn_val);
             char buf[256];
             if (IS_OBJ(fn_val)) {
-                snprintf(buf, sizeof(buf), "attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type, s);
+                snprintf(buf, sizeof(buf), "attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type->kind, s);
             } else {
                 snprintf(buf, sizeof(buf), "attempt to call non-function (got %s)", s);
             }
@@ -1122,7 +1122,7 @@
                 _exc = make_exception_instance(vm, vm->type_error_class, "cannot index null value");
             goto op_throw;
         }
-        switch (AS_OBJ(obj)->type) {
+        switch (AS_OBJ(obj)->type->kind) {
             case OBJ_LIST: {
                 if (!IS_INT(key)) {
                     
@@ -1140,7 +1140,7 @@
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
-                SET_REG(RA, lst->items ? lst->items[idx] : lst->inline_items[idx]);
+                SET_REG(RA, AS_OBJ(obj)->type->getitem(vm, obj, key));
                 break;
             }
             case OBJ_DICT: {
@@ -1154,7 +1154,7 @@
                     _exc = make_exception_instance(vm, vm->key_error_class, buf);
                     goto op_throw;
                 }
-                SET_REG(RA, dict_get(d, key));
+                SET_REG(RA, AS_OBJ(obj)->type->getitem(vm, obj, key));
                 break;
             }
             case OBJ_STRING: {
@@ -1173,7 +1173,7 @@
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
-                SET_REG(RA, make_obj((Object*)new_string(&s->chars[idx], 1)));
+                SET_REG(RA, AS_OBJ(obj)->type->getitem(vm, obj, key));
                 break;
             }
             default: {
@@ -1190,19 +1190,15 @@
         Value obj = REG(RB);
         Value key = REG(RC);
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
-        switch (AS_OBJ(obj)->type) {
+        switch (AS_OBJ(obj)->type->kind) {
             case OBJ_LIST:
-                SET_REG(RA, IS_INT(key) ? list_get((ObjList*)AS_OBJ(obj), AS_INT(key)) : make_null());
+                SET_REG(RA, AS_OBJ(obj)->type ? AS_OBJ(obj)->type->getitem(vm, obj, key) : make_null());
                 break;
             case OBJ_DICT:
-                SET_REG(RA, dict_get((ObjDict*)AS_OBJ(obj), key));
+                SET_REG(RA, AS_OBJ(obj)->type ? AS_OBJ(obj)->type->getitem(vm, obj, key) : make_null());
                 break;
             case OBJ_STRING: {
-                ObjString *s = (ObjString*)AS_OBJ(obj);
-                if (IS_INT(key) && AS_INT(key) >= 0 && AS_INT(key) < s->length)
-                    SET_REG(RA, make_obj((Object*)new_string(&s->chars[AS_INT(key)], 1)));
-                else
-                    SET_REG_PRIM(RA, make_null());
+                SET_REG(RA, AS_OBJ(obj)->type ? AS_OBJ(obj)->type->getitem(vm, obj, key) : make_null());
                 break;
             }
             default: SET_REG_PRIM(RA, make_null()); break;
@@ -1225,9 +1221,9 @@
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
-                list_set(lst, idx, val);
+                AS_OBJ(obj)->type->setitem(vm, obj, key, val);
             } else if (IS_DICT(obj)) {
-                dict_set((ObjDict*)AS_OBJ(obj), key, val);
+                AS_OBJ(obj)->type->setitem(vm, obj, key, val);
             } else {
                 _exc = make_exception_instance(vm, vm->type_error_class, "invalid index assignment");
                 goto op_throw;
@@ -1512,7 +1508,7 @@
                 _exc = make_exception_instance(vm, vm->attribute_error_class, "cannot access member of null value");
             goto op_throw;
         }
-        switch (AS_OBJ(obj)->type) {
+        switch (AS_OBJ(obj)->type->kind) {
             case OBJ_INSTANCE: {
                 ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
                 uint32_t ic_idx = ((uint32_t)(uintptr_t)current_chunk ^ (uint32_t)(pc - current_chunk->code)) & (IC_CACHE_SIZE - 1);
@@ -1601,7 +1597,7 @@
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "%s has no field '%s'",
-                             AS_OBJ(obj)->type == OBJ_STRING ? "string" : "list", field->chars);
+                             AS_OBJ(obj)->type->kind == OBJ_STRING ? "string" : "list", field->chars);
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
@@ -1689,7 +1685,7 @@
         Value obj = REG(RB);
         ObjString *field = KSTROBJ(RC);
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
-        switch (AS_OBJ(obj)->type) {
+        switch (AS_OBJ(obj)->type->kind) {
             case OBJ_INSTANCE: {
                 ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
                 int fi = -1;
@@ -1893,7 +1889,7 @@
         bool handled = false;
         Value native_scratch[256];
         if (IS_OBJ(obj) && AS_OBJ(obj)) {
-            switch (AS_OBJ(obj)->type) {
+            switch (AS_OBJ(obj)->type->kind) {
                 case OBJ_CLASS: {
                     ObjClass *cls = (ObjClass*)AS_OBJ(obj);
                     ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
@@ -2513,9 +2509,9 @@ case OBJ_MODULE: {
         Value obj = REG(RB);
         Value cls = REG(RC);
         bool result = false;
-        if (IS_OBJ(obj) && AS_OBJ(obj) && AS_OBJ(obj)->type == OBJ_INSTANCE) {
+        if (IS_OBJ(obj) && AS_OBJ(obj) && AS_OBJ(obj)->type->kind == OBJ_INSTANCE) {
             ObjClass *obj_class = ((ObjInstance*)AS_OBJ(obj))->klass;
-            if (IS_OBJ(cls) && AS_OBJ(cls) && AS_OBJ(cls)->type == OBJ_CLASS) {
+            if (IS_OBJ(cls) && AS_OBJ(cls) && AS_OBJ(cls)->type->kind == OBJ_CLASS) {
                 ObjClass *target = (ObjClass*)AS_OBJ(cls);
                 while (obj_class) {
                     if (obj_class == target) { result = true; break; }
@@ -2533,7 +2529,7 @@ case OBJ_MODULE: {
         int32_t skip = sBx;
         bool has_arg = (FRAME.nargs > (int)param_idx);
         if (!has_arg && FRAME.fn && FRAME.fn->param_name_objs &&
-            IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type == OBJ_DICT) {
+            IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type->kind == OBJ_DICT) {
             ObjDict *kw = (ObjDict*)AS_OBJ(FRAME.kw_args);
             Value key_val = make_obj((Object*)FRAME.fn->param_name_objs[param_idx]);
             Value v = dict_get(kw, key_val);
@@ -2548,7 +2544,7 @@ case OBJ_MODULE: {
     /* 60. OP_KWARGS */
     op_kwargs: {
         if (FRAME.fn && FRAME.fn->param_name_objs &&
-            IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type == OBJ_DICT) {
+            IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type->kind == OBJ_DICT) {
             ObjDict *kw = (ObjDict*)AS_OBJ(FRAME.kw_args);
             for (int i = 0; i < FRAME.fn->param_count; i++) {
                 ObjString *key_str = FRAME.fn->param_name_objs[i];
@@ -2791,7 +2787,7 @@ case OBJ_MODULE: {
             char *s = value_to_string(fn_val);
             char buf[256];
             if (IS_OBJ(fn_val)) {
-                snprintf(buf, sizeof(buf), "attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type, s);
+                snprintf(buf, sizeof(buf), "attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type->kind, s);
             } else {
                 snprintf(buf, sizeof(buf), "attempt to call non-function (got %s)", s);
             }

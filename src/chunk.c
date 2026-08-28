@@ -111,7 +111,7 @@ int chunk_add_string_len(Chunk *chunk, const char *chars, int length) {
     /* De-duplicate: return existing index if already interned */
     for (int i = 0; i < chunk->const_count; i++) {
         Value v = chunk->constants[i];
-        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING) {
+        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type->kind == OBJ_STRING) {
             ObjString *s = (ObjString *)AS_OBJ(v);
             if (s->length == length && memcmp(s->chars, chars, (size_t)length) == 0) return i;
         }
@@ -323,7 +323,7 @@ void chunk_disassemble(Chunk *chunk) {
     /* Recurse into function constants */
     for (int i = 0; i < chunk->const_count; i++) {
         Value v = chunk->constants[i];
-        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == OBJ_FUNCTION) {
+        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type->kind == OBJ_FUNCTION) {
             ObjFunction *fn = (ObjFunction *)AS_OBJ(v);
             if (fn->chunk && !fn->is_native) {
                 depth++;

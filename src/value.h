@@ -18,6 +18,7 @@ struct luna_State;
 /* Forward declarations */
 typedef struct Object   Object;
 typedef struct ObjInt64 ObjInt64;
+typedef struct Type     Type;   /* MOP vtable (defined in luna/object.h) */
 struct Chunk;
 struct VM;
 

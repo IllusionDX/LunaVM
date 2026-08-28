@@ -23,6 +23,7 @@ endif
 
 # Source files
 SOURCES = src/value.c src/chunk.c src/vm.c \
+    src/luna/object.c \
     src/luna/main.c src/luna/luna.c \
     src/luna/lexer.c src/luna/parser.c src/luna/compiler.c \
     src/luna/parse_expr.c src/luna/parse_stmt.c src/luna/parse_decl.c \

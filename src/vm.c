@@ -85,7 +85,7 @@ static const char *val_type_name(Value v) {
     if (IS_DICT(v)) return "dict";
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
-        switch (obj->type) {
+        switch (obj->type->kind) {
             case OBJ_FUNCTION: return "function";
             case OBJ_UPVALUE: return "upvalue";
             case OBJ_CLOSURE: return "closure";
@@ -107,183 +107,53 @@ static const char *val_type_name(Value v) {
     return "unknown";
 }
 
-static inline Value do_arith(Value L, Value R, OpCode op) {
-    /* String concat for ADD */
-    if (op == OP_ADD && IS_STRING(L)) {
-        ObjString *ls = (ObjString*)AS_OBJ(L);
-        const char *rs;
-        int rs_len;
-        char *rs_tmp = NULL;
-        if (IS_STRING(R)) {
-            ObjString *rs_str = (ObjString*)AS_OBJ(R);
-            rs = rs_str->chars;
-            rs_len = rs_str->length;
-        } else {
-            rs_tmp = value_to_string(R);
-            rs = rs_tmp;
-            rs_len = (int)strlen(rs_tmp);
-        }
-        int len = ls->length + rs_len;
-        char *buf = malloc(len + 1);
-        memcpy(buf, ls->chars, ls->length);
-        memcpy(buf + ls->length, rs, rs_len + 1);
-        ObjString *s = new_string(buf, len);
-        free(rs_tmp);
-        free(buf);
-        return make_obj((Object*)s);
+static inline Value do_arith(VM *vm, Value L, Value R, OpCode op) {
+    /* OP_NEG: unary negative — delegate to vtable if object, else native */
+    if (op == OP_NEG) {
+        if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type && AS_OBJ(L)->type->neg)
+            return AS_OBJ(L)->type->neg(vm, L);
+        if (is_int_type(L)) return make_int_result(-to_i64(L));
+        return make_double(-to_f64(L));
     }
-    /* Symmetric: R is string, L is anything else → convert L and concat */
-    if (op == OP_ADD && IS_STRING(R)) {
-        ObjString *rs = (ObjString*)AS_OBJ(R);
-        char *ls_tmp = value_to_string(L);
-        int ls_len = (int)strlen(ls_tmp);
-        int len = ls_len + rs->length;
-        char *buf = malloc(len + 1);
-        if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
-        memcpy(buf, ls_tmp, ls_len);
-        memcpy(buf + ls_len, rs->chars, rs->length + 1);
-        ObjString *s = new_string(buf, len);
-        free(ls_tmp);
-        free(buf);
-        return make_obj((Object*)s);
-    }
-    /* List concat for ADD */
-    if (op == OP_ADD && IS_LIST(L) && IS_LIST(R)) {
-        ObjList *ls = (ObjList*)AS_OBJ(L);
-        ObjList *rs = (ObjList*)AS_OBJ(R);
-        ObjList *result = new_list(ls->count + rs->count);
-        for (int i = 0; i < ls->count; i++) {
-            list_add(result, ls->items ? ls->items[i] : ls->inline_items[i]);
-        }
-        for (int i = 0; i < rs->count; i++) {
-            list_add(result, rs->items ? rs->items[i] : rs->inline_items[i]);
-        }
-        return make_obj((Object*)result);
-    }
-    /* List/string repetition for MUL */
-    if (op == OP_MUL) {
-        ObjList *lst = NULL;
-        ObjString *str = NULL;
-        int64_t times = 0;
-        if (IS_LIST(L) && IS_INT(R)) {
-            lst = (ObjList*)AS_OBJ(L);
-            times = AS_INT(R);
-        } else if (IS_LIST(R) && IS_INT(L)) {
-            lst = (ObjList*)AS_OBJ(R);
-            times = AS_INT(L);
-        } else if (IS_STRING(L) && IS_INT(R)) {
-            str = (ObjString*)AS_OBJ(L);
-            times = AS_INT(R);
-        } else if (IS_STRING(R) && IS_INT(L)) {
-            str = (ObjString*)AS_OBJ(R);
-            times = AS_INT(L);
-        }
-        if (lst && times >= 0) {
-            ObjList *result = new_list(lst->count * (int)times);
-            for (int t = 0; t < times; t++) {
-                for (int i = 0; i < lst->count; i++) {
-                    list_add(result, lst->items ? lst->items[i] : lst->inline_items[i]);
-                }
-            }
-            return make_obj((Object*)result);
-        }
-        if (lst && times < 0) return make_obj((Object*)new_list(0));
-        if (str && times >= 0) {
-            int len = str->length * (int)times;
-            char *buf = malloc(len + 1);
-            if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
-            buf[0] = '\0';
-            for (int t = 0; t < times; t++) {
-                memcpy(buf + t * str->length, str->chars, str->length);
-            }
-            buf[len] = '\0';
-            ObjString *result = new_string(buf, len);
-            free(buf);
-            return make_obj((Object*)result);
-        }
-        if (str && times < 0) return make_obj((Object*)new_string("", 0));
-    }
-    /* Vector operations */
-    if (IS_VECTOR(L) && IS_VECTOR(R)) {
-        ObjVector *lv = (ObjVector*)AS_OBJ(L);
-        ObjVector *rv = (ObjVector*)AS_OBJ(R);
-        float rx, ry, rz, rw;
+    /* MOP vtable dispatch: if L is a heap object with a vtable operation */
+    if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type) {
+        Type *t = AS_OBJ(L)->type;
+        MOP_Bin fn = NULL;
         switch (op) {
-            case OP_ADD: rx = lv->data[0] + rv->data[0]; ry = lv->data[1] + rv->data[1]; rz = lv->data[2] + rv->data[2]; rw = lv->data[3] + rv->data[3]; break;
-            case OP_SUB: rx = lv->data[0] - rv->data[0]; ry = lv->data[1] - rv->data[1]; rz = lv->data[2] - rv->data[2]; rw = lv->data[3] - rv->data[3]; break;
-            case OP_MUL: rx = lv->data[0] * rv->data[0]; ry = lv->data[1] * rv->data[1]; rz = lv->data[2] * rv->data[2]; rw = lv->data[3] * rv->data[3]; break;
-            default: return make_null();
+            case OP_ADD: fn = t->add; break;
+            case OP_SUB: fn = t->sub; break;
+            case OP_MUL: fn = t->mul; break;
+            case OP_DIV: fn = t->div; break;
+            case OP_MOD: fn = t->mod; break;
+            default: break;
         }
-        return make_obj((Object*)new_vector(rx, ry, rz, rw));
+        if (fn) return fn(vm, L, R);
     }
-    if (IS_VECTOR(L) && is_num(R)) {
-        ObjVector *lv = (ObjVector*)AS_OBJ(L);
-        float s = (float)value_to_double(R);
-        float rx, ry, rz, rw;
+    /* Symmetric: for ADD/MUL, if R is the object (e.g. int + string), try R's vtable */
+    if ((op == OP_ADD || op == OP_MUL) && IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type) {
+        Type *t = AS_OBJ(R)->type;
+        MOP_Bin fn = NULL;
         switch (op) {
-            case OP_MUL: rx = lv->data[0] * s; ry = lv->data[1] * s; rz = lv->data[2] * s; rw = lv->data[3] * s; break;
-            case OP_DIV: rx = lv->data[0] / s; ry = lv->data[1] / s; rz = lv->data[2] / s; rw = lv->data[3] / s; break;
-            default: return make_null();
+            case OP_ADD: fn = t->add; break;
+            case OP_MUL: fn = t->mul; break;
+            default: break;
         }
-        return make_obj((Object*)new_vector(rx, ry, rz, rw));
+        if (fn) return fn(vm, R, L);  /* self = R, other = L */
     }
-    /* Matrix operations */
-    if (IS_MATRIX(L) && IS_MATRIX(R)) {
-        if (op != OP_MUL) return make_null();
-        ObjMatrix *ma = (ObjMatrix*)AS_OBJ(L);
-        ObjMatrix *mb = (ObjMatrix*)AS_OBJ(R);
-        ObjMatrix *res = new_matrix();
-        for (int col = 0; col < 4; col++) {
-            for (int row = 0; row < 4; row++) {
-                float sum = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    sum += ma->m[row + k * 4] * mb->m[k + col * 4];
-                res->m[row + col * 4] = sum;
-            }
-        }
-        return make_obj((Object*)res);
-    }
-    if (IS_MATRIX(L) && IS_VECTOR(R)) {
-        if (op != OP_MUL) return make_null();
-        ObjMatrix *m = (ObjMatrix*)AS_OBJ(L);
-        ObjVector *v = (ObjVector*)AS_OBJ(R);
-        float rx = m->m[0]*v->data[0] + m->m[4]*v->data[1] + m->m[8]*v->data[2] + m->m[12]*v->data[3];
-        float ry = m->m[1]*v->data[0] + m->m[5]*v->data[1] + m->m[9]*v->data[2] + m->m[13]*v->data[3];
-        float rz = m->m[2]*v->data[0] + m->m[6]*v->data[1] + m->m[10]*v->data[2] + m->m[14]*v->data[3];
-        float rw = m->m[3]*v->data[0] + m->m[7]*v->data[1] + m->m[11]*v->data[2] + m->m[15]*v->data[3];
-        return make_obj((Object*)new_vector(rx, ry, rz, rw));
-    }
-    if (IS_MATRIX(L) && is_num(R)) {
-        if (op != OP_MUL) return make_null();
-        ObjMatrix *m = (ObjMatrix*)AS_OBJ(L);
-        float s = (float)value_to_double(R);
-        ObjMatrix *res = new_matrix();
-        for (int i = 0; i < 16; i++) res->m[i] = m->m[i] * s;
-        return make_obj((Object*)res);
-    }
+    /* Native arithmetic (int/float) — kept intact for correctness */
     if (!is_num(L) || !is_num(R)) return make_null();
-    /* Integer path */
     if (is_int_type(L) && is_int_type(R)) {
-        int64_t li = to_i64(L);
-        int64_t ri = to_i64(R);
+        int64_t li = to_i64(L); int64_t ri = to_i64(R);
         switch (op) {
             case OP_ADD: return make_int_result(li + ri);
             case OP_SUB: return make_int_result(li - ri);
             case OP_MUL: return make_int_result(li * ri);
-            case OP_DIV: {
-                if (!ri) return make_null();
-                return make_int_result(li / ri);
-            }
-            case OP_MOD: {
-                if (!ri) return make_null();
-                return make_int_result(li % ri);
-            }
+            case OP_DIV: { if (!ri) return make_null(); return make_int_result(li / ri); }
+            case OP_MOD: { if (!ri) return make_null(); return make_int_result(li % ri); }
             default: return make_null();
         }
     }
-    /* Floating-point path */
-    double l = to_f64(L);
-    double r = to_f64(R);
+    double l = to_f64(L); double r = to_f64(R);
     switch (op) {
         case OP_ADD: return make_double(l + r);
         case OP_SUB: return make_double(l - r);
@@ -303,7 +173,7 @@ static inline Value do_arith(Value L, Value R, OpCode op) {
         default: return make_null();
     }
 }
-static inline Value do_cmp(Value L, Value R, OpCode op) {
+static inline Value do_cmp(VM *vm, Value L, Value R, OpCode op) {
     /* Integer fast path: avoid float conversion for int vs int */
     if (is_int_type(L) && is_int_type(R)) {
         int64_t a = to_i64(L), b = to_i64(R);
@@ -330,6 +200,33 @@ static inline Value do_cmp(Value L, Value R, OpCode op) {
             default: break;
         }
     }
+    /* MOP vtable dispatch for comparison (only for ordering ops, not EQ/NE) */
+    if (op != OP_EQ && op != OP_NE) {
+        if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type && AS_OBJ(L)->type->cmp) {
+            int r = AS_OBJ(L)->type->cmp(vm, L, R);
+            if (r == 2) return make_null(); /* unsupported */
+            switch (op) {
+                case OP_LT: return make_bool(r < 0);
+                case OP_LE: return make_bool(r <= 0);
+                case OP_GT: return make_bool(r > 0);
+                case OP_GE: return make_bool(r >= 0);
+                default: break;
+            }
+        }
+        if (IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type && AS_OBJ(R)->type->cmp) {
+            int r = AS_OBJ(R)->type->cmp(vm, R, L);
+            if (r == 2) return make_null();
+            switch (op) {
+                case OP_LT: return make_bool(r > 0);
+                case OP_LE: return make_bool(r >= 0);
+                case OP_GT: return make_bool(r < 0);
+                case OP_GE: return make_bool(r <= 0);
+                default: break;
+            }
+        }
+        return make_null();
+    }
+    /* EQ / NE: universal equality (includes pointer identity for objects) */
     switch (op) {
         case OP_EQ: return make_bool(values_equal(L, R));
         case OP_NE: return make_bool(!values_equal(L, R));
@@ -384,7 +281,7 @@ static void mark_drain(void) {
         Object *obj = gray_stack[--gray_count];
         obj->gc_color = GC_COLOR_BLACK;
 
-        switch (obj->type) {
+        switch (obj->type->kind) {
             case OBJ_LIST: {
                 ObjList *l = (ObjList *)obj;
                 if (l->items) {
@@ -564,7 +461,7 @@ static void gc_step(VM *vm) {
             Object *obj = gray_stack[--gray_count];
             obj->gc_color = GC_COLOR_BLACK;
 
-            switch (obj->type) {
+            switch (obj->type->kind) {
                 case OBJ_LIST: {
                     ObjList *l = (ObjList *)obj;
                     if (l->items) {
@@ -1676,7 +1573,7 @@ void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error
     const char *class_name = "Error";
     if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception)) {
         Object *obj = AS_OBJ(vm->last_exception);
-        if (obj->type == OBJ_INSTANCE) {
+        if (obj->type->kind == OBJ_INSTANCE) {
             ObjInstance *inst = (ObjInstance*)obj;
             class_name = inst->class_name ? inst->class_name : "Error";
         }
@@ -1685,7 +1582,7 @@ void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error
     const char *raw_msg = error_msg;
     if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception)) {
         Object *obj = AS_OBJ(vm->last_exception);
-        if (obj->type == OBJ_INSTANCE) {
+        if (obj->type->kind == OBJ_INSTANCE) {
             Value msgv = instance_get_field((ObjInstance*)obj, "message");
             if (IS_STRING(msgv)) raw_msg = ((ObjString*)AS_OBJ(msgv))->chars;
         }

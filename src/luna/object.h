@@ -32,7 +32,7 @@ typedef enum {
 } ObjType;
 
 typedef struct Object {
-    ObjType        type;
+    Type          *type;   /* MOP vtable pointer (frontend-owned); replaces the inline ObjType tag */
     uint8_t        gc_color;
     size_t         size;
     struct Object *next;
@@ -41,8 +41,9 @@ typedef struct Object {
     struct Object *finalizer_prev;
 } Object;
 
-/* Heap object kind checks (no inline type tag — consult Object.type). */
-#define IS_OBJ_KIND(v, t) (IS_OBJ(v) && AS_OBJ(v)->type == (t))
+/* Heap object kind checks: compare the object's Type* against the table entry
+ * for kind `t`. No inline type tag; the type lives in the heap object. */
+#define IS_OBJ_KIND(v, t) (IS_OBJ(v) && AS_OBJ(v)->type == luna_types[(t)])
 #define IS_STRING(v)   IS_OBJ_KIND(v, OBJ_STRING)
 #define IS_LIST(v)     IS_OBJ_KIND(v, OBJ_LIST)
 #define IS_DICT(v)     IS_OBJ_KIND(v, OBJ_DICT)
@@ -58,6 +59,51 @@ typedef struct Object {
 #define IS_VECTOR(v)       IS_OBJ_KIND(v, OBJ_VECTOR)
 #define IS_MATRIX(v)       IS_OBJ_KIND(v, OBJ_MATRIX)
 #define IS_INT64(v)    IS_OBJ_KIND(v, OBJ_INT64)
+
+/* ============================================================
+ * MOP: language-agnostic operation dispatch via vtable.
+ *
+ * The frontend (Luna) defines one `Type` instance per heap-object kind and
+ * fills its vtable. In Part 1 only `name`/`kind` are used; the function
+ * pointers are wired in later parts (arith/cmp, index, attr, call). The VM
+ * core reaches operations through `Object.type` and never names a concrete
+ * Luna type. Immediate int/double are handled natively by the core.
+ * ============================================================ */
+typedef Value (*MOP_Bin)(struct VM *vm, Value a, Value b);
+typedef int   (*MOP_Cmp)(struct VM *vm, Value a, Value b);          /* -1 / 0 / +1 */
+typedef Value (*MOP_Un)(struct VM *vm, Value self);
+typedef Value (*MOP_Idx)(struct VM *vm, Value self, Value key);
+typedef void  (*MOP_IdxSet)(struct VM *vm, Value self, Value key, Value val);
+typedef Value (*MOP_Attr)(struct VM *vm, Value self, const char *name);
+typedef int   (*MOP_AttrSet)(struct VM *vm, Value self, const char *name, Value val);
+typedef Value (*MOP_Call)(struct VM *vm, Value self, Value *args, int argc);
+typedef uint32_t (*MOP_Hash)(Value self);
+typedef int   (*MOP_Len)(struct VM *vm, Value self);
+
+typedef struct Type {
+    const char *name;   /* human-readable type name (e.g. "list") */
+    ObjType     kind;   /* frontend discriminator: ObjType value, for fast-path caches / GC */
+    /* arithmetic / comparison */
+    MOP_Bin  add, sub, mul, div, mod;
+    MOP_Un   neg;
+    MOP_Cmp  cmp;
+    /* indexing */
+    MOP_Idx     getitem;
+    MOP_IdxSet  setitem;
+    /* attributes */
+    MOP_Attr    getattr;
+    MOP_AttrSet setattr;
+    /* call */
+    MOP_Call call;
+    /* misc */
+    MOP_Un   tostring;  /* returns a string Value */
+    MOP_Hash hash;
+    MOP_Len  len;
+} Type;
+
+/* Indexed by ObjType so the core can map a kind to its Type* (used by the
+ * IS_X predicates and by constructors). Defined in luna/object.c. */
+extern Type *luna_types[];
 
 struct VM;
 struct ObjClass;

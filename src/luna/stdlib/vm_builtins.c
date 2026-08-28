@@ -211,7 +211,7 @@ static Value bn_float(VM *vm, Value *args, int n) {
 static Value bn_len(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n || !IS_OBJ(args[0])) return make_int(0);
-    switch (AS_OBJ(args[0])->type) {
+    switch (AS_OBJ(args[0])->type->kind) {
         case OBJ_STRING: {
             ObjString *s = (ObjString*)AS_OBJ(args[0]);
             return make_int(utf8_code_point_count(s->chars, s->length));
@@ -235,7 +235,7 @@ static Value bn_type(VM *vm, Value *args, int n) {
         else if (IS_NAN(args[0])) t = "nan";
         else if (IS_DOUBLE(args[0])) t = "float";
         else if (IS_OBJ(args[0])) {
-            switch (AS_OBJ(args[0])->type) {
+            switch (AS_OBJ(args[0])->type->kind) {
                 case OBJ_STRING:     t = "string";     break;
                 case OBJ_LIST:       t = "list";       break;
                 case OBJ_DICT:       t = "dict";       break;

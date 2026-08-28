@@ -214,6 +214,90 @@ the register machine shape.
 
 ---
 
+## 7. MOP implementation steps (no shortcuts)
+
+The MOP is built incrementally. Each step is a separate commit with `make` +
+smoke test (`luna.exe /tmp/smoke.luna`). No part skips verification.
+
+### Part 1: MOP infrastructure (core + Luna wiring)
+- Define the neutral `Type` (vtable) in core (`value.h` or `mop.h`):
+  function pointers for `add`, `sub`, `mul`, `div`, `mod`, `cmp`,
+  `getitem`, `setitem`, `getattr`, `setattr`, `call`, `tostring`, `hash`, `len`.
+- Change `Object.type` from the `ObjType` enum to `Type*` (language-agnostic
+  heap object). The `ObjType` enum moves fully into `src/luna/object.h` as Luna's
+  internal kind tag (used by GC `free_object_container`, by `IS_OBJ_KIND`,
+  and by the fast-path inline caches).
+- In `src/luna/object.c` (new file, split from `object.h`): define the concrete
+  `Type` instances for Luna (`luna_string_type`, `luna_list_type`, ...), each
+  with a vtable that calls the existing Luna-specific logic (e.g., list's
+  `getitem` reads from `ObjList->items`).
+- Update all constructors (`new_string`, `new_list`, ...) to set
+  `obj->type = &luna_X_type` instead of assigning an enum value.
+- Update `AS_OBJ` / `IS_OBJ_KIND` macros to work with `Type*`.
+
+### Part 2: Arithmetic / comparison (`vm.c`)
+- Replace `do_arith`'s `switch` / `if (IS_LIST(L) && IS_INT(R))` chain with:
+  `if (both_small_int) native; else L_type->vtab->add(L_val, R_val);`
+- The fast-path for native `int` / `float` stays direct; for objects the vtable
+  resolves `__add__` semantics. Luna's vtable for `list` handles repetition,
+  for `str` handles concatenation, etc.
+- Same pattern for `do_cmp`: `L_type->vtab->cmp(L, R, op_code)` with inline
+  cache comparing the `Type*` pointer.
+
+### Part 3: Indexing (`vm.c` opcodes)
+- `OP_GET_INDEX`: `L_type->vtab->getitem(L, index)`; `L_type->vtab->getitem` for
+  `list` reads `items[i]`; for `dict` does hash lookup.
+- `OP_SET_INDEX`: `L_type->vtab->setitem(L, index, value)`.
+- Fast-path: `if (L_val->type == &luna_list_type)` native array access; else
+  full vtable call (handles subclass / `__getitem__` override).
+
+### Part 4: Attributes (`vm.c` / `luna.c` embedder API)
+- `OP_GET_ATTR` / `OP_SET_ATTR`: `L_type->vtab->getattr(L, name_str)` /
+  `L_type->vtab->setattr(L, name_str, value)`.
+- The `luna_get_field` / `luna_set_field` C-API functions in `luna.c` become
+  thin wrappers over the vtable, not direct `ObjDict` / `ObjInstance` lookups.
+
+### Part 5: Call (`vm.c`)
+- `OP_CALL`: `fn_type->vtab->call(vm, fn_value, args, nargs)`. The vtable for
+  `function` / `closure` / `bound_method` / native C functions handles the
+  different call conventions.
+
+### Part 6: Cleanup
+- Remove the temporary `#include "luna/object.h"` shim from `value.h` (the core
+  is pure; `vm.c` and the frontend include what they need directly).
+- Update `docs/IMPLEMENTATION.md` references to `TYPE_SIGNATURE` / 32-type
+  encoding (stale after Part 1).
+- Confirm the Python frontend spec (`python3-subset.md`) remains valid: Python
+  will define its own `Type` instances with its MOP rules (MRO, `__getattr__`),
+  targeting the same neutral IR.
+
+No step skips `make` verification. Each part is committed independently.
+
+> **Status (current session):**
+> - **Part 1 (infrastructure):** complete — `Type` vtable defined in `luna/object.h`,
+>   `Object.type` → `Type*`, `luna/object.c` defines all 17 `Type` instances +
+>   `luna_types[]`, constructors (`init_object`) use the table, all `IS_X` macros
+>   updated to compare `Type*`, switches (`free_object_container`, `value_to_string`,
+>   `get_class`, GC `mark_drain`, `type_name`) updated to `->kind`. Build passes.
+> - **Part 2 (arithmetic/comparison/index dispatch):** complete — `do_arith` and
+>   `do_cmp` in `vm.c` delegate through `VM*vm` + `Type*` vtable for all heap-object
+>   kinds (`string`, `list`, `dict`, `vector`, `matrix`, `instance`, `int64`,
+>   defaults). Vtable functions (`luna_string_add`, `luna_string_mul`,
+>   `luna_list_add`, `luna_list_mul`, `luna_string_cmp`, etc.) replicate the
+>   current Luna semantics. `vm_opcodes.inc` call sites updated to pass `vm`.
+>   Build passes; smoke test (`luna.exe smoke.luna`) passes; full regression
+>   (`make test`, exit 0) passes.
+> - **Part 3 (indexing):** complete — `op_indexget` (`getitem`), `op_indexget_safe`,
+>   `op_indexset` (`setitem`) delegate to `Type*` vtable (`luna_string_getitem`,
+>   `luna_list_getitem`, `luna_dict_getitem`, etc.). The opcode keeps its original
+>   validation (bounds, `IS_INT`, `dict_has`, error messages) so behavior is
+>   unchanged; the data access now goes through the vtable, not direct `Obj*`
+>   casts.
+> - **Part 4–5:** pending (`getattr`/`setattr` wrapper updates, `OP_CALL` vtable,
+>   removal of temporary `#include` shim from `value.h`).
+
+---
+
 ## 7. Python is the forcing function
 
 Making Python work is the *same task* as making the VM agnostic — not a separate

@@ -39,9 +39,9 @@ uint32_t hash_value(Value v) {
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
         if (!obj) return 0;
-        if (obj->type == OBJ_STRING)
+        if (obj->type->kind == OBJ_STRING)
             return ((ObjString *)obj)->hash;
-        if (obj->type == OBJ_USERDATA)
+        if (obj->type->kind == OBJ_USERDATA)
             return (uint32_t)(uintptr_t)((ObjUserdata*)obj)->data;
         return (uint32_t)(uintptr_t)obj;
     }
@@ -167,7 +167,7 @@ Object *userdata_objects = NULL;
 Object *sweep_cursor = NULL;
 
 static void init_object(Object *obj, ObjType type, size_t size) {
-    obj->type = type;
+    obj->type = luna_types[type];
     obj->gc_color = GC_COLOR_WHITE;
     obj->size = size;
     bytes_allocated += size;
@@ -524,7 +524,7 @@ void free_object_container(Object *obj) {
     allocated_objects--;
     bytes_allocated -= obj->size;
 
-    switch (obj->type) {
+    switch (obj->type->kind) {
         case OBJ_STRING: { ObjString *s = (ObjString *)obj; intern_remove(s); free(s->chars); free(s); break; }
         case OBJ_LIST: {
             ObjList *l = (ObjList *)obj;
@@ -663,7 +663,7 @@ char *value_to_string(Value v) {
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
         if (!obj) return strdup("null");
-        switch (obj->type) {
+        switch (obj->type->kind) {
             case OBJ_STRING:  return strdup(((ObjString *)obj)->chars);
             case OBJ_FUNCTION: {
                 ObjFunction *f = (ObjFunction *)obj;
@@ -1202,7 +1202,7 @@ void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn) {
 
 struct ObjClass *get_class(VM *vm, Value val) {
     if (!IS_OBJ(val) || !AS_OBJ(val)) return NULL;
-    switch (AS_OBJ(val)->type) {
+    switch (AS_OBJ(val)->type->kind) {
         case OBJ_STRING:       return vm->string_class;
         case OBJ_LIST:         return vm->list_class;
         case OBJ_DICT:         return vm->dict_class;

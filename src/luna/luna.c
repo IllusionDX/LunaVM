@@ -168,7 +168,7 @@ int luna_type(luna_State *L, int idx) {
 
     if (IS_OBJ(val)) {
         Object *obj = AS_OBJ(val);
-        switch (obj->type) {
+        switch (obj->type->kind) {
             case OBJ_STRING:     return LUNA_TSTRING;
             case OBJ_FUNCTION:   return LUNA_TFUNCTION;
             case OBJ_CLOSURE:    return LUNA_TFUNCTION;
@@ -217,14 +217,14 @@ bool luna_is_function(luna_State *L, int idx) {
     if (!v) return false;
     if (!IS_OBJ(*v)) return false;
     Object *obj = AS_OBJ(*v);
-    return obj->type == OBJ_FUNCTION || obj->type == OBJ_CLOSURE;
+    return obj->type->kind == OBJ_FUNCTION || obj->type->kind == OBJ_CLOSURE;
 }
 
 bool luna_is_cfunction(luna_State *L, int idx) {
     Value *v = luna_stack_ptr(L, idx);
     if (!v || !IS_OBJ(*v)) return false;
     Object *obj = AS_OBJ(*v);
-    if (obj->type != OBJ_FUNCTION) return false;
+    if (obj->type->kind != OBJ_FUNCTION) return false;
     return ((ObjFunction *)obj)->cfunc != NULL;
 }
 
@@ -329,7 +329,7 @@ void luna_new_dict(luna_State *L) {
 void luna_set_field(luna_State *L, int idx, const char *key) {
     Value *dv = luna_stack_ptr(L, idx);
     if (!dv || L->top < 1) return;
-    if (!IS_OBJ(*dv) || ((Object *)AS_OBJ(*dv))->type != OBJ_DICT) return;
+    if (!IS_OBJ(*dv) || ((Object *)AS_OBJ(*dv))->type->kind != OBJ_DICT) return;
     ObjDict *dict = (ObjDict *)AS_OBJ(*dv);
     Value val = L->stack[L->top - 1];
     dict_set(dict, make_obj((Object *)new_string(key, (int)strlen(key))), val);
@@ -340,14 +340,14 @@ int luna_get_field(luna_State *L, int idx, const char *key) {
     Value *dv = luna_stack_ptr(L, idx);
     if (!dv || !IS_OBJ(*dv)) return LUNA_TNIL;
     Object *obj = AS_OBJ(*dv);
-    if (obj->type == OBJ_DICT) {
+    if (obj->type->kind == OBJ_DICT) {
         ObjDict *dict = (ObjDict *)obj;
         Value val = dict_get(dict, make_obj((Object *)new_string(key, (int)strlen(key))));
         if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
         L->stack[L->top++] = val;
         return luna_type(L, L->top - 1);
     }
-    if (obj->type == OBJ_INSTANCE) {
+    if (obj->type->kind == OBJ_INSTANCE) {
         Value val = instance_get_field((ObjInstance *)obj, key);
         if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
         L->stack[L->top++] = val;
@@ -368,7 +368,7 @@ void luna_new_list(luna_State *L) {
 void luna_list_append(luna_State *L, int idx) {
     Value *lv = luna_stack_ptr(L, idx);
     if (!lv || L->top < 1) return;
-    if (!IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type != OBJ_LIST) return;
+    if (!IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type->kind != OBJ_LIST) return;
     ObjList *lst = (ObjList *)AS_OBJ(*lv);
     Value val = L->stack[L->top - 1];
     list_add(lst, val);
@@ -377,7 +377,7 @@ void luna_list_append(luna_State *L, int idx) {
 
 void luna_get_index(luna_State *L, int idx, int n) {
     Value *lv = luna_stack_ptr(L, idx);
-    if (!lv || !IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type != OBJ_LIST) {
+    if (!lv || !IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type->kind != OBJ_LIST) {
         luna_push_nil(L);
         return;
     }
@@ -393,7 +393,7 @@ void luna_get_index(luna_State *L, int idx, int n) {
 
 void luna_set_index(luna_State *L, int idx, int n) {
     Value *lv = luna_stack_ptr(L, idx);
-    if (!lv || L->top < 1 || !IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type != OBJ_LIST) return;
+    if (!lv || L->top < 1 || !IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type->kind != OBJ_LIST) return;
     ObjList *lst = (ObjList *)AS_OBJ(*lv);
     Value val = L->stack[L->top - 1];
     list_set(lst, n, val);
