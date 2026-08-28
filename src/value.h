@@ -78,7 +78,7 @@ typedef uint64_t Value;
 #define IS_FALSE(v)  ((v) == (QNAN_TAG | TAG_FALSE))
 #define IS_BOOL(v)   (IS_TRUE(v) || IS_FALSE(v))
 #define IS_INT(v)    (((v) & (QNAN_TAG | 7)) == (QNAN_TAG | TAG_INT))
-#define IS_INT64(v)  (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(13))
+#define IS_INT64(v)  (((v) & OBJ_SIGNATURE_MASK) == TYPE_SIGNATURE(OBJ_INT64))
 #define IS_NUMBER(v) (IS_DOUBLE(v) || IS_INT(v) || IS_INT64(v))
 
 #define IS_INF(v)    (((v) & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && ((v) & 0x000fffffffffffffULL) == 0)
@@ -202,6 +202,7 @@ typedef struct Object {
  */
 
 static inline Value make_obj(void *ptr) {
+    if (!ptr) return NIL_VAL;   /* defensive guard against NULL (OOM / embedder API) */
     Object *obj = (Object*)ptr;
     uint64_t t = (uint64_t)obj->type;
     uint64_t type_tag = ((t & 15) << 47) | ((t & 16) ? (1ULL << 63) : 0ULL);

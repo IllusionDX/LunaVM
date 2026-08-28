@@ -1,0 +1,9 @@
+# Regression test for int64 equality (values_equal truncation bug)
+# A double has only 53 bits of mantissa, so integers above 2^53 that differ
+# only in low bits collapse to the same double. values_equal must compare
+# ObjInt64 in the integer domain, never via as_double().
+var a = 18014398509481984   # 2^54
+var b = 18014398509481985   # 2^54 + 1  (distinct, but collapses to same double)
+print(a == b)               # must be false (was true before the fix)
+print(a == a)               # must be true
+print(a != b)               # must be true

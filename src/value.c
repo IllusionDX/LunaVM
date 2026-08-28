@@ -642,6 +642,11 @@ bool is_truthy(Value v) {
 
 bool values_equal(Value a, Value b) {
     if (a == b) return true;
+    /* Exact 64-bit integer equality: doubles lose precision above 2^53,
+       so two distinct ObjInt64 (e.g. 2^54 and 2^54+1) must not collapse. */
+    if (IS_INT64(a) && IS_INT64(b)) {
+        return ((ObjInt64*)AS_OBJ(a))->value == ((ObjInt64*)AS_OBJ(b))->value;
+    }
     if ((IS_DOUBLE(a) || IS_INT(a) || IS_INT64(a)) && (IS_DOUBLE(b) || IS_INT(b) || IS_INT64(b))) {
         return as_double(a) == as_double(b);
     }
