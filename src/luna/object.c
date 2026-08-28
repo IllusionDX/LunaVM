@@ -107,7 +107,13 @@ static Value luna_string_getattr(struct VM *vm, Value self, const char *name) { 
 static int luna_string_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
 static Value luna_string_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
 
-/* ---- MOP call vtables (Part 5) ---- */
+/* ---- MOP call vtables (Part 5) ----
+ * Bytecode callables (function/closure/bound_method) run synchronously through
+ * vm_call_value, which manages real Luna call frames via a nested execute loop.
+ * vm_call_value returns a VMResult (VM_OK == 0 on success), so the check is
+ * `!= VM_OK`, not `!`. On failure the exception is already in vm->last_exception;
+ * we re-propagate via longjmp exactly like op_throw (goto op_throw), preserving
+ * Luna's frame-based exception unwinding instead of swallowing it as null. */
 static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc) {
     if (!IS_FUNCTION(self)) return make_null();
     ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
@@ -118,19 +124,28 @@ static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc
         if (fn->cfunc) {
             result = luna_cfunc_dispatch(vm, fn, scratch, argc);
         } else {
-            if (!vm_call_native(vm, fn->native_fn, scratch, argc, &result)) return make_null();
+            if (!vm_call_native(vm, fn->native_fn, scratch, argc, &result)) {
+                if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                return make_null();
+            }
         }
         return result;
     }
     Value out;
-    if (!vm_call_value(vm, self, args, argc, &out)) return make_null();
+    if (vm_call_value(vm, self, args, argc, &out) != VM_OK) {
+        if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+        return make_null();
+    }
     return out;
 }
 
 static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc) {
     if (!IS_CLOSURE(self)) return make_null();
     Value out;
-    if (!vm_call_value(vm, self, args, argc, &out)) return make_null();
+    if (vm_call_value(vm, self, args, argc, &out) != VM_OK) {
+        if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+        return make_null();
+    }
     return out;
 }
 
@@ -141,7 +156,10 @@ static Value luna_bound_method_call(struct VM *vm, Value self, Value *args, int 
     scratch[0] = bm->self; /* implicit self */
     for (int i = 0; i < argc; i++) scratch[i + 1] = args[i];
     Value out;
-    if (!vm_call_value(vm, make_obj((Object*)bm->fn), scratch, argc + 1, &out)) return make_null();
+    if (vm_call_value(vm, make_obj((Object*)bm->fn), scratch, argc + 1, &out) != VM_OK) {
+        if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+        return make_null();
+    }
     return out;
 }
 static Value luna_string_tostring(struct VM *vm, Value self) { (void)vm; return self; }

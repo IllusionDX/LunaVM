@@ -566,16 +566,93 @@
         uint8_t fn_reg  = B;
         uint8_t nargs   = C;
         Value fn_val = REG(fn_reg);
-        /* MOP Part 5: ideal vtable dispatch (function/closure/bound_method/default call) */
-        if (!IS_OBJ(fn_val) || !AS_OBJ(fn_val) || !AS_OBJ(fn_val)->type || !AS_OBJ(fn_val)->type->call) {
+        Type *t = (IS_OBJ(fn_val) && AS_OBJ(fn_val)->type) ? AS_OBJ(fn_val)->type : NULL;
+
+        /* MOP guard: only objects with a `call` vtable are callable. Non-callable
+           types carry luna_default_call which raises TypeError, so the vtable is
+           the single source of truth for "is this invokable?". */
+        if (!t || !t->call) {
             _exc = make_exception_instance(vm, vm->type_error_class, "attempt to call non-function");
             goto op_throw;
         }
-        Value scratch[256];
-        for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-        Value result = AS_OBJ(fn_val)->type->call(vm, fn_val, scratch, nargs);
-        SET_REG(ret_reg, result);
-        DECODE; goto *op_labels[OP(instr)];
+
+        /* Native callables run synchronously through the `call` vtable and return
+           a Value; exceptions propagate via the vtable (longjmp, like op_throw). */
+        if (IS_FUNCTION(fn_val)) {
+            ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = t->call(vm, fn_val, scratch, nargs);
+                SET_REG(ret_reg, result);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+            /* Bytecode function: push a real call frame and continue the SINGLE VM
+               loop (Luna's custom frame feature). op_ret lands the result in ret_reg;
+               exceptions unwind correctly through op_throw in this same loop. */
+            PUSH_FRAME(fn, NULL, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
+            DECODE; goto *op_labels[OP(instr)];
+        } else if (IS_CLOSURE(fn_val)) {
+            ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
+            ObjFunction *fn = cl->function;
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = t->call(vm, fn_val, scratch, nargs);
+                SET_REG(ret_reg, result);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+            PUSH_FRAME(fn, cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
+            DECODE; goto *op_labels[OP(instr)];
+        } else if (IS_BOUND_METHOD(fn_val)) {
+            ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(fn_val);
+            ObjFunction *fn = bm->fn;
+            if (fn->is_native) {
+                Value scratch[256];
+                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+                Value result = t->call(vm, fn_val, scratch, nargs);
+                SET_REG(ret_reg, result);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+            SET_REG(fn_reg, bm->self);
+            PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
+            DECODE; goto *op_labels[OP(instr)];
+        } else if (IS_INSTANCE(fn_val)) {
+            /* Instance callable via a `_call` method (bytecode or native). */
+            ObjInstance *inst = (ObjInstance *)AS_OBJ(fn_val);
+            int mi = -1;
+            if (inst->klass) {
+                for (int i = 0; i < inst->klass->method_count; i++) {
+                    if (strcmp(inst->klass->method_names[i], "_call") == 0) { mi = i; break; }
+                }
+            }
+            if (mi >= 0) {
+                ObjFunction *fn = inst->klass->methods[mi];
+                if (fn->is_native) {
+                    Value scratch[256];
+                    scratch[0] = fn_val;
+                    for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
+                    Value result;
+                    if (fn->cfunc) {
+                        result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
+                    } else {
+                        if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
+                    }
+                    SET_REG(ret_reg, result);
+                    DECODE; goto *op_labels[OP(instr)];
+                }
+                SET_REG(fn_reg, fn_val);
+                PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+            char buf[256];
+            snprintf(buf, sizeof(buf), "attempt to call instance of '%s' (no _call method)", inst->klass ? inst->klass->name : "?");
+            _exc = make_exception_instance(vm, vm->exception_class, buf);
+            goto op_throw;
+        }
+        /* Non-callable object: its vtable should have raised already, but be safe. */
+        _exc = make_exception_instance(vm, vm->type_error_class, "attempt to call non-function");
+        goto op_throw;
     }
     op_ret: {
         uint8_t ret_reg = RA;

@@ -288,13 +288,23 @@ No step skips `make` verification. Each part is committed independently.
 >   Build passes; smoke test (`luna.exe smoke.luna`) passes; full regression
 >   (`make test`, exit 0) passes.
 > - **Part 3 (indexing):** complete — `op_indexget` (`getitem`), `op_indexget_safe`,
->   `op_indexset` (`setitem`) delegate to `Type*` vtable (`luna_string_getitem`,
->   `luna_list_getitem`, `luna_dict_getitem`, etc.). The opcode keeps its original
->   validation (bounds, `IS_INT`, `dict_has`, error messages) so behavior is
->   unchanged; the data access now goes through the vtable, not direct `Obj*`
->   casts.
-> - **Part 4–5:** pending (`getattr`/`setattr` wrapper updates, `OP_CALL` vtable,
->   removal of temporary `#include` shim from `value.h`).
+>   `op_indexset` (`setitem`) delegate to `Type*` vtable. Opcode keeps original
+>   validation (bounds, `IS_INT`, `dict_has`, error messages); data access goes
+>   through vtable.
+> - **Part 4 (attributes):** complete — `luna_dict_getattr`/`setattr` wired; `luna_get_field`
+>   / `luna_set_field` in `luna.c` delegate to `Type*` vtable (`getattr`/`setattr`).
+> - **Part 5 (call / MOP ideal):** complete and fixed — native callables dispatch
+>   synchronously through the `call` vtable (`luna_function_call` /
+>   `luna_closure_call` / `luna_bound_method_call` / `luna_default_call`), while
+>   *bytecode* callables (function/closure/bound_method/instance `_call`) push a
+>   real frame via `PUSH_FRAME` and continue the **single** VM loop. This keeps
+>   Luna's custom frame feature intact, so `op_ret` lands results in the caller's
+>   register and `op_throw` unwinds try/catch correctly across call boundaries
+>   (the earlier nested-loop `vm_call_value` approach double-executed caught
+>   exceptions and was unsafe under GC compaction). The `call` vtable convention
+>   bug (`vm_call_value` returns `VM_OK == 0`, so `!result` wrongly meant failure)
+>   and exception propagation were also corrected. Build passes; `make test` passes.
+> - **Part 6:** pending (`#include` shim removal, `IMPLEMENTATION.md` cleanup).
 
 ---
 
