@@ -163,6 +163,73 @@ static Value luna_bound_method_call(struct VM *vm, Value self, Value *args, int 
     }
     return out;
 }
+
+/* ============================================================
+ * Callable / closure protocol (Part 6b)
+ *
+ * The core (op_call / op_ret / OP_GETUPVAL / OP_SETUPVAL) reaches a callable's
+ * bytecode chunk, bound self, display name and upvalue storage purely through
+ * these vtable methods — it never names ObjClosure / ObjFunction /
+ * ObjBoundMethod / ObjInstance. Native callables return NULL from get_chunk and
+ * are dispatched synchronously via `call`.
+ * ============================================================ */
+static Chunk* luna_function_get_chunk(Value self) {
+    ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
+    return fn->is_native ? NULL : fn->chunk;
+}
+static Value luna_function_get_self(Value self) { (void)self; return make_null(); }
+static const char* luna_function_name_of(Value self) { return ((ObjFunction*)AS_OBJ(self))->name; }
+
+static Chunk* luna_closure_get_chunk(Value self) {
+    ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
+    ObjFunction *fn = cl->function;
+    return fn->is_native ? NULL : fn->chunk;
+}
+static Value luna_closure_get_self(Value self) { (void)self; return make_null(); }
+static const char* luna_closure_name_of(Value self) { return ((ObjClosure*)AS_OBJ(self))->function->name; }
+static Value luna_closure_get_upvalue(struct VM *vm, Value self, int i) {
+    ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
+    if (i < 0 || i >= cl->upvalue_count) return make_null();
+    ObjUpvalue *uv = cl->upvalues[i];
+    if (!uv) return make_null();
+    return uv->is_open ? vm->stack[uv->stack_index] : uv->closed;
+}
+static void luna_closure_set_upvalue(struct VM *vm, Value self, int i, Value v) {
+    ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
+    if (i < 0 || i >= cl->upvalue_count) return;
+    ObjUpvalue *uv = cl->upvalues[i];
+    if (!uv) return;
+    if (uv->is_open) vm->stack[uv->stack_index] = v; else uv->closed = v;
+}
+static Value luna_closure_get_upvalue_ref(Value self, int i) {
+    ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
+    if (i < 0 || i >= cl->upvalue_count) return make_null();
+    ObjUpvalue *uv = cl->upvalues[i];
+    return uv ? make_obj((Object*)uv) : make_null();
+}
+
+static Chunk* luna_bound_method_get_chunk(Value self) {
+    ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(self);
+    return bm->fn->is_native ? NULL : bm->fn->chunk;
+}
+static Value luna_bound_method_get_self(Value self) { return ((ObjBoundMethod*)AS_OBJ(self))->self; }
+static const char* luna_bound_method_name_of(Value self) { return ((ObjBoundMethod*)AS_OBJ(self))->fn->name; }
+
+static Chunk* luna_instance_get_chunk(Value self) {
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
+    if (!inst->klass) return NULL;
+    for (int i = 0; i < inst->klass->method_count; i++)
+        if (strcmp(inst->klass->method_names[i], "_call") == 0) {
+            ObjFunction *fn = inst->klass->methods[i];
+            return fn->is_native ? NULL : fn->chunk;
+        }
+    return NULL;
+}
+static Value luna_instance_get_self(Value self) { return self; }
+static const char* luna_instance_name_of(Value self) {
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
+    return inst->klass ? inst->klass->name : "instance";
+}
 static Value luna_string_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_string_hash(Value self) { return ((ObjString*)AS_OBJ(self))->hash; }
 static int luna_string_len(struct VM *vm, Value self) { (void)vm; return utf8_code_point_count(((ObjString*)AS_OBJ(self))->chars, ((ObjString*)AS_OBJ(self))->length); }
@@ -504,7 +571,8 @@ Type luna_instance_type = {
     .neg = luna_instance_neg, .cmp = luna_instance_cmp,
     .getitem = luna_instance_getitem, .setitem = luna_instance_setitem,
     .getattr = luna_instance_getattr, .setattr = luna_instance_setattr,
-    .call = luna_instance_call, .tostring = luna_instance_tostring, .hash = luna_instance_hash, .len = luna_instance_len
+    .call = luna_instance_call, .tostring = luna_instance_tostring, .hash = luna_instance_hash, .len = luna_instance_len,
+    .get_chunk = luna_instance_get_chunk, .get_self = luna_instance_get_self, .name_of = luna_instance_name_of
 };
 
 Type luna_function_type = {
@@ -513,7 +581,8 @@ Type luna_function_type = {
     .neg = luna_default_neg, .cmp = luna_default_cmp,
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_function_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .call = luna_function_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
+    .get_chunk = luna_function_get_chunk, .get_self = luna_function_get_self, .name_of = luna_function_name_of
 };
 
 Type luna_closure_type = {
@@ -522,7 +591,9 @@ Type luna_closure_type = {
     .neg = luna_default_neg, .cmp = luna_default_cmp,
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_closure_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .call = luna_closure_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
+    .get_chunk = luna_closure_get_chunk, .get_self = luna_closure_get_self, .name_of = luna_closure_name_of,
+    .get_upvalue = luna_closure_get_upvalue, .set_upvalue = luna_closure_set_upvalue, .get_upvalue_ref = luna_closure_get_upvalue_ref
 };
 
 Type luna_upvalue_type = {
@@ -558,7 +629,8 @@ Type luna_bound_method_type = {
     .neg = luna_default_neg, .cmp = luna_default_cmp,
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_bound_method_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .call = luna_bound_method_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
+    .get_chunk = luna_bound_method_get_chunk, .get_self = luna_bound_method_get_self, .name_of = luna_bound_method_name_of
 };
 
 Type luna_module_type = {

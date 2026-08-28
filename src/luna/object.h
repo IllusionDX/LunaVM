@@ -80,6 +80,16 @@ typedef Value (*MOP_Call)(struct VM *vm, Value self, Value *args, int argc);
 typedef uint32_t (*MOP_Hash)(Value self);
 typedef int   (*MOP_Len)(struct VM *vm, Value self);
 
+/* Part 6b: callable / closure protocol — how the core invokes & inspects a
+ * callable object through the vtable instead of switching on concrete Luna
+ * kinds. The core never names ObjClosure / ObjFunction / ObjBoundMethod. */
+typedef struct Chunk* (*MOP_Chunk)(Value self);     /* bytecode chunk; NULL for native callables */
+typedef Value    (*MOP_Self)(Value self);           /* self to bind before a bytecode frame (NIL if none) */
+typedef const char* (*MOP_Name)(Value self);        /* object display name (stack traces / module naming) */
+typedef Value    (*MOP_Upval)(struct VM *vm, Value closure, int i); /* read upvalue i (NIL if absent) */
+typedef void     (*MOP_UpvalSet)(struct VM *vm, Value closure, int i, Value v); /* write upvalue i */
+typedef Value    (*MOP_UpvalRef)(Value closure, int i); /* shared upvalue object (closure capture), NIL if absent */
+
 typedef struct Type {
     const char *name;   /* human-readable type name (e.g. "list") */
     ObjType     kind;   /* frontend discriminator: ObjType value, for fast-path caches / GC */
@@ -99,6 +109,13 @@ typedef struct Type {
     MOP_Un   tostring;  /* returns a string Value */
     MOP_Hash hash;
     MOP_Len  len;
+    /* callable / closure protocol (Part 6b) */
+    MOP_Chunk    get_chunk;     /* bytecode chunk for a callable; NULL for native callables */
+    MOP_Self     get_self;      /* self to bind before a bytecode frame (NIL if none) */
+    MOP_Name     name_of;       /* object display name */
+    MOP_Upval    get_upvalue;   /* read upvalue i (NIL if absent) */
+    MOP_UpvalSet set_upvalue;   /* write upvalue i */
+    MOP_UpvalRef get_upvalue_ref; /* shared upvalue object (closure capture), NIL if absent */
 } Type;
 
 /* Indexed by ObjType so the core can map a kind to its Type* (used by the
