@@ -14,6 +14,7 @@
 #include "value.h"
 #include "luna/object.h"
 #include "chunk.h"
+#include "vm.h"
 
 /* ---- helpers available to vtable functions ---- */
 static inline bool is_int64_type(Value v) { return IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == luna_types[OBJ_INT64]; }
@@ -105,6 +106,44 @@ static void luna_string_setitem(struct VM *vm, Value self, Value key, Value val)
 static Value luna_string_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int luna_string_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
 static Value luna_string_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+
+/* ---- MOP call vtables (Part 5) ---- */
+static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc) {
+    if (!IS_FUNCTION(self)) return make_null();
+    ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
+    if (fn->is_native) {
+        Value scratch[256];
+        for (int i = 0; i < argc; i++) scratch[i] = args[i];
+        Value result;
+        if (fn->cfunc) {
+            result = luna_cfunc_dispatch(vm, fn, scratch, argc);
+        } else {
+            if (!vm_call_native(vm, fn->native_fn, scratch, argc, &result)) return make_null();
+        }
+        return result;
+    }
+    Value out;
+    if (!vm_call_value(vm, self, args, argc, &out)) return make_null();
+    return out;
+}
+
+static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc) {
+    if (!IS_CLOSURE(self)) return make_null();
+    Value out;
+    if (!vm_call_value(vm, self, args, argc, &out)) return make_null();
+    return out;
+}
+
+static Value luna_bound_method_call(struct VM *vm, Value self, Value *args, int argc) {
+    if (!IS_BOUND_METHOD(self)) return make_null();
+    ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(self);
+    Value scratch[256];
+    scratch[0] = bm->self; /* implicit self */
+    for (int i = 0; i < argc; i++) scratch[i + 1] = args[i];
+    Value out;
+    if (!vm_call_value(vm, make_obj((Object*)bm->fn), scratch, argc + 1, &out)) return make_null();
+    return out;
+}
 static Value luna_string_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_string_hash(Value self) { return ((ObjString*)AS_OBJ(self))->hash; }
 static int luna_string_len(struct VM *vm, Value self) { (void)vm; return utf8_code_point_count(((ObjString*)AS_OBJ(self))->chars, ((ObjString*)AS_OBJ(self))->length); }
@@ -455,7 +494,7 @@ Type luna_function_type = {
     .neg = luna_default_neg, .cmp = luna_default_cmp,
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .call = luna_function_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
 };
 
 Type luna_closure_type = {
@@ -464,7 +503,7 @@ Type luna_closure_type = {
     .neg = luna_default_neg, .cmp = luna_default_cmp,
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .call = luna_closure_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
 };
 
 Type luna_upvalue_type = {
@@ -500,7 +539,7 @@ Type luna_bound_method_type = {
     .neg = luna_default_neg, .cmp = luna_default_cmp,
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .call = luna_bound_method_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
 };
 
 Type luna_module_type = {

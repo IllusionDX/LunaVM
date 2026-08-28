@@ -566,251 +566,17 @@
         uint8_t fn_reg  = B;
         uint8_t nargs   = C;
         Value fn_val = REG(fn_reg);
-
-        /* Inline cache: monomorphic call-site cache */
-        uint32_t ic_idx = ((uint32_t)(uintptr_t)current_chunk ^ (uint32_t)(pc - current_chunk->code)) & (IC_CACHE_SIZE - 1);
-        IC_CallEntry *ic = &vm->call_ic[ic_idx];
-        if (LUNA_LIKELY(ic->fn_val == fn_val)) {
-            ObjFunction *fn = ic->fn;
-            if (LUNA_LIKELY(!fn->is_native)) {
-                /* Leaf fast path: skip full frame push */
-                if (LUNA_LIKELY(fn->is_leaf)) {
-                    CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                    cf->leaf_ret_chunk = current_chunk;
-                    cf->leaf_ret_base = FRAME.base;
-                    cf->leaf_ret_reg = ret_reg;
-                    cf->leaf_ret_closure = FRAME.closure;
-                    cf->leaf_ret_fn      = FRAME.fn;
-                    frame_set_refs(&FRAME, ic->cl, fn);
-                    FRAME.base = cf->base + fn_reg + 1;
-                    FRAME.nargs = nargs;
-                    FRAME.chunk = fn->chunk;
-                    FRAME.ip = 0;
-                    SYNC_LOCALS();
-                    int _needed = FRAME.base + fn->chunk->max_registers;
-                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                        REG_BASE = vm->stack + FRAME.base;
-                    }
-                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                    for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                        REG_BASE[_i] = make_null();
-                    DECODE; goto *op_labels[OP(instr)];
-                }
-                PUSH_FRAME(fn, ic->cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-        }
-
-        /* Slow path */
-        if (IS_FUNCTION(fn_val)) {
-            ObjFunction *fn = (ObjFunction *)AS_OBJ(fn_val);
-            if (fn->is_native) {
-                Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result;
-                if (fn->cfunc) {
-                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
-                } else {
-                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
-                }
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            ic->fn_val = fn_val; ic->fn = fn; ic->cl = NULL;
-            if (LUNA_LIKELY(fn->is_leaf)) {
-                CallFrame *cf = &FRAME;
-                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                cf->leaf_ret_chunk = current_chunk;
-                cf->leaf_ret_base = FRAME.base;
-                cf->leaf_ret_reg = ret_reg;
-                cf->leaf_ret_closure = FRAME.closure;
-                cf->leaf_ret_fn      = FRAME.fn;
-                frame_set_refs(&FRAME, NULL, fn);
-                FRAME.base = cf->base + fn_reg + 1;
-                FRAME.nargs = nargs;
-                FRAME.chunk = fn->chunk;
-                FRAME.ip = 0;
-                SYNC_LOCALS();
-                int _needed = FRAME.base + fn->chunk->max_registers;
-                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                    REG_BASE = vm->stack + FRAME.base; // Refresh after realloc
-                }
-                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                    REG_BASE[_i] = make_null();
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            PUSH_FRAME(fn, NULL, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
-            DECODE;
-            goto *op_labels[OP(instr)];
-        } else if (IS_CLOSURE(fn_val)) {
-            ObjClosure *cl = (ObjClosure *)AS_OBJ(fn_val);
-            ObjFunction *fn = cl->function;
-            if (fn->is_native) {
-                Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result;
-                if (fn->cfunc) {
-                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
-                } else {
-                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
-                }
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            ic->fn_val = fn_val; ic->fn = fn; ic->cl = cl;
-            if (LUNA_LIKELY(fn->is_leaf)) {
-                CallFrame *cf = &FRAME;
-                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                cf->leaf_ret_chunk = current_chunk;
-                cf->leaf_ret_base = FRAME.base;
-                cf->leaf_ret_reg = ret_reg;
-                cf->leaf_ret_closure = FRAME.closure;
-                cf->leaf_ret_fn      = FRAME.fn;
-                frame_set_refs(&FRAME, cl, fn);
-                FRAME.base = cf->base + fn_reg + 1;
-                FRAME.nargs = nargs;
-                FRAME.chunk = fn->chunk;
-                FRAME.ip = 0;
-                SYNC_LOCALS();
-                int _needed = FRAME.base + fn->chunk->max_registers;
-                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                }
-                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                    REG_BASE[_i] = make_null();
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            PUSH_FRAME(fn, cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
-            DECODE;
-            goto *op_labels[OP(instr)];
-        } else if (IS_BOUND_METHOD(fn_val)) {
-            ObjBoundMethod *bm = (ObjBoundMethod *)AS_OBJ(fn_val);
-            ObjFunction *fn = bm->fn;
-            if (fn->is_native) {
-                Value scratch[256];
-                scratch[0] = bm->self;
-                for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
-                Value result;
-                if (fn->cfunc) {
-                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
-                } else {
-                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
-                }
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            SET_REG(fn_reg, bm->self);
-            if (LUNA_LIKELY(fn->is_leaf)) {
-                CallFrame *cf = &FRAME;
-                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                cf->leaf_ret_chunk = current_chunk;
-                cf->leaf_ret_base = FRAME.base;
-                cf->leaf_ret_reg = ret_reg;
-                cf->leaf_ret_closure = FRAME.closure;
-                cf->leaf_ret_fn      = FRAME.fn;
-                frame_set_refs(&FRAME, NULL, fn);
-                FRAME.base = cf->base + fn_reg;
-                FRAME.nargs = nargs + 1;
-                FRAME.chunk = fn->chunk;
-                FRAME.ip = 0;
-                SYNC_LOCALS();
-                REG_BASE[0] = bm->self; /* Set self */
-                int _needed = FRAME.base + fn->chunk->max_registers;
-                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                }
-                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
-                    REG_BASE[_i] = make_null();
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
-            DECODE;
-            goto *op_labels[OP(instr)];
-        } else if (IS_INSTANCE(fn_val)) {
-            ObjInstance *inst = (ObjInstance *)AS_OBJ(fn_val);
-            int mi = -1;
-            if (inst->klass) {
-                for (int i = 0; i < inst->klass->method_count; i++) {
-                    if (strcmp(inst->klass->method_names[i], "_call") == 0) { mi = i; break; }
-                }
-            }
-            if (mi >= 0) {
-                ObjFunction *fn = inst->klass->methods[mi];
-                if (fn->is_native) {
-                    Value scratch[256];
-                    scratch[0] = fn_val;
-                    for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
-                    Value result;
-                    if (fn->cfunc) {
-                        result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
-                    } else {
-                        if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
-                    }
-                    SET_REG(ret_reg, result);
-                    DECODE; goto *op_labels[OP(instr)];
-                }
-                if (LUNA_LIKELY(fn->is_leaf)) {
-                    CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                    cf->leaf_ret_chunk = current_chunk;
-                    cf->leaf_ret_base = FRAME.base;
-                    cf->leaf_ret_reg = ret_reg;
-                    cf->leaf_ret_closure = FRAME.closure;
-                    cf->leaf_ret_fn      = FRAME.fn;
-                    frame_set_refs(&FRAME, NULL, fn);
-                    FRAME.base = cf->base + fn_reg;
-                    FRAME.nargs = nargs + 1;
-                    FRAME.chunk = fn->chunk;
-                    FRAME.ip = 0;
-                    SYNC_LOCALS();
-                    REG_BASE[0] = fn_val; /* Set self */
-                    int _needed = FRAME.base + fn->chunk->max_registers;
-                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                    }
-                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                    for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
-                        REG_BASE[_i] = make_null();
-                    DECODE; goto *op_labels[OP(instr)];
-                }
-                PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
-                DECODE;
-                goto *op_labels[OP(instr)];
-            } else {
-                char buf[256];
-                snprintf(buf, sizeof(buf), "attempt to call instance of '%s' (no _call method)", inst->klass ? inst->klass->name : "?");
-                
-                _exc = make_exception_instance(vm, vm->exception_class, buf);
-                goto op_throw;
-            }
-        } else {
-            char *s = value_to_string(fn_val);
-            char buf[256];
-            if (IS_OBJ(fn_val)) {
-                snprintf(buf, sizeof(buf), "attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type->kind, s);
-            } else {
-                snprintf(buf, sizeof(buf), "attempt to call non-function (got %s)", s);
-            }
-            free(s);
-            
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
+        /* MOP Part 5: ideal vtable dispatch (function/closure/bound_method/default call) */
+        if (!IS_OBJ(fn_val) || !AS_OBJ(fn_val) || !AS_OBJ(fn_val)->type || !AS_OBJ(fn_val)->type->call) {
+            _exc = make_exception_instance(vm, vm->type_error_class, "attempt to call non-function");
             goto op_throw;
         }
+        Value scratch[256];
+        for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+        Value result = AS_OBJ(fn_val)->type->call(vm, fn_val, scratch, nargs);
+        SET_REG(ret_reg, result);
         DECODE; goto *op_labels[OP(instr)];
     }
-
-    /* 34. OP_RET */
     op_ret: {
         uint8_t ret_reg = RA;
         Value retval = REG(ret_reg);
@@ -1140,7 +906,7 @@
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
-                SET_REG(RA, AS_OBJ(obj)->type->getitem(vm, obj, key));
+                SET_REG(RA, lst->items ? lst->items[idx] : lst->inline_items[idx]);
                 break;
             }
             case OBJ_DICT: {
@@ -1154,7 +920,7 @@
                     _exc = make_exception_instance(vm, vm->key_error_class, buf);
                     goto op_throw;
                 }
-                SET_REG(RA, AS_OBJ(obj)->type->getitem(vm, obj, key));
+                SET_REG(RA, dict_get(d, key));
                 break;
             }
             case OBJ_STRING: {
@@ -1173,7 +939,7 @@
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
-                SET_REG(RA, AS_OBJ(obj)->type->getitem(vm, obj, key));
+                SET_REG(RA, make_obj((Object*)new_string(&s->chars[idx], 1)));
                 break;
             }
             default: {
@@ -1192,13 +958,17 @@
         if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
         switch (AS_OBJ(obj)->type->kind) {
             case OBJ_LIST:
-                SET_REG(RA, AS_OBJ(obj)->type ? AS_OBJ(obj)->type->getitem(vm, obj, key) : make_null());
+                SET_REG(RA, IS_INT(key) ? list_get((ObjList*)AS_OBJ(obj), AS_INT(key)) : make_null());
                 break;
             case OBJ_DICT:
-                SET_REG(RA, AS_OBJ(obj)->type ? AS_OBJ(obj)->type->getitem(vm, obj, key) : make_null());
+                SET_REG(RA, dict_get((ObjDict*)AS_OBJ(obj), key));
                 break;
             case OBJ_STRING: {
-                SET_REG(RA, AS_OBJ(obj)->type ? AS_OBJ(obj)->type->getitem(vm, obj, key) : make_null());
+                ObjString *s = (ObjString*)AS_OBJ(obj);
+                if (IS_INT(key) && AS_INT(key) >= 0 && AS_INT(key) < s->length)
+                    SET_REG(RA, make_obj((Object*)new_string(&s->chars[AS_INT(key)], 1)));
+                else
+                    SET_REG_PRIM(RA, make_null());
                 break;
             }
             default: SET_REG_PRIM(RA, make_null()); break;
@@ -1221,9 +991,9 @@
                     _exc = make_exception_instance(vm, vm->index_error_class, buf);
                     goto op_throw;
                 }
-                AS_OBJ(obj)->type->setitem(vm, obj, key, val);
+                list_set(lst, idx, val);
             } else if (IS_DICT(obj)) {
-                AS_OBJ(obj)->type->setitem(vm, obj, key, val);
+                dict_set((ObjDict*)AS_OBJ(obj), key, val);
             } else {
                 _exc = make_exception_instance(vm, vm->type_error_class, "invalid index assignment");
                 goto op_throw;
@@ -1597,7 +1367,7 @@
                 } else {
                     char buf[256];
                     snprintf(buf, sizeof(buf), "%s has no field '%s'",
-                             AS_OBJ(obj)->type->kind == OBJ_STRING ? "string" : "list", field->chars);
+                             AS_OBJ(obj)->type == OBJ_STRING ? "string" : "list", field->chars);
                     _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
                     goto op_throw;
                 }
