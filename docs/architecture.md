@@ -290,15 +290,25 @@ keeps all Luna-specific types and includes `luna/object.h` directly.
   in the frontend. `value.c` retains only language-agnostic helpers (`make_obj`,
   `make_double`, `IS_*`, `is_null`, `is_truthy`, GC bookkeeping).
 
-#### 6b. Abstract the callable in `CallFrame` to an opaque `Object*`
-- In `vm.h`, change `CallFrame.closure` (`ObjClosure*`) and `CallFrame.fn`
-  (`ObjFunction*`) to `Object *closure` / `Object *fn`. The VM already carries
-  `frame->chunk` (a core `Chunk*`) separately, so it never needs to dereference
-  `ObjClosure`/`ObjFunction` to run a callee. `op_call`/`op_ret` in `vm_opcodes.inc`
-  stop doing `cl->function` / `fn->chunk` / `ic->fn`; the chunk is obtained via a
-  vtable accessor `type->get_chunk(Object*) -> Chunk*` (or a frontend helper that
-  resolves the closure's function at creation time and stashes the `Chunk*` where
-  the core can see it opaquely).
+#### 6b. Abstract the callable in `CallFrame` to an opaque `Object*` (split 6b.1–6b.3)
+- **6b.1 (DONE):** define the MOP "callable/closure protocol" in `Type`: `get_chunk`
+  (bytecode `Chunk*`, NULL for native callables), `get_self` (self to bind before a
+  bytecode frame, NIL if none), `name_of` (object display name), `get_upvalue` /
+  `set_upvalue` (upvalue storage access), `get_upvalue_ref` (shared upvalue object
+  for closure capture). Implement for `function`/`closure`/`bound_method`/`instance`
+  in `luna/object.c` and wire into `luna_types[]`. Additive; `vm.c` does not consume
+  it yet. Committed `51a5751`.
+- **6b.2 (pending):** `OP_CALL` / `OP_RET` (and `PUSH_FRAME`) stop dereferencing
+  `ObjClosure`/`ObjFunction`. `op_call` dispatches native via `t->call` and bytecode
+  via `t->get_chunk` + `t->get_self` (no `IS_FUNCTION` / `IS_CLOSURE` /
+  `IS_BOUND_METHOD` / `IS_INSTANCE` branches); `op_ret` uses `t->name_of` for module
+  naming; `PUSH_FRAME` reads the chunk through `type->get_chunk`. `CallFrame` keeps
+  its `closure`/`fn` fields (still `ObjClosure*`/`ObjFunction*`) in this step.
+- **6b.3 (pending):** make `CallFrame.closure` / `fn` / `leaf_ret_closure` /
+  `leaf_ret_fn` opaque `Object*`. Update `frame_set_refs` / `frame_release_refs` /
+  `PUSH_FRAME`. Route `OP_GETUPVAL` / `OP_SETUPVAL` through `get_upvalue` /
+  `set_upvalue` and `OP_CLOSURE`'s parent-upvalue capture through `get_upvalue_ref`,
+  so `vm.c` no longer names a concrete callable kind here.
 
 #### 6c. Route object lifecycle/formatting through the `Type*` vtable
 - `free_object_container` (core) → `obj->type->free(obj)` (add `free` to `Type`).
@@ -367,12 +377,19 @@ No step skips `make` verification. Each part is committed independently.
 >   exceptions and was unsafe under GC compaction). The `call` vtable convention
 >   bug (`vm_call_value` returns `VM_OK == 0`, so `!result` wrongly meant failure)
 >   and exception propagation were also corrected. Build passes; `make test` passes.
-> - **Part 6 (full core/frontend decoupling):** pending — NOT a trivial shim removal.
->   The core still references Luna `Obj*`/`ObjType`/`luna_types`/constructors (value.c 221,
->   vm.c 95, vm.h 42, chunk.c 6). Requires moving construction to the frontend (6a), opaque
->   `Object*` callables (6b), lifecycle/format dispatch via `Type*` vtable (6c), abstracting
->   `struct VM` Luna-typed fields + native typedef (6d), then removing the `value.h` shim (6e),
->   docs hygiene (6f). Each sub-step committed + `make test` (77 pass) independently.
+> - **Part 6 (full core/frontend decoupling):** in progress.
+>   - **6a (DONE):** Luna object construction + per-type ops moved out of `value.c` into
+>     `luna/object.c`; `value.c` keeps only `is_null` + GC bookkeeping. Committed `37ae6ed`.
+>   - **6b.1 (DONE):** MOP callable/closure protocol (`get_chunk`/`get_self`/`name_of`/
+>     `get_upvalue`/`set_upvalue`/`get_upvalue_ref`) defined + wired for function/closure/
+>     bound_method/instance. Committed `51a5751`.
+>   - **6b.2 (pending):** `OP_CALL`/`OP_RET`/`PUSH_FRAME` consume the protocol (no
+>     `IS_*` callable branches).
+>   - **6b.3 (pending):** `CallFrame.closure`/`fn` → opaque `Object*`; upvalue opcodes route
+>     through the protocol.
+>   - **6c–6f (pending):** lifecycle/format via vtable (6c), `struct VM` Luna-typed fields +
+>     native typedef (6d), remove `value.h` shim (6e), docs hygiene (6f).
+>   Each sub-step committed + `make test` (77 pass) independently.
 
 ---
 
