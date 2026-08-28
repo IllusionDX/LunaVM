@@ -329,31 +329,18 @@ void luna_new_dict(luna_State *L) {
 void luna_set_field(luna_State *L, int idx, const char *key) {
     Value *dv = luna_stack_ptr(L, idx);
     if (!dv || L->top < 1) return;
-    if (!IS_OBJ(*dv) || ((Object *)AS_OBJ(*dv))->type->kind != OBJ_DICT) return;
-    ObjDict *dict = (ObjDict *)AS_OBJ(*dv);
-    Value val = L->stack[L->top - 1];
-    dict_set(dict, make_obj((Object *)new_string(key, (int)strlen(key))), val);
+    if (!IS_OBJ(*dv) || !AS_OBJ(*dv)->type || !AS_OBJ(*dv)->type->setattr) return;
+    AS_OBJ(*dv)->type->setattr(L->vm, *dv, key, L->stack[L->top - 1]);
     L->top--;
 }
 
 int luna_get_field(luna_State *L, int idx, const char *key) {
     Value *dv = luna_stack_ptr(L, idx);
-    if (!dv || !IS_OBJ(*dv)) return LUNA_TNIL;
-    Object *obj = AS_OBJ(*dv);
-    if (obj->type->kind == OBJ_DICT) {
-        ObjDict *dict = (ObjDict *)obj;
-        Value val = dict_get(dict, make_obj((Object *)new_string(key, (int)strlen(key))));
-        if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
-        L->stack[L->top++] = val;
-        return luna_type(L, L->top - 1);
-    }
-    if (obj->type->kind == OBJ_INSTANCE) {
-        Value val = instance_get_field((ObjInstance *)obj, key);
-        if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
-        L->stack[L->top++] = val;
-        return luna_type(L, L->top - 1);
-    }
-    return LUNA_TNIL;
+    if (!dv || !IS_OBJ(*dv) || !AS_OBJ(*dv)->type || !AS_OBJ(*dv)->type->getattr) return LUNA_TNIL;
+    Value val = AS_OBJ(*dv)->type->getattr(L->vm, *dv, key);
+    if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
+    L->stack[L->top++] = val;
+    return luna_type(L, L->top - 1);
 }
 
 /* ============================================================ */

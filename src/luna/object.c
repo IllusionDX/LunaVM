@@ -207,8 +207,17 @@ static void luna_dict_setitem(struct VM *vm, Value self, Value key, Value val) {
     dict_set((ObjDict*)AS_OBJ(self), key, val);
 }
 
-static Value luna_dict_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int luna_dict_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
+static Value luna_dict_getattr(struct VM *vm, Value self, const char *name) {
+    (void)vm;
+    if (!IS_DICT(self)) return make_null();
+    return dict_get((ObjDict*)AS_OBJ(self), make_obj((Object*)new_string(name, (int)strlen(name))));
+}
+static int luna_dict_setattr(struct VM *vm, Value self, const char *name, Value val) {
+    (void)vm;
+    if (!IS_DICT(self)) return 0;
+    dict_set((ObjDict*)AS_OBJ(self), make_obj((Object*)new_string(name, (int)strlen(name))), val);
+    return 1;
+}
 static Value luna_dict_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
 static Value luna_dict_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_dict_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
