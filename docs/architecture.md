@@ -262,14 +262,77 @@ smoke test (`luna.exe /tmp/smoke.luna`). No part skips verification.
   `function` / `closure` / `bound_method` / native C functions handles the
   different call conventions.
 
-### Part 6: Cleanup
-- Remove the temporary `#include "luna/object.h"` shim from `value.h` (the core
-  is pure; `vm.c` and the frontend include what they need directly).
-- Update `docs/IMPLEMENTATION.md` references to `TYPE_SIGNATURE` / 32-type
-  encoding (stale after Part 1).
-- Confirm the Python frontend spec (`python3-subset.md`) remains valid: Python
-  will define its own `Type` instances with its MOP rules (MRO, `__getattr__`),
-  targeting the same neutral IR.
+### Part 6: Full core/frontend decoupling (real, not just moving the include)
+
+The earlier "remove the shim from `value.h`" note was naive: the core still
+references Luna's concrete object types (`ObjString`, `ObjClosure`, `ObjFunction`,
+`ObjType`, `luna_types[]`, the `new_*` constructors, `NativeFn`) in 221 places in
+`value.c`, 95 in `vm.c`, 42 in `vm.h`, 6 in `chunk.c`. Removing the `#include`
+without removing those references just relocates the dependency. **Real decoupling**
+means the core (`value.h`, `vm.h`, `value.c`, `vm.c`, `chunk.c`, `chunk.h`,
+`opcode.h`, `main.c`) depends ONLY on:
+
+- `Value` (NaN-boxed, language-agnostic),
+- `Object` (opaque heap object: `Type *type` + GC fields — owned by the core),
+- `Type` (the MOP vtable — language-agnostic dispatch),
+- `Chunk`, `VM`, `CallFrame` (core structures).
+
+and NEVER on a concrete Luna `Obj*` struct, the `ObjType` enum, `luna_types[]`,
+or the `new_*` constructors. The frontend (`src/luna/*`, `src/luna/stdlib/*`)
+keeps all Luna-specific types and includes `luna/object.h` directly.
+
+#### 6a. Move object construction into the frontend
+- Move `init_object` and every `new_*` constructor (`new_string`, `new_list`,
+  `new_dict`, `new_function`, `new_closure`, `new_instance`, `new_class`,
+  `new_buffer`, `new_int64`, `new_vector`, `new_matrix`, `new_userdata`,
+  `new_upvalue`, `new_enum`, `new_module`) out of `value.c` into `src/luna/object.c`.
+  They set `obj->type = luna_types[OBJ_X]`, which is Luna-specific, so they belong
+  in the frontend. `value.c` retains only language-agnostic helpers (`make_obj`,
+  `make_double`, `IS_*`, `is_null`, `is_truthy`, GC bookkeeping).
+
+#### 6b. Abstract the callable in `CallFrame` to an opaque `Object*`
+- In `vm.h`, change `CallFrame.closure` (`ObjClosure*`) and `CallFrame.fn`
+  (`ObjFunction*`) to `Object *closure` / `Object *fn`. The VM already carries
+  `frame->chunk` (a core `Chunk*`) separately, so it never needs to dereference
+  `ObjClosure`/`ObjFunction` to run a callee. `op_call`/`op_ret` in `vm_opcodes.inc`
+  stop doing `cl->function` / `fn->chunk` / `ic->fn`; the chunk is obtained via a
+  vtable accessor `type->get_chunk(Object*) -> Chunk*` (or a frontend helper that
+  resolves the closure's function at creation time and stashes the `Chunk*` where
+  the core can see it opaquely).
+
+#### 6c. Route object lifecycle/formatting through the `Type*` vtable
+- `free_object_container` (core) → `obj->type->free(obj)` (add `free` to `Type`).
+- GC `mark_drain` (core) → `obj->type->mark(vm, obj)` (add `mark` to `Type`).
+- `value_to_string` (core) → `obj->type->tostring(vm, obj)` (add `tostring` to `Type`).
+- `values_equal` (core) → `obj->type->eq(a, b)` for heap objects (add `eq` to `Type`).
+- `type_name` (core) → `obj->type->name`.
+- This deletes every `obj->type->kind` / `ObjType` switch from the core. The `kind`
+  field stays (the frontend uses it for `IS_OBJ_KIND`), but the core never switches on it.
+
+#### 6d. Abstract Luna-typed fields in `struct VM`
+- Replace `ObjString*`/`ObjDict*`/`ObjClass*`/`NativeFn` fields (e.g. the various
+  `*_class` handles, module/import state) with `Type*` (the vtable) or opaque
+  `Value`/`Object*`. The frontend sets them as `luna_types[OBJ_CLASS]` etc.; the
+  core only ever holds the `Type*` or an opaque value.
+- Hoist the native-callable signature `Value (*)(VM*, Value*, int)` into the core
+  (e.g. `typedef Value (*LunaNativeFn)(VM*, Value*, int);` in `vm.h`); the frontend
+  wires its `NativeFn`/`CfuncFn` to it. Native dispatch already goes through
+  `type->call`, so no call-site change is needed beyond the typedef relocation.
+
+#### 6e. Remove the `value.h` shim
+- Once 6a–6d land, `value.c`/`vm.c`/`vm.h`/`chunk.c` reference no Luna `Obj*`/
+  `ObjType`/`luna_types`/constructors. Delete the `#include "luna/object.h"` from
+  `value.h`. Core headers include only `value.h`/`chunk.h`/`vm.h`; the frontend
+  includes `luna/object.h` as needed.
+
+#### 6f. Docs hygiene
+- Update `docs/IMPLEMENTATION.md` references to `TYPE_SIGNATURE` / 32-type encoding
+  (stale after Part 1) — already confirmed absent, drop the note.
+- Confirm `python3-subset.md` still targets the neutral IR (Python defines its own
+  `Type` instances with MOP rules: MRO, `__getattr__`).
+
+Each sub-step (6a–6e) is committed independently and verified with `make` +
+`make test` (77 pass) before the next, so a regression is bisectable.
 
 No step skips `make` verification. Each part is committed independently.
 
@@ -304,7 +367,12 @@ No step skips `make` verification. Each part is committed independently.
 >   exceptions and was unsafe under GC compaction). The `call` vtable convention
 >   bug (`vm_call_value` returns `VM_OK == 0`, so `!result` wrongly meant failure)
 >   and exception propagation were also corrected. Build passes; `make test` passes.
-> - **Part 6:** pending (`#include` shim removal, `IMPLEMENTATION.md` cleanup).
+> - **Part 6 (full core/frontend decoupling):** pending — NOT a trivial shim removal.
+>   The core still references Luna `Obj*`/`ObjType`/`luna_types`/constructors (value.c 221,
+>   vm.c 95, vm.h 42, chunk.c 6). Requires moving construction to the frontend (6a), opaque
+>   `Object*` callables (6b), lifecycle/format dispatch via `Type*` vtable (6c), abstracting
+>   `struct VM` Luna-typed fields + native typedef (6d), then removing the `value.h` shim (6e),
+>   docs hygiene (6f). Each sub-step committed + `make test` (77 pass) independently.
 
 ---
 
