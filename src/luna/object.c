@@ -179,6 +179,18 @@ static Chunk* luna_function_get_chunk(Value self) {
 }
 static Value luna_function_get_self(Value self) { (void)self; return make_null(); }
 static const char* luna_function_name_of(Value self) { return ((ObjFunction*)AS_OBJ(self))->name; }
+static int luna_function_param_count(Value self) { return ((ObjFunction*)AS_OBJ(self))->param_count; }
+static Value luna_function_get_param_name(Value self, int i) {
+    ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
+    if (i < 0 || i >= fn->param_count) return make_null();
+    return make_obj((Object*)fn->param_name_objs[i]);
+}
+static int luna_closure_param_count(Value self) { return ((ObjClosure*)AS_OBJ(self))->function->param_count; }
+static Value luna_closure_get_param_name(Value self, int i) {
+    ObjFunction *fn = ((ObjClosure*)AS_OBJ(self))->function;
+    if (i < 0 || i >= fn->param_count) return make_null();
+    return make_obj((Object*)fn->param_name_objs[i]);
+}
 
 static Chunk* luna_closure_get_chunk(Value self) {
     ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
@@ -384,7 +396,32 @@ static int luna_instance_setattr(struct VM *vm, Value self, const char *name, Va
     return 1;
 }
 
-static Value luna_instance_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value luna_instance_call(struct VM *vm, Value self, Value *args, int argc) {
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
+    if (!inst->klass) return make_null();
+    ObjFunction *fn = NULL;
+    for (int i = 0; i < inst->klass->method_count; i++)
+        if (strcmp(inst->klass->method_names[i], "_call") == 0) { fn = inst->klass->methods[i]; break; }
+    if (!fn) return make_null();
+    /* Bind self as the first positional argument, like op_call's get_self path. */
+    Value scratch[256];
+    scratch[0] = self;
+    for (int i = 0; i < argc; i++) scratch[i + 1] = args[i];
+    Value out;
+    if (fn->is_native) {
+        if (fn->cfunc) return luna_cfunc_dispatch(vm, fn, scratch, argc + 1);
+        if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
+            if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+            return make_null();
+        }
+        return out;
+    }
+    if (vm_call_value(vm, make_obj((Object*)fn), scratch, argc + 1, &out) != VM_OK) {
+        if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+        return make_null();
+    }
+    return out;
+}
 static Value luna_instance_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_instance_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int luna_instance_len(struct VM *vm, Value self) { (void)vm; (void)self; return 0; }
@@ -582,7 +619,8 @@ Type luna_function_type = {
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
     .call = luna_function_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
-    .get_chunk = luna_function_get_chunk, .get_self = luna_function_get_self, .name_of = luna_function_name_of
+    .get_chunk = luna_function_get_chunk, .get_self = luna_function_get_self, .name_of = luna_function_name_of,
+    .param_count = luna_function_param_count, .get_param_name = luna_function_get_param_name
 };
 
 Type luna_closure_type = {
@@ -593,7 +631,8 @@ Type luna_closure_type = {
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
     .call = luna_closure_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
     .get_chunk = luna_closure_get_chunk, .get_self = luna_closure_get_self, .name_of = luna_closure_name_of,
-    .get_upvalue = luna_closure_get_upvalue, .set_upvalue = luna_closure_set_upvalue, .get_upvalue_ref = luna_closure_get_upvalue_ref
+    .get_upvalue = luna_closure_get_upvalue, .set_upvalue = luna_closure_set_upvalue, .get_upvalue_ref = luna_closure_get_upvalue_ref,
+    .param_count = luna_closure_param_count, .get_param_name = luna_closure_get_param_name
 };
 
 Type luna_upvalue_type = {

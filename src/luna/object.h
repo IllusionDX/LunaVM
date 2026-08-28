@@ -89,6 +89,8 @@ typedef const char* (*MOP_Name)(Value self);        /* object display name (stac
 typedef Value    (*MOP_Upval)(struct VM *vm, Value closure, int i); /* read upvalue i (NIL if absent) */
 typedef void     (*MOP_UpvalSet)(struct VM *vm, Value closure, int i, Value v); /* write upvalue i */
 typedef Value    (*MOP_UpvalRef)(Value closure, int i); /* shared upvalue object (closure capture), NIL if absent */
+typedef int      (*MOP_ParamCount)(Value self);          /* number of declared parameters */
+typedef Value    (*MOP_ParamName)(Value self, int i);     /* parameter name i as a string Value (NIL if absent) */
 
 typedef struct Type {
     const char *name;   /* human-readable type name (e.g. "list") */
@@ -116,6 +118,8 @@ typedef struct Type {
     MOP_Upval    get_upvalue;   /* read upvalue i (NIL if absent) */
     MOP_UpvalSet set_upvalue;   /* write upvalue i */
     MOP_UpvalRef get_upvalue_ref; /* shared upvalue object (closure capture), NIL if absent */
+    MOP_ParamCount param_count;   /* number of declared parameters (kwargs binding) */
+    MOP_ParamName  get_param_name; /* parameter name i as a string Value (NIL if absent) */
 } Type;
 
 /* Indexed by ObjType so the core can map a kind to its Type* (used by the

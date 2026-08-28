@@ -568,91 +568,34 @@
         Value fn_val = REG(fn_reg);
         Type *t = (IS_OBJ(fn_val) && AS_OBJ(fn_val)->type) ? AS_OBJ(fn_val)->type : NULL;
 
-        /* MOP guard: only objects with a `call` vtable are callable. Non-callable
-           types carry luna_default_call which raises TypeError, so the vtable is
+        /* MOP guard: only objects with a `call` vtable are callable. The vtable is
            the single source of truth for "is this invokable?". */
         if (!t || !t->call) {
             _exc = make_exception_instance(vm, vm->type_error_class, "attempt to call non-function");
             goto op_throw;
         }
 
-        /* Native callables run synchronously through the `call` vtable and return
-           a Value; exceptions propagate via the vtable (longjmp, like op_throw). */
-        if (IS_FUNCTION(fn_val)) {
-            ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
-            if (fn->is_native) {
-                Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = t->call(vm, fn_val, scratch, nargs);
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            /* Bytecode function: push a real call frame and continue the SINGLE VM
-               loop (Luna's custom frame feature). op_ret lands the result in ret_reg;
-               exceptions unwind correctly through op_throw in this same loop. */
-            PUSH_FRAME(fn, NULL, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
+        /* Bytecode callables expose their chunk via the vtable; native callables
+           return NULL and run synchronously through `call`. The core never names a
+           concrete Luna callable kind (function / closure / bound_method / instance). */
+        Chunk *chunk = t->get_chunk ? t->get_chunk(fn_val) : NULL;
+        if (chunk) {
+            Value self = (t->get_self ? t->get_self(fn_val) : make_null());
+            int base = FRAME.base + fn_reg + 1;
+            int argc = nargs;
+            int extra = 0;
+            if (!is_null(self)) { SET_REG(fn_reg, self); base = FRAME.base + fn_reg; argc = nargs + 1; extra = 1; }
+            PUSH_FRAME(AS_OBJ(fn_val), AS_OBJ(fn_val), base, ret_reg, argc, extra);
             DECODE; goto *op_labels[OP(instr)];
-        } else if (IS_CLOSURE(fn_val)) {
-            ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
-            ObjFunction *fn = cl->function;
-            if (fn->is_native) {
-                Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = t->call(vm, fn_val, scratch, nargs);
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            PUSH_FRAME(fn, cl, FRAME.base + fn_reg + 1, ret_reg, nargs, 0);
-            DECODE; goto *op_labels[OP(instr)];
-        } else if (IS_BOUND_METHOD(fn_val)) {
-            ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(fn_val);
-            ObjFunction *fn = bm->fn;
-            if (fn->is_native) {
-                Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result = t->call(vm, fn_val, scratch, nargs);
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            SET_REG(fn_reg, bm->self);
-            PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
-            DECODE; goto *op_labels[OP(instr)];
-        } else if (IS_INSTANCE(fn_val)) {
-            /* Instance callable via a `_call` method (bytecode or native). */
-            ObjInstance *inst = (ObjInstance *)AS_OBJ(fn_val);
-            int mi = -1;
-            if (inst->klass) {
-                for (int i = 0; i < inst->klass->method_count; i++) {
-                    if (strcmp(inst->klass->method_names[i], "_call") == 0) { mi = i; break; }
-                }
-            }
-            if (mi >= 0) {
-                ObjFunction *fn = inst->klass->methods[mi];
-                if (fn->is_native) {
-                    Value scratch[256];
-                    scratch[0] = fn_val;
-                    for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
-                    Value result;
-                    if (fn->cfunc) {
-                        result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
-                    } else {
-                        if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
-                    }
-                    SET_REG(ret_reg, result);
-                    DECODE; goto *op_labels[OP(instr)];
-                }
-                SET_REG(fn_reg, fn_val);
-                PUSH_FRAME(fn, NULL, FRAME.base + fn_reg, ret_reg, nargs, 1);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            char buf[256];
-            snprintf(buf, sizeof(buf), "attempt to call instance of '%s' (no _call method)", inst->klass ? inst->klass->name : "?");
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
-            goto op_throw;
         }
-        /* Non-callable object: its vtable should have raised already, but be safe. */
-        _exc = make_exception_instance(vm, vm->type_error_class, "attempt to call non-function");
-        goto op_throw;
+
+        /* Native callable: gather args from the stack and dispatch via the vtable.
+           Exceptions propagate via the vtable (longjmp, like op_throw). */
+        Value scratch[256];
+        for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
+        Value result = t->call(vm, fn_val, scratch, nargs);
+        SET_REG(ret_reg, result);
+        DECODE; goto *op_labels[OP(instr)];
     }
     op_ret: {
         uint8_t ret_reg = RA;
@@ -664,15 +607,15 @@
             Chunk *leaf_rchunk = cf->leaf_ret_chunk;
             int leaf_rbase = cf->leaf_ret_base;
             int leaf_rreg = cf->leaf_ret_reg;
-            ObjClosure        *leaf_rclosure = cf->leaf_ret_closure;
-            struct ObjFunction *leaf_rfn     = cf->leaf_ret_fn;
+            Object *leaf_rclosure = cf->leaf_ret_closure;
+            Object *leaf_rfn     = cf->leaf_ret_fn;
             cf->leaf_ret_ip = 0;
             cf->leaf_ret_chunk = NULL;
             cf->leaf_ret_base = 0;
             cf->leaf_ret_reg = 0;
             cf->leaf_ret_closure = NULL;
             cf->leaf_ret_fn = NULL;
-            frame_set_refs(cf, leaf_rclosure, leaf_rfn);
+            frame_set_refs(cf, (Object*)leaf_rclosure, (Object*)leaf_rfn);
             FRAME.base = leaf_rbase;
             FRAME.chunk = leaf_rchunk;
             FRAME.ip = leaf_rip;
@@ -699,7 +642,9 @@
 
         /* Module import cleanup: capture exports before destroying globals */
         if (callee->saved_globals) {
-            char *captured_name = callee->fn && callee->fn->name ? strdup(callee->fn->name) : strdup("<module>");
+            char *captured_name = (callee->fn && callee->fn->type->name_of)
+                ? strdup(callee->fn->type->name_of(make_obj(callee->fn)))
+                : strdup("<module>");
             
             ObjDict *exports = vm_globals_to_dict(vm);
             vm_globals_restore(vm, callee->saved_globals);
@@ -750,10 +695,10 @@
             if (is_local) {
                 cl->upvalues[i] = capture_upvalue(vm, FRAME.base + index);
             } else {
-                if (FRAME.closure && index < (uint8_t)FRAME.closure->upvalue_count)
-                    cl->upvalues[i] = FRAME.closure->upvalues[index];
-                else
-                    cl->upvalues[i] = NULL;
+                Value uvref = (FRAME.closure && FRAME.closure->type->get_upvalue_ref)
+                    ? FRAME.closure->type->get_upvalue_ref(make_obj(FRAME.closure), index)
+                    : make_null();
+                cl->upvalues[i] = is_null(uvref) ? NULL : (ObjUpvalue*)AS_OBJ(uvref);
             }
         }
         SET_REG(dst, make_obj((Object*)cl));
@@ -780,9 +725,8 @@
     op_getupval: {
         uint8_t upv_idx = B;
         uint8_t dst = RA;
-        if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
-            ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
-            SET_REG(dst, uv->is_open ? vm->stack[uv->stack_index] : uv->closed);
+        if (FRAME.closure && FRAME.closure->type->get_upvalue) {
+            SET_REG(dst, FRAME.closure->type->get_upvalue(vm, make_obj(FRAME.closure), upv_idx));
         } else {
             SET_REG_PRIM(dst, make_null());
         }
@@ -792,14 +736,8 @@
     op_setupval: {
         uint8_t upv_idx = B;
         uint8_t src = RA;
-        if (FRAME.closure && upv_idx < (uint8_t)FRAME.closure->upvalue_count) {
-            ObjUpvalue *uv = FRAME.closure->upvalues[upv_idx];
-            Value val = REG(src);
-            if (uv->is_open) {
-                SET_STACK(uv->stack_index, val);
-            } else {
-                uv->closed = val;
-            }
+        if (FRAME.closure && FRAME.closure->type->set_upvalue) {
+            FRAME.closure->type->set_upvalue(vm, make_obj(FRAME.closure), upv_idx, REG(src));
         }
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -1759,7 +1697,7 @@
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, NULL, fn);
+                                frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
                                 FRAME.base = cf->base + obj_reg + 2;
                                 FRAME.nargs = nargs;
                                 FRAME.chunk = fn->chunk;
@@ -1784,7 +1722,7 @@
                             callee->ret_reg = ret_reg;
                             callee->nargs = nargs;
                             callee->kw_args = make_null();
-                            frame_set_refs(callee, NULL, fn);
+                            frame_set_refs(callee, (Object*)NULL, (Object*)fn);
                             callee->saved_globals = NULL;
                             int need = callee->base + fn->chunk->max_registers;
                             if (need > vm->stack_cap) {
@@ -1820,7 +1758,7 @@
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, cl, fn);
+                                frame_set_refs(&FRAME, (Object*)cl, (Object*)fn);
                                 FRAME.base = cf->base + obj_reg + 2;
                                 FRAME.nargs = nargs;
                                 FRAME.chunk = fn->chunk;
@@ -1845,7 +1783,7 @@
                             callee->ret_reg = ret_reg;
                             callee->nargs = nargs;
                             callee->kw_args = make_null();
-                            frame_set_refs(callee, cl, fn);
+                            frame_set_refs(callee, (Object*)cl, (Object*)fn);
                             callee->saved_globals = NULL;
                             int need = callee->base + fn->chunk->max_registers;
                             if (need > vm->stack_cap) {
@@ -1893,7 +1831,7 @@ case OBJ_MODULE: {
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, NULL, fn);
+                                frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
                                 FRAME.base = cf->base + obj_reg + 2;
                                 FRAME.nargs = nargs;
                                 FRAME.chunk = fn->chunk;
@@ -1918,7 +1856,7 @@ case OBJ_MODULE: {
                             callee->ret_reg = ret_reg;
                             callee->nargs = nargs;
                             callee->kw_args = make_null();
-                            frame_set_refs(callee, NULL, fn);
+                            frame_set_refs(callee, (Object*)NULL, (Object*)fn);
                             callee->saved_globals = NULL;
                             int need = callee->base + fn->chunk->max_registers;
                             if (need > vm->stack_cap) {
@@ -1954,7 +1892,7 @@ case OBJ_MODULE: {
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, cl, fn);
+                                frame_set_refs(&FRAME, (Object*)cl, (Object*)fn);
                                 FRAME.base = cf->base + obj_reg + 2;
                                 FRAME.nargs = nargs;
                                 FRAME.chunk = fn->chunk;
@@ -1979,7 +1917,7 @@ case OBJ_MODULE: {
                             callee->ret_reg = ret_reg;
                             callee->nargs = nargs;
                             callee->kw_args = make_null();
-                            frame_set_refs(callee, cl, fn);
+                            frame_set_refs(callee, (Object*)cl, (Object*)fn);
                             callee->saved_globals = NULL;
                             int need = callee->base + fn->chunk->max_registers;
                             if (need > vm->stack_cap) {
@@ -2033,7 +1971,7 @@ case OBJ_MODULE: {
                                     cf->leaf_ret_reg = ret_reg;
                                     cf->leaf_ret_closure = FRAME.closure;
                                     cf->leaf_ret_fn      = FRAME.fn;
-                                    frame_set_refs(&FRAME, NULL, method);
+                                    frame_set_refs(&FRAME, (Object*)NULL, (Object*)method);
                                     FRAME.base = cf->base + obj_reg + 1;
                                     FRAME.nargs = nargs + 1;
                                     FRAME.chunk = method->chunk;
@@ -2060,7 +1998,7 @@ case OBJ_MODULE: {
                                     callee->ret_reg = ret_reg;
                                     callee->nargs = nargs + 1;
                                     callee->kw_args = make_null();
-                                    frame_set_refs(callee, NULL, method);
+                                    frame_set_refs(callee, (Object*)NULL, (Object*)method);
                                     callee->saved_globals = NULL;
                                     int need = callee->base + method->chunk->max_registers;
                                     if (need > vm->stack_cap) {
@@ -2117,7 +2055,7 @@ case OBJ_MODULE: {
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, NULL, method);
+                                frame_set_refs(&FRAME, (Object*)NULL, (Object*)method);
                                 FRAME.base = cf->base + obj_reg + 1;
                                 FRAME.nargs = nargs + 1;
                                 FRAME.chunk = method->chunk;
@@ -2144,7 +2082,7 @@ case OBJ_MODULE: {
                                 callee->ret_reg = ret_reg;
                                 callee->nargs = nargs + 1;
                                 callee->kw_args = make_null();
-                                frame_set_refs(callee, NULL, method);
+                                frame_set_refs(callee, (Object*)NULL, (Object*)method);
                                 callee->saved_globals = NULL;
                                 int need = callee->base + method->chunk->max_registers;
                                 if (need > vm->stack_cap) {
@@ -2221,7 +2159,7 @@ case OBJ_MODULE: {
                                 cf->leaf_ret_reg = ret_reg;
                                 cf->leaf_ret_closure = FRAME.closure;
                                 cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, NULL, m);
+                                frame_set_refs(&FRAME, (Object*)NULL, (Object*)m);
                                 FRAME.base = cf->base + self_reg + 1;
                                 FRAME.nargs = nargs + 1;
                                 FRAME.chunk = m->chunk;
@@ -2248,7 +2186,7 @@ case OBJ_MODULE: {
                             callee->ret_reg = ret_reg;
                             callee->nargs = nargs + 1;
                             callee->kw_args = make_null();
-                            frame_set_refs(callee, NULL, m);
+                            frame_set_refs(callee, (Object*)NULL, (Object*)m);
                             callee->saved_globals = NULL;
                             int need = callee->base + m->chunk->max_registers;
                             if (need > vm->stack_cap) {
@@ -2375,12 +2313,12 @@ case OBJ_MODULE: {
         uint8_t param_idx = RA;
         int32_t skip = sBx;
         bool has_arg = (FRAME.nargs > (int)param_idx);
-        if (!has_arg && FRAME.fn && FRAME.fn->param_name_objs &&
-            IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type->kind == OBJ_DICT) {
-            ObjDict *kw = (ObjDict*)AS_OBJ(FRAME.kw_args);
-            Value key_val = make_obj((Object*)FRAME.fn->param_name_objs[param_idx]);
-            Value v = dict_get(kw, key_val);
-            has_arg = !IS_NIL(v);
+        if (!has_arg && FRAME.fn && FRAME.fn->type->param_count && IS_DICT(FRAME.kw_args)) {
+            Value key_val = FRAME.fn->type->get_param_name(make_obj(FRAME.fn), param_idx);
+            if (!is_null(key_val)) {
+                Value v = dict_get((ObjDict*)AS_OBJ(FRAME.kw_args), key_val);
+                has_arg = !IS_NIL(v);
+            }
         }
         if (has_arg) {
             pc += skip;
@@ -2390,12 +2328,12 @@ case OBJ_MODULE: {
 
     /* 60. OP_KWARGS */
     op_kwargs: {
-        if (FRAME.fn && FRAME.fn->param_name_objs &&
-            IS_OBJ(FRAME.kw_args) && AS_OBJ(FRAME.kw_args)->type->kind == OBJ_DICT) {
+        if (FRAME.fn && FRAME.fn->type->param_count && IS_DICT(FRAME.kw_args)) {
+            int pcount = FRAME.fn->type->param_count(make_obj(FRAME.fn));
             ObjDict *kw = (ObjDict*)AS_OBJ(FRAME.kw_args);
-            for (int i = 0; i < FRAME.fn->param_count; i++) {
-                ObjString *key_str = FRAME.fn->param_name_objs[i];
-                Value key_val = make_obj((Object*)key_str);
+            for (int i = 0; i < pcount; i++) {
+                Value key_val = FRAME.fn->type->get_param_name(make_obj(FRAME.fn), i);
+                if (is_null(key_val)) continue;
                 Value v = dict_get(kw, key_val);
                 if (!IS_NIL(v)) {
                     SET_REG(i, v);
@@ -2435,7 +2373,7 @@ case OBJ_MODULE: {
                     cf->leaf_ret_reg = ret_reg;
                     cf->leaf_ret_closure = FRAME.closure;
                     cf->leaf_ret_fn      = FRAME.fn;
-                    frame_set_refs(&FRAME, NULL, fn);
+                    frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
                     FRAME.base = cf->base + fn_reg + 1;
                     FRAME.nargs = nargs;
                     FRAME.kw_args = kw_args_val;
@@ -2467,7 +2405,7 @@ case OBJ_MODULE: {
                 callee->nargs = nargs;
                 callee->kw_args = kw_args_val;
                 
-                frame_set_refs(callee, NULL, fn);
+                frame_set_refs(callee, (Object*)NULL, (Object*)fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -2507,7 +2445,7 @@ case OBJ_MODULE: {
                     cf->leaf_ret_reg = ret_reg;
                     cf->leaf_ret_closure = FRAME.closure;
                     cf->leaf_ret_fn      = FRAME.fn;
-                    frame_set_refs(&FRAME, cl, fn);
+                    frame_set_refs(&FRAME, (Object*)cl, (Object*)fn);
                     FRAME.base = cf->base + fn_reg + 1;
                     FRAME.nargs = nargs;
                     FRAME.kw_args = kw_args_val;
@@ -2539,7 +2477,7 @@ case OBJ_MODULE: {
                 callee->nargs = nargs;
                 callee->kw_args = kw_args_val;
                 
-                frame_set_refs(callee, cl, fn);
+                frame_set_refs(callee, (Object*)cl, (Object*)fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -2580,7 +2518,7 @@ case OBJ_MODULE: {
                     cf->leaf_ret_reg = ret_reg;
                     cf->leaf_ret_closure = FRAME.closure;
                     cf->leaf_ret_fn      = FRAME.fn;
-                    frame_set_refs(&FRAME, NULL, fn);
+                    frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
                     SET_REG(fn_reg, bm->self);
                     FRAME.base = cf->base + fn_reg;
                     FRAME.nargs = nargs + 1;
@@ -2614,7 +2552,7 @@ case OBJ_MODULE: {
                 callee->nargs = nargs + 1;
                 callee->kw_args = kw_args_val;
                 
-                frame_set_refs(callee, NULL, fn);
+                frame_set_refs(callee, (Object*)NULL, (Object*)fn);
                 callee->saved_globals = NULL;
                 int needed = callee->base + fn->chunk->max_registers;
                 if (needed > vm->stack_cap) {
@@ -2779,7 +2717,7 @@ case OBJ_MODULE: {
         callee->ret_reg       = dst;
         callee->nargs         = 0;
         callee->kw_args       = make_null();
-        frame_set_refs(callee, NULL, mod_fn);
+        frame_set_refs(callee, (Object*)NULL, (Object*)mod_fn);
         callee->saved_globals = saved_globals;
 
         int needed = callee->base + mod_fn->chunk->max_registers;
@@ -2845,7 +2783,7 @@ case OBJ_MODULE: {
                 cf->leaf_ret_chunk = current_chunk;
                 cf->leaf_ret_base = FRAME.base;
                 cf->leaf_ret_reg = (uint8_t)(obj_reg + nargs + 1);
-                frame_set_refs(&FRAME, NULL, fn);
+                frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
                 FRAME.base = cf->base + obj_reg + 1;
                 FRAME.nargs = nargs + 1;
                 FRAME.kw_args = make_null();
@@ -2874,7 +2812,7 @@ case OBJ_MODULE: {
             callee->ret_reg = (uint8_t)(obj_reg + nargs + 1);
             callee->nargs = nargs + 1;
             callee->kw_args = make_null();
-            frame_set_refs(callee, NULL, fn);
+            frame_set_refs(callee, (Object*)NULL, (Object*)fn);
             callee->saved_globals = NULL;
             int need = callee->base + fn->chunk->max_registers;
             if (need > vm->stack_cap) {

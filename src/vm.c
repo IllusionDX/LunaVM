@@ -857,7 +857,7 @@ static ObjDict *vm_globals_to_dict(VM *vm) {
     return d;
 }
 
-static void frame_set_refs(CallFrame *frame, ObjClosure *closure, ObjFunction *fn) {
+static void frame_set_refs(CallFrame *frame, Object *closure, Object *fn) {
     frame->closure = closure;
     frame->fn = fn;
 }
@@ -1133,7 +1133,8 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         goto op_throw; \
     } \
     CallFrame *_c = &(vm)->frames[(vm)->frame_count]; \
-    _c->chunk = (fn)->chunk; \
+    Chunk *_cf = ((Object*)(fn))->type->get_chunk(make_obj((Object*)(fn))); \
+    _c->chunk = _cf; \
     _c->ip = 0; \
     _c->base = (base_reg); \
     _c->ret_reg = (retreg); \
@@ -1145,14 +1146,14 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     _c->leaf_ret_reg = 0; \
     _c->leaf_ret_closure = NULL; \
     _c->leaf_ret_fn = NULL; \
-    frame_set_refs(_c, (cl), (fn)); \
+    frame_set_refs(_c, (Object*)(cl), (Object*)(fn)); \
     _c->saved_globals = NULL; \
-    int _needed = _c->base + (fn)->chunk->max_registers; \
+    int _needed = _c->base + _cf->max_registers; \
     if (_needed > (vm)->stack_cap) { \
         (vm)->stack_cap = _needed < 64 ? 64 : _needed * 2; \
         (vm)->stack = realloc((vm)->stack, (vm)->stack_cap * sizeof(Value)); \
     } \
-    for (int _i = (n) + (extra); _i < (fn)->chunk->max_registers; _i++) \
+    for (int _i = (n) + (extra); _i < _cf->max_registers; _i++) \
         (vm)->stack[_c->base + _i] = make_null(); \
     (vm)->stack_count = _needed > (vm)->stack_count ? _needed : (vm)->stack_count; \
     (vm)->frame_count++; \
@@ -1229,64 +1230,39 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
 VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *out) {
     int saved_stack_count = vm->stack_count;
     int saved_frame_count = vm->frame_count;
-
-    /* Handle native functions directly */
-    if (IS_FUNCTION(fn_val)) {
-        ObjFunction *fn = (ObjFunction *)AS_OBJ(fn_val);
-        if (fn->is_native) {
-            return vm_call_native(vm, fn->native_fn, args, arg_count, out)
-                ? VM_OK : VM_EXCEPTION;
-        }
-        if (fn->chunk == NULL) {
-            vm->last_exception = make_exception_instance(vm, vm->exception_class,
-                "cannot call function without bytecode");
-            return VM_EXCEPTION;
-        }
-    } else if (IS_CLOSURE(fn_val)) {
-        ObjClosure *cl = (ObjClosure *)AS_OBJ(fn_val);
-        if (cl->function->is_native) {
-            return vm_call_native(vm, cl->function->native_fn, args, arg_count, out)
-                ? VM_OK : VM_EXCEPTION;
-        }
-    } else if (IS_BOUND_METHOD(fn_val)) {
-        ObjBoundMethod *bm = (ObjBoundMethod *)AS_OBJ(fn_val);
-        if (bm->fn->is_native) {
-            /* Prepend self as first arg for bound native methods */
-            Value *scratch = malloc((size_t)(arg_count + 1) * sizeof(Value));
-            if (!scratch) return VM_ERROR;
-            scratch[0] = bm->self;
-            for (int i = 0; i < arg_count; i++) scratch[i + 1] = args[i];
-            bool ok = vm_call_native(vm, bm->fn->native_fn, scratch, arg_count + 1, out);
-            free(scratch);
-            return ok ? VM_OK : VM_EXCEPTION;
-        }
-    } else {
+    Type *t = (IS_OBJ(fn_val) && AS_OBJ(fn_val)->type) ? AS_OBJ(fn_val)->type : NULL;
+    if (!t || !t->call) {
         vm->last_exception = make_exception_instance(vm, vm->exception_class,
             "attempt to call a non-function value");
         return VM_EXCEPTION;
     }
 
-    /* Ensure stack space */
-    ObjFunction *target_fn;
-    ObjClosure *target_cl = NULL;
-    Value self_val = make_null();
-    int base_extra = 1; /* slot for function value */
-
-    if (IS_FUNCTION(fn_val)) {
-        target_fn = (ObjFunction *)AS_OBJ(fn_val);
-    } else if (IS_CLOSURE(fn_val)) {
-        target_cl = (ObjClosure *)AS_OBJ(fn_val);
-        target_fn = target_cl->function;
-    } else {
-        /* Bound method */
-        ObjBoundMethod *bm = (ObjBoundMethod *)AS_OBJ(fn_val);
-        target_fn = bm->fn;
-        self_val = bm->self;
-        base_extra = 2; /* slot for self too, replacing fn slot */
+    /* Native callable: dispatch synchronously through the vtable. The vtable
+       propagates exceptions via longjmp when a native_jump is active; we add a
+       local jump so a top-level native failure still surfaces as VM_EXCEPTION. */
+    Chunk *chunk = t->get_chunk ? t->get_chunk(fn_val) : NULL;
+    if (!chunk) {
+        LunaJump jump;
+        jump.prev = vm->native_jump;
+        vm->native_jump = &jump;
+        VMResult result;
+        if (setjmp(jump.env) == 0) {
+            if (out) *out = t->call(vm, fn_val, args, arg_count);
+            result = VM_OK;
+        } else {
+            result = VM_EXCEPTION;
+        }
+        vm->native_jump = jump.prev;
+        return result;
     }
 
+    /* Bytecode callable: push a real call frame. The core never names a concrete
+       Luna callable kind; self (if any) and the chunk come from the vtable. */
+    Value self_val = (t->get_self ? t->get_self(fn_val) : make_null());
+    Object *callee = AS_OBJ(fn_val);
+    int base_extra = is_null(self_val) ? 1 : 2; /* slot for fn, or self+fn */
     int needed_base = saved_stack_count + base_extra;
-    int needed = needed_base + target_fn->chunk->max_registers;
+    int needed = needed_base + chunk->max_registers;
     if (needed > vm->stack_cap) {
         vm->stack_cap = needed < 64 ? 64 : (size_t)needed * 2;
         vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
@@ -1295,24 +1271,20 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
 
     /* Top-level call (no ghost frame needed) */
     if (saved_frame_count == 0) {
-        if (IS_BOUND_METHOD(fn_val)) {
-            vm->stack[saved_stack_count] = self_val;
-        } else {
-            vm->stack[saved_stack_count] = fn_val;
-        }
+        vm->stack[saved_stack_count] = is_null(self_val) ? fn_val : self_val;
         for (int i = 0; i < arg_count; i++) {
             vm->stack[saved_stack_count + base_extra + i] = args[i];
         }
         int callee_base = saved_stack_count + base_extra;
         CallFrame *frame = &vm->frames[0];
-        frame->chunk = target_fn->chunk;
+        frame->chunk = chunk;
         frame->ip = 0;
         frame->base = callee_base;
         frame->ret_reg = 0;
         frame->nargs = arg_count;
         frame->kw_args = make_null();
-        frame->closure = target_cl;
-        frame->fn = target_fn;
+        frame->closure = callee;
+        frame->fn = callee;
         frame->saved_globals = NULL;
         frame->leaf_ret_ip = 0;
         frame->leaf_ret_chunk = NULL;
@@ -1320,7 +1292,7 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         frame->leaf_ret_reg = 0;
         frame->leaf_ret_closure = NULL;
         frame->leaf_ret_fn = NULL;
-        for (int i = arg_count; i < target_fn->chunk->max_registers; i++) {
+        for (int i = arg_count; i < chunk->max_registers; i++) {
             vm->stack[callee_base + i] = make_null();
         }
         vm->stack_count = needed;
@@ -1329,10 +1301,9 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         LunaJump jump;
         jump.prev = vm->native_jump;
         vm->native_jump = &jump;
-
         VMResult result;
         if (setjmp(jump.env) == 0) {
-            result = vm_execute_loop(vm, target_fn->chunk);
+            result = vm_execute_loop(vm, chunk);
         } else {
             result = VM_EXCEPTION;
         }
@@ -1346,11 +1317,7 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
 
     /* Nested call: use ghost frame to return cleanly */
     {
-        if (IS_BOUND_METHOD(fn_val)) {
-            vm->stack[saved_stack_count] = self_val;
-        } else {
-            vm->stack[saved_stack_count] = fn_val;
-        }
+        vm->stack[saved_stack_count] = is_null(self_val) ? fn_val : self_val;
         for (int i = 0; i < arg_count; i++) {
             vm->stack[saved_stack_count + base_extra + i] = args[i];
         }
@@ -1381,14 +1348,14 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         dummy->leaf_ret_fn = NULL;
 
         CallFrame *frame = &vm->frames[saved_frame_count + 1];
-        frame->chunk = target_fn->chunk;
+        frame->chunk = chunk;
         frame->ip = 0;
         frame->base = callee_base;
         frame->ret_reg = 0;
         frame->nargs = arg_count;
         frame->kw_args = make_null();
-        frame->closure = target_cl;
-        frame->fn = target_fn;
+        frame->closure = callee;
+        frame->fn = callee;
         frame->saved_globals = NULL;
         frame->leaf_ret_ip = 0;
         frame->leaf_ret_chunk = NULL;
@@ -1396,7 +1363,7 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         frame->leaf_ret_reg = 0;
         frame->leaf_ret_closure = NULL;
         frame->leaf_ret_fn = NULL;
-        for (int i = arg_count; i < target_fn->chunk->max_registers; i++) {
+        for (int i = arg_count; i < chunk->max_registers; i++) {
             vm->stack[callee_base + i] = make_null();
         }
         vm->stack_count = needed;
@@ -1405,10 +1372,9 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         LunaJump jump;
         jump.prev = vm->native_jump;
         vm->native_jump = &jump;
-
         VMResult result;
         if (setjmp(jump.env) == 0) {
-            result = vm_execute_loop(vm, target_fn->chunk);
+            result = vm_execute_loop(vm, chunk);
         } else {
             result = VM_EXCEPTION;
         }

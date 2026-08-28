@@ -32,18 +32,18 @@ typedef struct {
     Chunk *chunk;        /* bytecode being executed */
     int ip;              /* index into chunk->code[] */
     int base;            /* stack offset for this frame */
-    ObjClosure *closure; /* closure for upvalue access */
+    Object *closure;     /* opaque callable for upvalue access (type->get_upvalue) */
     int ret_reg;         /* caller's destination register */
     int nargs;           /* number of positional args passed */
     Value kw_args;       /* kwargs dict or make_null() if none */
-    struct ObjFunction *fn; /* the function being executed (for param names) */
+    Object *fn;          /* opaque callable being executed (type->name_of for module naming) */
     struct GlobalEntry **saved_globals; /* non-NULL for module-import frames */
     int leaf_ret_ip;     /* saved IP for leaf-call fast return */
     Chunk *leaf_ret_chunk; /* saved chunk for leaf-call fast return */
     int leaf_ret_base;   /* saved base for leaf-call fast return */
     int leaf_ret_reg;    /* saved return register for leaf-call fast return */
-    ObjClosure        *leaf_ret_closure; /* saved closure for leaf-call fast return */
-    struct ObjFunction *leaf_ret_fn;     /* saved fn     for leaf-call fast return */
+    Object *leaf_ret_closure; /* saved closure for leaf-call fast return */
+    Object *leaf_ret_fn;       /* saved fn     for leaf-call fast return */
 } CallFrame;
 
 /* ---- Global variable entry (chained hash table) ---- */

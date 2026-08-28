@@ -298,17 +298,7 @@ keeps all Luna-specific types and includes `luna/object.h` directly.
   for closure capture). Implement for `function`/`closure`/`bound_method`/`instance`
   in `luna/object.c` and wire into `luna_types[]`. Additive; `vm.c` does not consume
   it yet. Committed `51a5751`.
-- **6b.2 (pending):** `OP_CALL` / `OP_RET` (and `PUSH_FRAME`) stop dereferencing
-  `ObjClosure`/`ObjFunction`. `op_call` dispatches native via `t->call` and bytecode
-  via `t->get_chunk` + `t->get_self` (no `IS_FUNCTION` / `IS_CLOSURE` /
-  `IS_BOUND_METHOD` / `IS_INSTANCE` branches); `op_ret` uses `t->name_of` for module
-  naming; `PUSH_FRAME` reads the chunk through `type->get_chunk`. `CallFrame` keeps
-  its `closure`/`fn` fields (still `ObjClosure*`/`ObjFunction*`) in this step.
-- **6b.3 (pending):** make `CallFrame.closure` / `fn` / `leaf_ret_closure` /
-  `leaf_ret_fn` opaque `Object*`. Update `frame_set_refs` / `frame_release_refs` /
-  `PUSH_FRAME`. Route `OP_GETUPVAL` / `OP_SETUPVAL` through `get_upvalue` /
-  `set_upvalue` and `OP_CLOSURE`'s parent-upvalue capture through `get_upvalue_ref`,
-  so `vm.c` no longer names a concrete callable kind here.
+- **6b.2 (DONE, absorbs 6b.3):** `OP_CALL` / `OP_RET` / `PUSH_FRAME` / `vm_call_value` stop naming a concrete callable kind; `op_call` dispatches native via `t->call` and bytecode via `t->get_chunk` + `t->get_self` (no `IS_FUNCTION` / `IS_CLOSURE` / `IS_BOUND_METHOD` / `IS_INSTANCE`); `op_ret` uses `t->name_of`; `PUSH_FRAME` reads the chunk via `type->get_chunk`. `CallFrame.closure`/`fn`/`leaf_ret_*` are now opaque `Object*`; `frame_set_refs`/`PUSH_FRAME` take `Object*`, `OP_GETUPVAL`/`OP_SETUPVAL` route via `get_upvalue`/`set_upvalue`, `OP_CLOSURE` parent-capture via `get_upvalue_ref`; the `param_count`/`get_param_name` protocol methods decouple the `OP_DEFAULT`/`OP_KWARGS` kwargs path.
 
 #### 6c. Route object lifecycle/formatting through the `Type*` vtable
 - `free_object_container` (core) → `obj->type->free(obj)` (add `free` to `Type`).
@@ -383,10 +373,10 @@ No step skips `make` verification. Each part is committed independently.
 >   - **6b.1 (DONE):** MOP callable/closure protocol (`get_chunk`/`get_self`/`name_of`/
 >     `get_upvalue`/`set_upvalue`/`get_upvalue_ref`) defined + wired for function/closure/
 >     bound_method/instance. Committed `51a5751`.
->   - **6b.2 (pending):** `OP_CALL`/`OP_RET`/`PUSH_FRAME` consume the protocol (no
->     `IS_*` callable branches).
->   - **6b.3 (pending):** `CallFrame.closure`/`fn` → opaque `Object*`; upvalue opcodes route
->     through the protocol.
+>   - **6b.2 (DONE, absorbs 6b.3):** `OP_CALL`/`OP_RET`/`PUSH_FRAME` + `vm_call_value` consume
+>     the protocol (no `IS_*` callable branches); `CallFrame.closure`/`fn`/`leaf_ret_*` are opaque
+>     `Object*`, upvalue opcodes + `OP_CLOSURE` parent-capture route through the protocol, and the
+>     `OP_DEFAULT`/`OP_KWARGS` kwargs path uses `param_count`/`get_param_name`. `make test` passes.
 >   - **6c–6f (pending):** lifecycle/format via vtable (6c), `struct VM` Luna-typed fields +
 >     native typedef (6d), remove `value.h` shim (6e), docs hygiene (6f).
 >   Each sub-step committed + `make test` (77 pass) independently.
