@@ -2,7 +2,7 @@
 # Supports: Linux, macOS, Windows (MinGW)
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto -Isrc -Isrc/stdlib
+CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto -Isrc -Isrc/luna -Isrc/luna/stdlib
 LDFLAGS = -lm -flto
 
 # Platform detection
@@ -22,28 +22,29 @@ else
 endif
 
 # Source files
-SOURCES = src/main.c src/value.c src/ast_free.c \
-    src/luna.c \
-    src/lexer.c src/parser.c src/chunk.c src/vm.c src/compiler.c \
-    src/parse_expr.c src/parse_stmt.c src/parse_decl.c src/fstring.c src/module.c \
-    src/stdlib/stdlib_math.c src/stdlib/stdlib_random.c src/stdlib/stdlib_noise.c \
-    src/stdlib/stdlib_io.c src/stdlib/stdlib_time.c src/stdlib/stdlib_os.c \
-    src/stdlib/stdlib_buffer.c src/stdlib/stdlib_string.c \
-    src/stdlib/stdlib_net.c src/stdlib/stdlib_json.c \
-    src/stdlib/vm_builtins.c
+SOURCES = src/value.c src/chunk.c src/vm.c \
+    src/luna/main.c src/luna/luna.c \
+    src/luna/lexer.c src/luna/parser.c src/luna/compiler.c \
+    src/luna/parse_expr.c src/luna/parse_stmt.c src/luna/parse_decl.c \
+    src/luna/fstring.c src/luna/module.c src/luna/ast_free.c \
+    src/luna/stdlib/stdlib_math.c src/luna/stdlib/stdlib_random.c src/luna/stdlib/stdlib_noise.c \
+    src/luna/stdlib/stdlib_io.c src/luna/stdlib/stdlib_time.c src/luna/stdlib/stdlib_os.c \
+    src/luna/stdlib/stdlib_buffer.c src/luna/stdlib/stdlib_string.c \
+    src/luna/stdlib/stdlib_net.c src/luna/stdlib/stdlib_json.c \
+    src/luna/stdlib/vm_builtins.c
 
 OBJECTS = $(SOURCES:.c=.o)
 LIB_OBJECTS = $(filter-out src/main.o, $(OBJECTS))
 
 # Header files
-HEADERS = src/ast.h src/value.h src/lexer.h src/parser.h src/chunk.h src/vm.h src/opcode.h src/compiler.h \
-    src/luna.h \
-    src/parse_expr.h src/parse_stmt.h src/parse_decl.h src/fstring.h src/module.h \
-    src/stdlib/stdlib_math.h src/stdlib/stdlib_random.h src/stdlib/stdlib_noise.h \
-    src/stdlib/stdlib_io.h src/stdlib/stdlib_time.h src/stdlib/stdlib_os.h \
-    src/stdlib/stdlib_buffer.h src/stdlib/stdlib_string.h \
-    src/stdlib/stdlib_net.h src/stdlib/stdlib_json.h \
-    src/vm_opcodes.inc
+HEADERS = src/value.h src/chunk.h src/vm.h src/opcode.h src/vm_opcodes.inc \
+    src/luna/ast.h src/luna/lexer.h src/luna/parser.h src/luna/compiler.h \
+    src/luna/luna.h src/luna/parse_expr.h src/luna/parse_stmt.h src/luna/parse_decl.h \
+    src/luna/fstring.h src/luna/module.h \
+    src/luna/stdlib/stdlib_math.h src/luna/stdlib/stdlib_random.h src/luna/stdlib/stdlib_noise.h \
+    src/luna/stdlib/stdlib_io.h src/luna/stdlib/stdlib_time.h src/luna/stdlib/stdlib_os.h \
+    src/luna/stdlib/stdlib_buffer.h src/luna/stdlib/stdlib_string.h \
+    src/luna/stdlib/stdlib_net.h src/luna/stdlib/stdlib_json.h
 
 # Default target
 all: $(TARGET)
