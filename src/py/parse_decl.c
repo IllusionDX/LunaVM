@@ -137,6 +137,11 @@ static Decl *parse_class_declaration(Parser *parser) {
         } else if (match(parser, TOK_PASS)) {
             advance(parser);
             expect_newline(parser);
+        } else if (match(parser, TOK_STRING_LITERAL) ||
+                   match(parser, TOK_FSTRING_LITERAL)) {
+            /* docstring: a bare string literal, ignored */
+            advance(parser);
+            expect_newline(parser);
         } else {
             parser_error(parser, "Expected field name or method definition in class body");
             advance(parser); /* skip unknown token to avoid infinite loop */

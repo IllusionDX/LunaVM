@@ -119,22 +119,6 @@ static void skip_comment(Lexer *lexer) {
     }
 }
 
-static void skip_multiline_comment(Lexer *lexer) {
-    /* consume first two quotes (caller already consumed the third) */
-    advance(lexer);
-    advance(lexer);
-    while (!is_at_end(lexer)) {
-        if (peek(lexer) == '"' && peek_next(lexer) == '"' &&
-            lexer->current[2] == '"') {
-            advance(lexer);
-            advance(lexer);
-            advance(lexer);
-            return;
-        }
-        advance(lexer);
-    }
-}
-
 /* ============== Keyword lookup ============== */
 
 typedef struct {
@@ -269,6 +253,54 @@ static Token *scan_string(Lexer *lexer) {
     tok->length = length;
     tok->line = lexer->line;
     tok->column = lexer->column - (int)(lexer->current - start);
+    tok->next = NULL;
+    return tok;
+}
+
+static Token *scan_string_triple(Lexer *lexer, bool is_fstring) {
+    const char *start = lexer->current;
+    char quote = start[0];
+    int start_line = lexer->line;
+    int start_col = lexer->column;
+    /* consume opening triple quote */
+    advance(lexer);
+    advance(lexer);
+    advance(lexer);
+
+    while (!is_at_end(lexer)) {
+        if (peek(lexer) == quote && peek_next(lexer) == quote &&
+            lexer->current[2] == quote) {
+            break;
+        }
+        if (peek(lexer) == '\\') {
+            advance(lexer);
+            if (!is_at_end(lexer)) advance(lexer);
+            continue;
+        }
+        if (peek(lexer) == '\n') lexer->line++;
+        advance(lexer);
+    }
+    if (is_at_end(lexer)) {
+        return make_token(lexer, TOK_ERROR, start, (int)(lexer->current - start));
+    }
+    /* consume closing triple quote */
+    advance(lexer);
+    advance(lexer);
+    advance(lexer);
+
+    int raw_length = (int)(lexer->current - start - 6);
+    int length = 0;
+    char *value = unescape_string_literal(start + 3, raw_length, &length);
+    Token *tok = (Token *)malloc(sizeof(Token));
+    if (!tok) {
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
+    tok->type = is_fstring ? TOK_FSTRING_LITERAL : TOK_STRING_LITERAL;
+    tok->value = value;
+    tok->length = length;
+    tok->line = start_line;
+    tok->column = start_col;
     tok->next = NULL;
     return tok;
 }
@@ -458,13 +490,19 @@ static Token *scan_token(Lexer *lexer) {
     
     if (c == 'f' && (peek_next(lexer) == '"' || peek_next(lexer) == '\'')) {
         advance(lexer); /* consume 'f' */
+        if ((lexer->current[0] == '"' || lexer->current[0] == '\'') &&
+            lexer->current[1] == lexer->current[0] &&
+            lexer->current[2] == lexer->current[0]) {
+            Token *tok = scan_string_triple(lexer, true);
+            if (tok) tok->column -= 1; /* adjust for the 'f' prefix */
+            return tok;
+        }
         return scan_fstring(lexer);
     }
     if (is_alpha(c)) { return scan_identifier(lexer); }
     if (is_digit(c) || (c == '.' && is_digit(peek_next(lexer)))) { return scan_number(lexer); }
-    if (c == '"' && peek_next(lexer) == '"' && lexer->current[2] == '"') {
-        skip_multiline_comment(lexer);
-        return scan_token(lexer);
+    if ((c == '"' || c == '\'') && peek_next(lexer) == c && lexer->current[2] == c) {
+        return scan_string_triple(lexer, false);
     }
     if (c == '"' || c == '\'') { return scan_string(lexer); }
     
