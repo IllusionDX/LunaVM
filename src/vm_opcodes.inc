@@ -557,13 +557,11 @@
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* OP_KW_PREFIX: stash the keyword-argument count (A) and the constant-pool
-       index (Bx) of the static kw-names tuple for the immediately-following
-       OP_CALL.  No frame work; just record state and continue. */
+    /* OP_KW_PREFIX: record kw state, then fall through directly into OP_CALL. */
     op_kw_prefix: {
         vm->next_call_kw_count = A;
         vm->next_call_kw_idx   = (uint16_t)Bx;
-        DECODE; goto *op_labels[OP(instr)];
+        DECODE; goto op_call;
     }
     op_ret: {
         uint8_t ret_reg = RA;
