@@ -172,7 +172,9 @@ static const char *op_mnemonics[] = {
     "LT_JZ_IMM","LE_JZ_IMM","GT_JZ_IMM","GE_JZ_IMM",
     "EQ_JZ_IMM","NE_JZ_IMM",
     "FORLOOP",
-    "FORPREP"
+    "FORPREP",
+    "RAW_EQ",
+    "RAW_NE"
 };
 
 static OpFormat op_formats[] = {
@@ -241,7 +243,9 @@ static OpFormat op_formats[] = {
     /* EQ_JZ_IMM */FMT_ABC,
     /* NE_JZ_IMM */FMT_ABC,
     /* FORLOOP */  FMT_AsBx,
-    /* FORPREP */  FMT_AsBx
+    /* FORPREP */  FMT_AsBx,
+    /* RAW_EQ */   FMT_ABC,
+    /* RAW_NE */   FMT_ABC
 };
 
 void chunk_disassemble(Chunk *chunk) {

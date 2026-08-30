@@ -521,6 +521,38 @@ static Value luna_instance_tostring(struct VM *vm, Value self) { (void)vm; retur
 static uint32_t luna_instance_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int luna_instance_len(struct VM *vm, Value self) { (void)vm; (void)self; return 0; }
 
+/* Python-style class instantiation: `Foo(args...)` allocates an instance and
+ * runs its `__init__` method (inherited methods included) with self bound as
+ * the first argument.  Missing __init__ is a no-op (instance is returned). */
+static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
+    if (!IS_CLASS(self)) return make_null();
+    ObjClass *cls = (ObjClass*)AS_OBJ(self);
+    ObjInstance *inst = new_instance(cls, 4);
+    ObjFunction *fn = NULL;
+    for (int i = cls->method_count - 1; i >= 0; i--)
+        if (cls->methods[i] && strcmp(cls->method_names[i], "__init__") == 0) {
+            fn = cls->methods[i];
+            break;
+        }
+    if (fn) {
+        Value scratch[256];
+        scratch[0] = make_obj((Object*)inst);
+        for (int i = 0; i < argc && i < 255; i++) scratch[i + 1] = args[i];
+        Value out;
+        if (fn->is_native) {
+            if (fn->cfunc) return luna_cfunc_dispatch(vm, fn, scratch, argc + 1);
+            if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
+                if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                return make_null();
+            }
+        } else if (vm_call_value(vm, make_obj((Object*)fn), scratch, argc + 1, &out) != VM_OK) {
+            if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+            return make_null();
+        }
+    }
+    return make_obj((Object*)inst);
+}
+
 /* ============================================================
  * Vector operations (vtable)
  * ============================================================ */
@@ -807,7 +839,7 @@ Type luna_class_type = {
     .neg = luna_default_neg, .cmp = luna_default_cmp,
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .call = py_class_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
 };
 
 Type luna_bound_method_type = {

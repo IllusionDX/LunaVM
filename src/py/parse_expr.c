@@ -256,6 +256,48 @@ static Expr *parse_primary(Parser *parser) {
         return expr;
     }
 
+    case TOK_LAMBDA: {
+        advance(parser);
+        FunctionParam *params = NULL;
+        int param_count = 0;
+        if (match(parser, TOK_LPAREN)) {
+            advance(parser);
+            params = parse_parameters(parser, &param_count);
+            expect(parser, TOK_RPAREN, "Expected ')' after lambda parameters");
+        } else {
+            int cap = 4;
+            params = malloc(sizeof(FunctionParam) * cap);
+            while (match(parser, TOK_IDENTIFIER)) {
+                if (param_count >= cap) {
+                    cap *= 2;
+                    params = realloc(params, sizeof(FunctionParam) * cap);
+                }
+                Token *pname = advance(parser);
+                params[param_count].name = strdup(pname ? pname->value : "");
+                params[param_count].default_value = NULL;
+                if (match(parser, TOK_ASSIGN)) {
+                    advance(parser);
+                    params[param_count].default_value = parse_expression(parser);
+                }
+                param_count++;
+                if (match(parser, TOK_COMMA)) advance(parser);
+                else break;
+            }
+        }
+        expect(parser, TOK_COLON, "Expected ':' after lambda parameters");
+        Expr *body_expr = parse_expression(parser);
+        Stmt *ret = make_stmt(STMT_RETURN, peek(parser)->line);
+        ret->data.return_stmt.value = body_expr;
+        Expr *expr = make_expr(EXPR_FUNCTION, peek(parser)->line);
+        expr->data.function.name = NULL;
+        expr->data.function.params = params;
+        expr->data.function.param_count = param_count;
+        expr->data.function.body = malloc(sizeof(Stmt *));
+        expr->data.function.body[0] = ret;
+        expr->data.function.body_count = 1;
+        return expr;
+    }
+
     case TOK_LPAREN: {
         advance(parser);
 
@@ -590,12 +632,26 @@ static Expr *parse_equality(Parser *parser) {
 
 static Expr *parse_membership(Parser *parser) {
     Expr *left = parse_equality(parser);
-    while (match(parser, TOK_IN)) {
-        Token *op = advance(parser);
+    while (1) {
+        const char *op_str = NULL;
+        if (match(parser, TOK_IN)) {
+            op_str = "in";
+            advance(parser);
+        } else if (match(parser, TOK_IS)) {
+            advance(parser);
+            if (match(parser, TOK_NOT)) {
+                advance(parser);
+                op_str = "is not";
+            } else {
+                op_str = "is";
+            }
+        } else {
+            break;
+        }
         Expr *right = parse_equality(parser);
         Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
         expr->data.binary.left = left;
-        expr->data.binary.operator = strdup(op->value);
+        expr->data.binary.operator = strdup(op_str);
         expr->data.binary.right = right;
         left = expr;
     }

@@ -721,6 +721,8 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         else if (strcmp(op_str, ">") == 0) op = OP_GT;
         else if (strcmp(op_str, ">=") == 0) op = OP_GE;
         else if (strcmp(op_str, "in") == 0) op = OP_IN;
+        else if (strcmp(op_str, "is") == 0) op = OP_RAW_EQ;
+        else if (strcmp(op_str, "is not") == 0) op = OP_RAW_NE;
         else if (strcmp(op_str, "&") == 0) op = OP_BAND;
         else if (strcmp(op_str, "|") == 0) op = OP_BOR;
         else if (strcmp(op_str, "^") == 0) op = OP_BXOR;
@@ -803,9 +805,17 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         /* Detect method call: callee is field access */
         if (callee->kind == EXPR_FIELD_ACCESS) {
             Expr *obj = callee->data.field_access.obj;
-            /* Detect super.method() */
-            bool is_super = (obj->kind == EXPR_IDENTIFIER &&
-                             strcmp(obj->data.identifier.name, "super") == 0);
+            /* Detect super.method() / super().method() */
+            bool is_super = false;
+            if (obj->kind == EXPR_IDENTIFIER &&
+                strcmp(obj->data.identifier.name, "super") == 0) {
+                is_super = true;
+            } else if (obj->kind == EXPR_CALL &&
+                       obj->data.call.callee->kind == EXPR_IDENTIFIER &&
+                       strcmp(obj->data.call.callee->data.identifier.name, "super") == 0 &&
+                       obj->data.call.arg_count == 0) {
+                is_super = true;
+            }
             if (is_super) {
                 int saved_base = c->temp_base;
                 c->temp_base = target + 2 + nargs;
@@ -1309,15 +1319,15 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         }
         c->temp_base = saved_base;
         /*
-         * Always emit OP_INVOKE("_init") — don't peek at runtime state.
-         * OP_INVOKE already handles missing _init (returns nil, see
-         * vm_opcodes.inc strcmp("_init")==0 branch).
+         * Always emit OP_INVOKE("__init__") — don't peek at runtime state.
+         * OP_INVOKE already handles missing __init__ (returns nil, see
+         * luna_invoke "__init__" branch).
          *
-         * Register layout: r_target=instance, r_target+1="_init",
+         * Register layout: r_target=instance, r_target+1="__init__",
          * r_target+2..=args, r_target+nargs+1=scratch (nil return lands here,
          * NOT on the instance).
          */
-        int mk = chunk_add_string(c->vm, c->chunk, "_init");
+        int mk = chunk_add_string(c->vm, c->chunk, "__init__");
         emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
         emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
         break;
@@ -2307,19 +2317,19 @@ static void compile_class(Compiler *c, Decl *decl) {
             .current_class = cls
         };
         scope_enter(&sub);
-        /* self in reg 0, params in 1..n */
-        add_local(&sub, "self", 0);
+        /* params (incl. explicit self) at reg 0..n-1 */
         for (int j = 0; j < m->data.function.param_count; j++) {
-            add_local(&sub, m->data.function.params[j].name, j + 1);
+            add_local(&sub, m->data.function.params[j].name, j);
         }
-        sub.temp_base = m->data.function.param_count + 1;
-        /* Build default-value thunks for method params (index j+1; self is 0). */
+        sub.temp_base = m->data.function.param_count;
+        /* Build default-value thunks for method params (self is a regular param). */
         int mparam = m->data.function.param_count;
-        Value *mdef = malloc(sizeof(Value) * (mparam + 1));
-        for (int j = 0; j <= mparam; j++) mdef[j] = make_null();
+        size_t mdef_bytes = sizeof(Value) * ((mparam > 0) ? (size_t)mparam : (size_t)1);
+        Value *mdef = malloc(mdef_bytes);
+        for (int j = 0; j < mparam; j++) mdef[j] = make_null();
         for (int j = 0; j < mparam; j++) {
             if (m->data.function.params[j].default_value)
-                mdef[j + 1] = compile_default_thunk(c, m->data.function.params[j].default_value);
+                mdef[j] = compile_default_thunk(c, m->data.function.params[j].default_value);
         }
 
         for (int j = 0; j < m->data.function.body_count; j++)
@@ -2350,16 +2360,14 @@ static void compile_class(Compiler *c, Decl *decl) {
         mf->chunk       = malloc(sizeof(Chunk));
         *mf->chunk      = mchunk;
         mf->is_leaf = is_leaf;
-        mf->param_count = m->data.function.param_count + 1; /* +self */
+        mf->param_count = m->data.function.param_count;
         mf->defaults = mdef;
-        mf->default_count = mparam + 1;
+        mf->default_count = mparam;
         mf->param_names = malloc(sizeof(char*) * mf->param_count);
         mf->param_name_objs = malloc(sizeof(ObjString*) * mf->param_count);
-        mf->param_names[0] = strdup("self");
-        mf->param_name_objs[0] = new_string("self", 4);
         for (int j = 0; j < m->data.function.param_count; j++) {
-            mf->param_names[j + 1] = strdup(m->data.function.params[j].name);
-            mf->param_name_objs[j + 1] = new_string(
+            mf->param_names[j] = strdup(m->data.function.params[j].name);
+            mf->param_name_objs[j] = new_string(
                 m->data.function.params[j].name,
                 (int)strlen(m->data.function.params[j].name));
         }

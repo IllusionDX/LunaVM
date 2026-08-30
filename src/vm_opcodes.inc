@@ -295,6 +295,19 @@
         SET_REG_PRIM(RA, do_cmp(vm, _L, _R, OP_NE));
         DECODE; goto *op_labels[OP(instr)];
     }
+    /* OP_RAW_EQ / OP_RAW_NE: Python `is` / `is not` — raw bit/pointer identity.
+     * No deep comparison, no frontend hook: immediates compare by bits, heap
+     * objects by pointer. Matches CPython's identity semantics. */
+    op_raw_eq: {
+        Value _L = RKB, _R = RKC;
+        SET_REG_PRIM(RA, make_bool(_L == _R));
+        DECODE; goto *op_labels[OP(instr)];
+    }
+    op_raw_ne: {
+        Value _L = RKB, _R = RKC;
+        SET_REG_PRIM(RA, make_bool(_L != _R));
+        DECODE; goto *op_labels[OP(instr)];
+    }
     /* 23. OP_LT */
     op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 24. OP_LE */
@@ -1120,7 +1133,7 @@
            present for a super method and lives at callee reg 0. */
         Chunk *chunk = t->get_chunk ? t->get_chunk(callable) : NULL;
         if (chunk) {
-            uint8_t fn_slot = (uint8_t)(self_reg + 1);
+            uint8_t fn_slot = (uint8_t)(ret_reg + 1); /* self sits just before the args */
             SET_REG(fn_slot, self);
             int base = FRAME.base + fn_slot;          /* self at callee reg 0 */
             PUSH_FRAME(AS_OBJ(callable), AS_OBJ(callable), base, ret_reg, nargs + 1, 1);

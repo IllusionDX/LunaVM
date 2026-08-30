@@ -193,6 +193,11 @@ typedef enum {
                        If the range is already exhausted (or step==0) PC += sBx
                        to skip the loop; otherwise fall through into the body. */
 
+    /* ---- Identity (Python `is` / `is not`): raw bit/pointer equality, no
+     * deep comparison (ABC: A = (B is C), result is bool) ---- */
+    OP_RAW_EQ,      /* ABC  : A = (B is C)                                */
+    OP_RAW_NE,      /* ABC  : A = (B is not C)                            */
+
     OP_COUNT        /* sentinel — total opcode count                       */
 } OpCode;
 

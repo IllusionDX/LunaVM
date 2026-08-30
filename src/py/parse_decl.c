@@ -27,11 +27,7 @@ FunctionParam *parse_parameters(Parser *parser, int *count) {
         }
 
         if (!match(parser, TOK_IDENTIFIER)) {
-            if (match(parser, TOK_SELF)) {
-                parser_error(parser, "Expected parameter name, got 'self'");
-            } else {
-                parser_error(parser, "Expected parameter name, got %s", token_type_name(peek(parser)->type));
-            }
+            parser_error(parser, "Expected parameter name, got %s", token_type_name(peek(parser)->type));
             advance(parser);
             if (match(parser, TOK_COMMA)) advance(parser);
             continue;
@@ -104,10 +100,11 @@ static Decl *parse_class_declaration(Parser *parser) {
     Token *name = expect(parser, TOK_IDENTIFIER, "Expected class name");
 
     char *base_class = NULL;
-    if (match(parser, TOK_EXTENDS)) {
+    if (match(parser, TOK_LPAREN)) {
         advance(parser);
         Token *base = expect(parser, TOK_IDENTIFIER, "Expected base class name");
         base_class = strdup(base ? base->value : "");
+        expect(parser, TOK_RPAREN, "Expected ')' after base class");
     }
 
     expect(parser, TOK_COLON, "Expected ':' after class name");
@@ -136,6 +133,9 @@ static Decl *parse_class_declaration(Parser *parser) {
                 skip_type_hint(parser);
             }
             field_count++;
+            expect_newline(parser);
+        } else if (match(parser, TOK_PASS)) {
+            advance(parser);
             expect_newline(parser);
         } else {
             parser_error(parser, "Expected field name or method definition in class body");

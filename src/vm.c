@@ -852,7 +852,9 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_eq_jz_imm,     // 81 OP_EQ_JZ_IMM
         &&op_ne_jz_imm,     // OP_NE_JZ_IMM
         &&op_forloop,       // OP_FORLOOP
-        &&op_forprep        // OP_FORPREP
+        &&op_forprep,       // OP_FORPREP
+        &&op_raw_eq,        // OP_RAW_EQ
+        &&op_raw_ne         // OP_RAW_NE
     };
 
     DECODE;

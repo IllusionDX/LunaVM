@@ -165,6 +165,44 @@ Stmt **parse_block(Parser *parser, int *count) {
 
 /* ============== If statement ============== */
 
+/* Parse the elif/else tail of an if statement. Returns a Stmt** list (1 stmt
+ * for an elif chain folded into nested else-ifs, or the raw else block). */
+static Stmt **parse_if_else_chain(Parser *parser, int *out_count) {
+    if (match(parser, TOK_ELIF)) {
+        advance(parser);
+        Expr *cond = parse_expression(parser);
+        expect(parser, TOK_COLON, "Expected ':' after elif condition");
+        expect_newline(parser);
+
+        int tb = 0;
+        Stmt **t_body = parse_block(parser, &tb);
+        if (match_eol(parser)) advance(parser);
+
+        int eb = 0;
+        Stmt **e_body = parse_if_else_chain(parser, &eb);
+
+        Stmt *s = make_stmt(STMT_IF, peek(parser)->line);
+        s->data.if_stmt.condition = cond;
+        s->data.if_stmt.then_body = t_body;
+        s->data.if_stmt.then_count = tb;
+        s->data.if_stmt.else_body = e_body;
+        s->data.if_stmt.else_count = eb;
+
+        Stmt **out = malloc(sizeof(Stmt *));
+        out[0] = s;
+        *out_count = 1;
+        return out;
+    }
+    if (match(parser, TOK_ELSE)) {
+        advance(parser);
+        expect(parser, TOK_COLON, "Expected ':' after else");
+        expect_newline(parser);
+        return parse_block(parser, out_count);
+    }
+    *out_count = 0;
+    return NULL;
+}
+
 static Stmt *parse_if_statement(Parser *parser) {
     expect(parser, TOK_IF, "Expected 'if'");
     Expr *condition = parse_expression(parser);
@@ -174,17 +212,10 @@ static Stmt *parse_if_statement(Parser *parser) {
     int then_count = 0;
     Stmt **then_body = parse_block(parser, &then_count);
 
-    Stmt **else_body = NULL;
-    int else_count = 0;
-
     if (match_eol(parser)) advance(parser);
 
-    if (match(parser, TOK_ELSE)) {
-        advance(parser);
-        expect(parser, TOK_COLON, "Expected ':' after else");
-        expect_newline(parser);
-        else_body = parse_block(parser, &else_count);
-    }
+    int else_count = 0;
+    Stmt **else_body = parse_if_else_chain(parser, &else_count);
 
     Stmt *stmt = make_stmt(STMT_IF, peek(parser)->line);
     stmt->data.if_stmt.condition = condition;
@@ -287,10 +318,13 @@ static Stmt *parse_switch_statement(Parser *parser) {
     return stmt;
 }
 
-/* ============== Throw statement ============== */
+/* ============== Raise statement ============== */
 
-static Stmt *parse_throw_statement(Parser *parser) {
-    expect(parser, TOK_THROW, "Expected 'throw'");
+static Stmt *parse_raise_statement(Parser *parser) {
+    expect(parser, TOK_RAISE, "Expected 'raise'");
+    if (match_eol(parser) || match(parser, TOK_DEDENT) || match(parser, TOK_EOF)) {
+        parser_error(parser, "raise requires an exception expression (bare re-raise not supported)");
+    }
     Expr *expr = parse_expression(parser);
     Stmt *stmt = make_stmt(STMT_THROW, peek(parser)->line);
     stmt->data.throw_stmt.expression = expr;
@@ -425,7 +459,7 @@ Stmt *parse_statement(Parser *parser) {
     if (match(parser, TOK_WHILE)) return parse_while_statement(parser);
     if (match(parser, TOK_FOR)) return parse_for_statement(parser);
     if (match(parser, TOK_SWITCH)) return parse_switch_statement(parser);
-    if (match(parser, TOK_THROW)) return parse_throw_statement(parser);
+    if (match(parser, TOK_RAISE)) return parse_raise_statement(parser);
     if (match(parser, TOK_TRY)) return parse_try_statement(parser);
     if (match(parser, TOK_RETURN)) return parse_return_statement(parser);
 

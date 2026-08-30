@@ -561,7 +561,7 @@ static bool luna_set_field_slot(VM *vm, Value obj, int slot, Value value) {
 
 /* 6d.5: resolve an invoke callable + self-binding layout. Returns
  * *self_arg = receiver when the callable is a bound method, else null for a
- * static/module function. *callable = null signals an optional-_init no-op. */
+ * static/module function. *callable = null signals an optional-__init__ no-op. */
 static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *callable) {
     *callable = make_null();
     if (!IS_OBJ(obj) || !AS_OBJ(obj) || !IS_STRING(name)) {
@@ -610,7 +610,7 @@ static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *c
                     }
                 }
             }
-            if (k && strcmp(mname, "_init") == 0) return true;
+            if (k && strcmp(mname, "__init__") == 0) return true;
             char buf[256];
             snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
             vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
@@ -624,7 +624,7 @@ static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *c
                 *callable = make_obj((Object *)method);
                 return true;
             }
-            if (klass && strcmp(mname, "_init") == 0) return true;
+            if (klass && strcmp(mname, "__init__") == 0) return true;
             char buf[256];
             snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
             vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
@@ -1067,6 +1067,16 @@ static ObjClass *luna_register_exception(VM *vm, const char *name, ObjClass *bas
     return cls;
 }
 
+/* Native __init__ so `RuntimeError("msg")` (and any subclass) builds a proper
+ * exception instance with its message field set from the first argument. */
+static Value py_exc_init(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (n < 1 || !IS_INSTANCE(args[0])) return make_null();
+    instance_set_field((ObjInstance*)AS_OBJ(args[0]), "message",
+                       (n > 1) ? args[1] : make_null());
+    return make_null();
+}
+
 void luna_init_vm(VM *vm) {
     vm->time_start_us = luna_time_monotonic_us();
     vm_register_builtins(vm);
@@ -1080,6 +1090,17 @@ void luna_init_vm(VM *vm) {
     vm->value_error_class = luna_register_exception(vm, "ValueError", vm->exception_class);
     vm->runtime_error_class = luna_register_exception(vm, "RuntimeError", vm->exception_class);
     vm->argument_error_class = luna_register_exception(vm, "ArgumentError", vm->exception_class);
+
+    {
+        ObjClass *exc_classes[] = {
+            vm->exception_class, vm->type_error_class, vm->key_error_class,
+            vm->index_error_class, vm->attribute_error_class,
+            vm->value_error_class, vm->runtime_error_class,
+            vm->argument_error_class
+        };
+        for (size_t i = 0; i < sizeof(exc_classes) / sizeof(exc_classes[0]); i++)
+            class_add_native_method(exc_classes[i], "__init__", py_exc_init);
+    }
 
     vm->module_cache = new_dict();
     vm_register_math_module(vm);
