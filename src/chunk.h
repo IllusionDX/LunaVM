@@ -57,8 +57,8 @@ int  chunk_emit_AsBx(Chunk *chunk, int line, OpCode op, uint8_t a, int32_t sbx);
 
 /* ---- Constant pool ---- */
 int  chunk_add_const(Chunk *chunk, Value value);
-int  chunk_add_string(Chunk *chunk, const char *cstr);
-int  chunk_add_string_len(Chunk *chunk, const char *chars, int length);
+int  chunk_add_string(struct VM *vm, Chunk *chunk, const char *cstr);
+int  chunk_add_string_len(struct VM *vm, Chunk *chunk, const char *chars, int length);
 
 /* ---- Patch helpers (for back-patching jump targets) ---- */
 void chunk_patch_sBx(Chunk *chunk, int at, int32_t sbx);

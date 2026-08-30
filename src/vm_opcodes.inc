@@ -1,4 +1,20 @@
 
+    /* Apply a Luna function's default parameters / keyword remapping after the
+       callee frame has been pushed.  kw_names is a List of names for keyword
+       calls, or make_null() for positional-only calls (OP_INVOKE / OP_SUPER),
+       where only default-argument filling matters.  The MOP early-returns when
+       there is nothing to do. */
+#define APPLY_DEFAULTS(fn_val, nargs, kw_names) do { \
+        Type *_t = (IS_OBJ(fn_val) && AS_OBJ(fn_val)->type) ? AS_OBJ(fn_val)->type : NULL; \
+        if (_t && _t->bind_keyword_arguments) { \
+            if (!_t->bind_keyword_arguments(vm, (fn_val), (uint8_t)(nargs), (kw_names))) \
+                goto op_throw; \
+        } \
+        /* A default thunk may have realloc'd vm->stack (nested call), leaving the
+           loop's cached REG_BASE stale.  Refresh it against the current frame. */ \
+        REG_BASE = vm->stack + FRAME.base; \
+    } while (0)
+
     /* ---- Constants & Loading ---- */
     /* 0.  OP_LOADK */
     op_loadk:
@@ -42,29 +58,12 @@
     op_add: {
         Value _L = RKB;
         Value _R = RKC;
-        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
-            int64_t res = (int64_t)AS_INT(_L) + (int64_t)AS_INT(_R);
-            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
-                REG(RA) = INT_VAL((int32_t)res);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-        }
         Value _v = do_arith(vm, _L, _R, OP_ADD);
-        if (IS_NIL(_v) && IS_LIST(_L) && !IS_LIST(_R)) {
-            const char *tn = val_type_name(_R);
-            char buf[256];
-            snprintf(buf, sizeof(buf), "can only concatenate list (not \"%s\") to list", tn);
-            _exc = make_exception_instance(vm, vm->type_error_class, buf);
-            goto op_throw;
-        }
         if (IS_NIL(_v)) {
-            const char *ln = val_type_name(_L), *rn = val_type_name(_R);
-            char buf[128];
-            snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and '%s'", ln, rn);
-            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            _exc = vm->last_exception;
+            if (IS_NIL(_exc)) { _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, "unsupported addition"); }
             goto op_throw;
         }
-        if (LUNA_UNLIKELY(!IS_NIL(_exc))) goto op_throw;
         SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -73,172 +72,121 @@
     op_sub: {
         Value _L = RKB;
         Value _R = RKC;
-        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
-            int64_t res = (int64_t)AS_INT(_L) - (int64_t)AS_INT(_R);
-            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
-                REG(RA) = INT_VAL((int32_t)res);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-        }
         Value _v = do_arith(vm, _L, _R, OP_SUB);
         if (IS_NIL(_v)) {
-            const char *ln = val_type_name(_L), *rn = val_type_name(_R);
-            char buf[128];
-            snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and '%s'", ln, rn);
-            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            _exc = vm->last_exception;
+            if (IS_NIL(_exc)) { _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, "unsupported subtraction"); }
             goto op_throw;
         }
-        if (LUNA_UNLIKELY(!IS_NIL(_exc))) goto op_throw;
         SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 9.  OP_MUL */
     op_mul: {
         Value _L = RKB, _R = RKC;
-        if (is_int_type(_L) && is_int_type(_R)) {
-            SET_REG(RA, make_int_result(to_i64(_L) * to_i64(_R)));
-        } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
-            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
-        } else {
-            Value _v = do_arith(vm, _L, _R, OP_MUL);
-            if (IS_NIL(_v)) {
-                const char *ln = val_type_name(_L), *rn = val_type_name(_R);
-                char buf[128];
-                snprintf(buf, sizeof(buf), "unsupported operand type(s) for *: '%s' and '%s'", ln, rn);
-                _exc = make_exception_instance(vm, vm->type_error_class, buf);
-                goto op_throw;
-            }
-            SET_REG(RA, _v);
-        }
+        Value _v = do_arith(vm, _L, _R, OP_MUL);
+        if (IS_NIL(_v)) { _exc = vm->last_exception; if (IS_NIL(_exc)) _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, "unsupported multiplication"); goto op_throw; }
+        SET_REG(RA, _v);
         CHECK_GC; DECODE; goto *op_labels[OP(instr)];
     }
     
     /* 10. OP_DIV */
     op_div: {
         Value _L = RKB, _R = RKC;
-        if (is_int_type(_L) && is_int_type(_R)) {
-            int64_t ri = to_i64(_R);
-            if (!ri) { _exc = make_exception_instance(vm, vm->runtime_error_class, "division by zero"); goto op_throw; }
-            SET_REG(RA, make_int_result(to_i64(_L) / ri));
-        } else if (is_num(_L) && is_num(_R)) {
-            double r = to_f64(_R);
-            if (r == 0.0) {
-                double l = to_f64(_L);
-                if (l == 0.0) SET_REG_PRIM(RA, make_double(0.0/0.0));
-                else if (l > 0.0) SET_REG_PRIM(RA, make_pos_inf());
-                else SET_REG_PRIM(RA, make_neg_inf());
-            } else {
-                SET_REG_PRIM(RA, make_double(to_f64(_L) / r));
-            }
-        } else {
-            const char *ln = val_type_name(_L), *rn = val_type_name(_R);
-            char buf[128];
-            snprintf(buf, sizeof(buf), "unsupported operand type(s) for /: '%s' and '%s'", ln, rn);
-            _exc = make_exception_instance(vm, vm->type_error_class, buf);
-            goto op_throw;
-        }
+        Value _v = do_arith(vm, _L, _R, OP_DIV);
+        if (IS_NIL(_v)) { _exc = vm->last_exception; if (IS_NIL(_exc)) _exc = vm_make_exception(vm, VM_EXCEPTION_RUNTIME, "unsupported division"); goto op_throw; }
+        SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
     }
     
     /* 11. OP_MOD */
     op_mod: {
         Value _L = RKB, _R = RKC;
-        if (is_int_type(_L) && is_int_type(_R)) {
-            int64_t ri = to_i64(_R);
-            if (!ri) { _exc = make_exception_instance(vm, vm->exception_class, "mod/0"); goto op_throw; }
-            SET_REG(RA, make_int_result(to_i64(_L) % ri));
-        } else if (is_num(_L) && is_num(_R)) {
-            double r = to_f64(_R);
-            if (r == 0.0) {
-                SET_REG_PRIM(RA, make_double(0.0/0.0));
-            } else {
-                SET_REG_PRIM(RA, make_double(fmod(to_f64(_L), r)));
-            }
-        } else {
-            const char *ln = val_type_name(_L), *rn = val_type_name(_R);
-            char buf[128];
-            snprintf(buf, sizeof(buf), "unsupported operand type(s) for %%: '%s' and '%s'", ln, rn);
-            _exc = make_exception_instance(vm, vm->type_error_class, buf);
-            goto op_throw;
-        }
+        Value _v = do_arith(vm, _L, _R, OP_MOD);
+        if (IS_NIL(_v)) { _exc = vm->last_exception; if (IS_NIL(_exc)) _exc = vm_make_exception(vm, VM_EXCEPTION_RUNTIME, "unsupported modulo"); goto op_throw; }
+        SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 12. OP_NEG */
     op_neg: {
         Value v = REG(RB);
-        if (is_int_type(v)) { SET_REG(RA, make_int_result(-to_i64(v))); DECODE; goto *op_labels[OP(instr)]; }
-        if (IS_DOUBLE(v)) { SET_REG_PRIM(RA, make_double(-AS_DOUBLE(v))); DECODE; goto *op_labels[OP(instr)]; }
+        Value result = make_null();
+        if (vm_unary(vm, VM_OP_NEG, v, &result)) {
+            SET_REG(RA, result);
+            DECODE; goto *op_labels[OP(instr)];
+        }
         char buf[128];
         snprintf(buf, sizeof(buf), "bad operand type for unary -: '%s'", val_type_name(v));
-        _exc = make_exception_instance(vm, vm->type_error_class, buf);
+        _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
         goto op_throw;
     }
 
     /* 13. OP_BAND */
-    op_band: { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for &: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) & to_i64(_R)));  DECODE; goto *op_labels[OP(instr)]; }
+    op_band: { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BAND); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise and");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 14. OP_BOR */
-    op_bor:  { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for |: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) | to_i64(_R)));  DECODE; goto *op_labels[OP(instr)]; }
+    op_bor:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BOR); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise or");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 15. OP_BXOR */
-    op_bxor: { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for ^: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) ^ to_i64(_R)));  DECODE; goto *op_labels[OP(instr)]; }
+    op_bxor: { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BXOR); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise xor");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 16. OP_BNOT */
-    op_bnot: { Value v=REG(RB); if(!is_int_type(v)){_exc=make_exception_instance(vm,vm->type_error_class,"bad operand type for unary ~: non-integer");goto op_throw;} SET_REG(RA, make_int_result(~to_i64(v))); DECODE; goto *op_labels[OP(instr)]; }
+    op_bnot: { Value _v=make_null(); if(!vm_unary(vm,VM_OP_BNOT,REG(RB),&_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise not");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 17. OP_SHL */
-    op_shl:  { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for <<: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) << to_i64(_R))); DECODE; goto *op_labels[OP(instr)]; }
+    op_shl:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_SHL); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift left");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 18. OP_SHR */
-    op_shr:  { Value _L=REG(RB),_R=REG(RC); if(!is_int_type(_L)||!is_int_type(_R)){_exc=make_exception_instance(vm,vm->type_error_class,"unsupported operand type(s) for >>: non-integers");goto op_throw;} SET_REG(RA, make_int_result(to_i64(_L) >> to_i64(_R))); DECODE; goto *op_labels[OP(instr)]; }
+    op_shr:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_SHR); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift right");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
 
     /* ---- Arithmetic with constant pool operand ---- */
     /* OP_ADDK */
     op_addk: {
         Value _L = REG(RB);
         Value _R = CONST(RC);
-        if (is_int_type(_L) && is_int_type(_R)) {
-            SET_REG(RA, make_int_result(to_i64(_L) + to_i64(_R)));
-        } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
-            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
-        } else {
-            Value _v = do_arith(vm, _L, _R, OP_ADD);
-            if (IS_NIL(_v) && IS_LIST(_L) && !IS_LIST(_R)) {
-                const char *tn = val_type_name(_R);
-                char buf[256];
-                snprintf(buf, sizeof(buf), "can only concatenate list (not \"%s\") to list", tn);
-                _exc = make_exception_instance(vm, vm->type_error_class, buf);
-                goto op_throw;
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            int64_t res = (int64_t)AS_INT(_L) + (int64_t)AS_INT(_R);
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                SET_REG(RA, INT_VAL((int32_t)res));
+                CHECK_GC; DECODE; goto *op_labels[OP(instr)];
             }
-            if (IS_NIL(_v)) {
-                const char *ln = val_type_name(_L), *rn = val_type_name(_R);
-                char buf[128];
-                snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and '%s'", ln, rn);
-                _exc = make_exception_instance(vm, vm->type_error_class, buf);
-                goto op_throw;
-            }
-            SET_REG(RA, _v);
         }
-        CHECK_GC;
-        DECODE; goto *op_labels[OP(instr)];
+        if (LUNA_LIKELY(IS_DOUBLE(_L) && IS_DOUBLE(_R))) {
+            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
+            CHECK_GC; DECODE; goto *op_labels[OP(instr)];
+        }
+        Value _v = do_arith(vm, _L, _R, OP_ADD);
+        if (IS_NIL(_v)) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and '%s'",
+                     val_type_name(_L), val_type_name(_R));
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
+            goto op_throw;
+        }
+        SET_REG(RA, _v);
+        CHECK_GC; DECODE; goto *op_labels[OP(instr)];
     }
     /* OP_MULK */
     op_mulk: {
         Value _L = REG(RB);
         Value _R = CONST(RC);
-        if (is_int_type(_L) && is_int_type(_R)) {
-            SET_REG(RA, make_int_result(to_i64(_L) * to_i64(_R)));
-        } else if (IS_DOUBLE(_L) && IS_DOUBLE(_R)) {
-            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
-        } else {
-            Value _v = do_arith(vm, _L, _R, OP_MUL);
-            if (IS_NIL(_v)) {
-                const char *ln = val_type_name(_L), *rn = val_type_name(_R);
-                char buf[128];
-                snprintf(buf, sizeof(buf), "unsupported operand type(s) for *: '%s' and '%s'", ln, rn);
-                _exc = make_exception_instance(vm, vm->type_error_class, buf);
-                goto op_throw;
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            int64_t res = (int64_t)AS_INT(_L) * (int64_t)AS_INT(_R);
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                SET_REG(RA, INT_VAL((int32_t)res));
+                CHECK_GC; DECODE; goto *op_labels[OP(instr)];
             }
-            SET_REG(RA, _v);
         }
-        CHECK_GC;
-        DECODE; goto *op_labels[OP(instr)];
+        if (LUNA_LIKELY(IS_DOUBLE(_L) && IS_DOUBLE(_R))) {
+            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
+            CHECK_GC; DECODE; goto *op_labels[OP(instr)];
+        }
+        Value _v = do_arith(vm, _L, _R, OP_MUL);
+        if (IS_NIL(_v)) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for *: '%s' and '%s'",
+                     val_type_name(_L), val_type_name(_R));
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
+            goto op_throw;
+        }
+        SET_REG(RA, _v);
+        CHECK_GC; DECODE; goto *op_labels[OP(instr)];
     }
 
     /* ---- Integer-immediate arithmetic (ABC: A = A op (int8_t)B) ---- */
@@ -249,23 +197,17 @@
             int64_t res = (int64_t)AS_INT(v) + (int8_t)RB;
             if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
                 REG(RA) = INT_VAL((int32_t)res);
-            } else {
-                REG(RA) = make_int64(res);
+                DECODE; goto *op_labels[OP(instr)];
             }
-        } else {
-            Value _v = do_arith(vm, v, make_int((int8_t)RB), OP_ADD);
-            if (IS_NIL(_v)) {
-                if (IS_LIST(v)) {
-                    _exc = make_exception_instance(vm, vm->type_error_class, "can only concatenate list (not \"int\") to list");
-                } else {
-                    char buf[128];
-                    snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and 'int'", val_type_name(v));
-                    _exc = make_exception_instance(vm, vm->type_error_class, buf);
-                }
-                goto op_throw;
-            }
-            REG(RA) = _v;
         }
+        Value _v = do_arith(vm, v, make_int((int8_t)RB), OP_ADD);
+        if (IS_NIL(_v)) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and 'int'", val_type_name(v));
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
+            goto op_throw;
+        }
+        REG(RA) = _v;
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -276,41 +218,42 @@
             int64_t res = (int64_t)AS_INT(v) - (int8_t)RB;
             if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
                 REG(RA) = INT_VAL((int32_t)res);
-            } else {
-                REG(RA) = make_int64(res);
+                DECODE; goto *op_labels[OP(instr)];
             }
-        } else {
-            Value _v = do_arith(vm, v, make_int((int8_t)RB), OP_SUB);
-            if (IS_NIL(_v)) {
-                char buf[128];
-                snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and 'int'", val_type_name(v));
-                _exc = make_exception_instance(vm, vm->type_error_class, buf);
-                goto op_throw;
-            }
-            REG(RA) = _v;
         }
+        Value _v = do_arith(vm, v, make_int((int8_t)RB), OP_SUB);
+        if (IS_NIL(_v)) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and 'int'", val_type_name(v));
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
+            goto op_throw;
+        }
+        REG(RA) = _v;
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* OP_ADDI_FROM */
     op_addi_from: {
         Value v = REG(RB);
-        if (is_int_type(v)) {
-            Value _r = make_int_result(to_i64(v) + (int8_t)C);
-            REG(RA) = _r;
-        } else if (IS_DOUBLE(v)) {
+        if (LUNA_LIKELY(IS_INT(v))) {
+            int64_t res = (int64_t)AS_INT(v) + (int8_t)C;
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                REG(RA) = INT_VAL((int32_t)res);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+        }
+        if (LUNA_LIKELY(IS_DOUBLE(v))) {
             REG(RA) = make_double(AS_DOUBLE(v) + (double)(int8_t)C);
-        } else if (IS_LIST(v)) {
-            _exc = make_exception_instance(vm, vm->type_error_class, "can only concatenate list (not \"int\") to list");
-            goto op_throw;
-        } else if (IS_STRING(v)) {
-            REG(RA) = do_arith(vm, v, make_int((int8_t)C), OP_ADD);
-        } else {
+            DECODE; goto *op_labels[OP(instr)];
+        }
+        Value _v = do_arith(vm, v, make_int((int8_t)C), OP_ADD);
+        if (IS_NIL(_v)) {
             char buf[128];
             snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and 'int'", val_type_name(v));
-            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
             goto op_throw;
         }
+        REG(RA) = _v;
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -324,16 +267,18 @@
                 DECODE; goto *op_labels[OP(instr)];
             }
         }
-        if (IS_DOUBLE(v)) {
+        if (LUNA_LIKELY(IS_DOUBLE(v))) {
             REG(RA) = make_double(AS_DOUBLE(v) - (double)(int8_t)C);
-        } else if (is_int_type(v)) {
-            SET_REG(RA, make_int_result(to_i64(v) - (int8_t)C));
-        } else {
+            DECODE; goto *op_labels[OP(instr)];
+        }
+        Value _v = do_arith(vm, v, make_int((int8_t)C), OP_SUB);
+        if (IS_NIL(_v)) {
             char buf[128];
             snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and 'int'", val_type_name(v));
-            _exc = make_exception_instance(vm, vm->type_error_class, buf);
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
             goto op_throw;
         }
+        REG(RA) = _v;
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -341,35 +286,29 @@
     /* 21. OP_EQ */
     op_eq: {
         Value _L = RKB, _R = RKC;
-        SET_REG_PRIM(RA, (_L == _R) ? TRUE_VAL : (IS_STRING(_L) && IS_STRING(_R)) ? FALSE_VAL : do_cmp(vm, _L, _R, OP_EQ));
+        SET_REG_PRIM(RA, do_cmp(vm, _L, _R, OP_EQ));
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 22. OP_NE */
     op_ne: {
         Value _L = RKB, _R = RKC;
-        SET_REG_PRIM(RA, (_L == _R) ? FALSE_VAL : (IS_STRING(_L) && IS_STRING(_R)) ? TRUE_VAL : do_cmp(vm, _L, _R, OP_NE));
+        SET_REG_PRIM(RA, do_cmp(vm, _L, _R, OP_NE));
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 23. OP_LT */
-    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)< to_i64(_R)):do_cmp(vm, _L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
+    op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 24. OP_LE */
-    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)<=to_i64(_R)):do_cmp(vm, _L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
+    op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
     /* 25. OP_GT */
-    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)> to_i64(_R)):do_cmp(vm, _L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
+    op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
     /* 26. OP_GE */
-    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,is_int_type(_L)&&is_int_type(_R)?make_bool(to_i64(_L)>=to_i64(_R)):do_cmp(vm, _L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
+    op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
     /* 27. OP_IN */
     op_in: {
         Value needle = RKB;
         Value haystack = RKC;
         bool found = false;
-        if (IS_LIST(haystack)) {
-            found = list_contains((ObjList*)AS_OBJ(haystack), needle);
-        } else if (IS_DICT(haystack)) {
-            found = dict_has((ObjDict*)AS_OBJ(haystack), needle);
-        } else if (IS_STRING(haystack) && IS_STRING(needle)) {
-            found = strstr(((ObjString*)AS_OBJ(haystack))->chars, ((ObjString*)AS_OBJ(needle))->chars) != NULL;
-        }
+        vm_contains(vm, needle, haystack, &found);
         SET_REG_PRIM(RA, make_bool(found));
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -453,8 +392,6 @@
         bool _c;
         if (_L == _R) {
             _c = true;
-        } else if (IS_STRING(_L) && IS_STRING(_R)) {
-            _c = false;
         } else {
             _c = is_truthy(do_cmp(vm, _L, _R, OP_EQ));
         }
@@ -466,8 +403,6 @@
         bool _c;
         if (_L == _R) {
             _c = false;
-        } else if (IS_STRING(_L) && IS_STRING(_R)) {
-            _c = true;
         } else {
             _c = is_truthy(do_cmp(vm, _L, _R, OP_NE));
         }
@@ -571,9 +506,19 @@
         /* MOP guard: only objects with a `call` vtable are callable. The vtable is
            the single source of truth for "is this invokable?". */
         if (!t || !t->call) {
-            _exc = make_exception_instance(vm, vm->type_error_class, "attempt to call non-function");
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, "attempt to call non-function");
             goto op_throw;
         }
+
+        /* Keyword-prefix state, set by the preceding OP_KW_PREFIX (if any) and
+           reset immediately so the positional fast path pays only a compare. */
+        uint16_t kw_idx   = vm->next_call_kw_idx;
+        uint8_t  kw_count = vm->next_call_kw_count;
+        /* Capture the kw-names constant now: PUSH_FRAME switches CHUNK to the
+           callee, so the index is only valid against the caller's constant pool. */
+        Value kw_names = (kw_idx != 0) ? CONST(kw_idx) : make_null();
+        vm->next_call_kw_idx   = 0;
+        vm->next_call_kw_count = 0;
 
         /* Bytecode callables expose their chunk via the vtable; native callables
            return NULL and run synchronously through `call`. The core never names a
@@ -586,15 +531,38 @@
             int extra = 0;
             if (!is_null(self)) { SET_REG(fn_reg, self); base = FRAME.base + fn_reg; argc = nargs + 1; extra = 1; }
             PUSH_FRAME(AS_OBJ(fn_val), AS_OBJ(fn_val), base, ret_reg, argc, extra);
+            /* Frontend-owned mapping: remap keyword args into the callee's
+               parameter registers and apply defaults (runs after PUSH_FRAME, on
+               the callee frame).  Called for every bytecode call; the MOP
+               early-returns when there is nothing to do. */
+            APPLY_DEFAULTS(fn_val, nargs, kw_names);
             DECODE; goto *op_labels[OP(instr)];
         }
 
-        /* Native callable: gather args from the stack and dispatch via the vtable.
-           Exceptions propagate via the vtable (longjmp, like op_throw). */
+        /* Native callable: gather positional args (skip the trailing kwarg values
+           a keyword prefix may have pushed) and dispatch via the vtable.  The vtable
+           prepends `self` for bound methods, so we never do it here. */
+        int positional = (int)nargs - (int)kw_count;
+        if (positional < 0) positional = 0;
         Value scratch[256];
-        for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-        Value result = t->call(vm, fn_val, scratch, nargs);
+        for (int i = 0; i < positional; i++) scratch[i] = REG(fn_reg + 1 + i);
+        Value result;
+        /* Dispatch through vm_call_value so a native function that throws surfaces
+           as a catchable exception instead of being swallowed. */
+        if (vm_call_value(vm, fn_val, scratch, positional, &result) == VM_EXCEPTION) {
+            _exc = vm->last_exception;
+            goto op_throw;
+        }
         SET_REG(ret_reg, result);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* OP_KW_PREFIX: stash the keyword-argument count (A) and the constant-pool
+       index (Bx) of the static kw-names tuple for the immediately-following
+       OP_CALL.  No frame work; just record state and continue. */
+    op_kw_prefix: {
+        vm->next_call_kw_count = A;
+        vm->next_call_kw_idx   = (uint16_t)Bx;
         DECODE; goto *op_labels[OP(instr)];
     }
     op_ret: {
@@ -637,25 +605,7 @@
         CallFrame *callee = &FRAME;
         int old_base = callee->base;
         
-        callee->kw_args = make_null();
-        if (LUNA_UNLIKELY(vm->open_upvalues)) close_upvalues(vm, vm->frame_count);
-
-        /* Module import cleanup: capture exports before destroying globals */
-        if (callee->saved_globals) {
-            char *captured_name = (callee->fn && callee->fn->type->name_of)
-                ? strdup(callee->fn->type->name_of(make_obj(callee->fn)))
-                : strdup("<module>");
-            
-            ObjDict *exports = vm_globals_to_dict(vm);
-            vm_globals_restore(vm, callee->saved_globals);
-            callee->saved_globals = NULL;
-            ObjModule *mod = new_module(captured_name);
-            mod->exports = exports;
-            Value module_val = make_obj((Object*)mod);
-            dict_set(vm->module_cache, make_obj((Object*)new_string(captured_name, (int)strlen(captured_name))), module_val);
-            retval = module_val;
-            free(captured_name);
-        }
+        if (LUNA_LIKELY(vm->open_upvalues)) close_upvalues(vm, vm->frame_count);
 
         vm_pop_try_frames(vm, vm->frame_count - 1);
         vm->frame_count--;
@@ -682,26 +632,21 @@
         uint8_t k = B;
         uint8_t dst = RA;
         Value fn_val = CONST(k);
-        if (!IS_FUNCTION(fn_val)) {
-            
-            _exc = make_exception_instance(vm, vm->exception_class, "CLOSURE needs function constant");
+        /* Closure construction is frontend-owned: the core supplies the function
+           constant and the current frame; the frontend builds the closure and
+           captures upvalues (it owns the closure layout). */
+        if (!vm->frontend || !vm->frontend->new_closure) {
+            _exc = vm_make_exception(vm, VM_EXCEPTION_GENERIC, "CLOSURE not supported by frontend");
             goto op_throw;
         }
-        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
-        ObjClosure *cl = new_closure(fn);
-        for (int i = 0; i < fn->upvalue_count; i++) {
-            uint8_t is_local = fn->upvalue_descriptors[i].is_local;
-            uint8_t index    = fn->upvalue_descriptors[i].index;
-            if (is_local) {
-                cl->upvalues[i] = capture_upvalue(vm, FRAME.base + index);
-            } else {
-                Value uvref = (FRAME.closure && FRAME.closure->type->get_upvalue_ref)
-                    ? FRAME.closure->type->get_upvalue_ref(make_obj(FRAME.closure), index)
-                    : make_null();
-                cl->upvalues[i] = is_null(uvref) ? NULL : (ObjUpvalue*)AS_OBJ(uvref);
-            }
+        Object *cl = vm->frontend->new_closure(vm, fn_val);
+        if (!cl) {
+            _exc = (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception))
+                   ? vm->last_exception
+                   : vm_make_exception(vm, VM_EXCEPTION_GENERIC, "CLOSURE failed");
+            goto op_throw;
         }
-        SET_REG(dst, make_obj((Object*)cl));
+        SET_REG(dst, make_obj(cl));
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -764,59 +709,34 @@
 
     /* 41. OP_NEW */
     op_new: {
-        ObjString *cls_str = KSTROBJ(BX);
-        if (!cls_str) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
-        const char *cls_name = cls_str->chars;
-        Value cls_val;
-        char *dot = strchr(cls_name, '.');
-        if (dot) {
-            char mod_name[128];
-            int len = (int)(dot - cls_name);
-            if (len >= 128) len = 127;
-            memcpy(mod_name, cls_name, len);
-            mod_name[len] = '\0';
-            Value mod_val;
-            if (!vm_get_global(vm, mod_name, &mod_val) || !IS_MODULE(mod_val)) {
-                
-                char buf[256];
-                snprintf(buf, sizeof(buf), "module '%s' not found for new", mod_name);
-                _exc = make_exception_instance(vm, vm->exception_class, buf);
-                goto op_throw;
-            }
-            ObjModule *mod = (ObjModule*)AS_OBJ(mod_val);
-            ObjString *field = new_string(dot + 1, (int)strlen(dot + 1));
-            cls_val = dict_get(mod->exports, make_obj((Object*)field));
-            if (!IS_CLASS(cls_val)) {
-                
-                char buf[256];
-                snprintf(buf, sizeof(buf), "class '%s' not found in module '%s'", dot + 1, mod_name);
-                _exc = make_exception_instance(vm, vm->exception_class, buf);
-                goto op_throw;
-            }
-        } else {
-            if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
-                
-                char buf[256];
-                snprintf(buf, sizeof(buf), "class '%s' not found for new", cls_name);
-                _exc = make_exception_instance(vm, vm->exception_class, buf);
-                goto op_throw;
-            }
+        Value _inst;
+        if (!vm_construct(vm, CONST(BX), &_inst)) {
+            _exc = vm->last_exception;
+            goto op_throw;
         }
-        ObjClass *cls = (ObjClass*)AS_OBJ(cls_val);
-        ObjInstance *new_inst = new_instance(cls, 4);
-        SET_REG(RA, make_obj((Object*)new_inst));
+        SET_REG(RA, _inst);
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 42. OP_NEWDICT */
     op_newdict: {
-        SET_REG(RA, make_obj((Object*)new_dict()));
+        Value _dict;
+        if (!vm_new_dict(vm, &_dict)) {
+            _exc = vm->last_exception;
+            goto op_throw;
+        }
+        SET_REG(RA, _dict);
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
     /* 43. OP_NEWLIST */
     op_newlist: {
-        SET_REG(RA, make_obj((Object*)new_list((int)Bx)));
+        Value _list;
+        if (!vm_new_list(vm, (int)Bx, &_list)) {
+            _exc = vm->last_exception;
+            goto op_throw;
+        }
+        SET_REG(RA, _list);
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -824,834 +744,146 @@
     op_listappend: {
         Value lst = REG(RA);
         Value val = REG(RB);
-        if (IS_LIST(lst)) {
-            list_add((ObjList*)AS_OBJ(lst), val);
-            gc_write_barrier(lst, val);
-        } else {
-            
-            _exc = make_exception_instance(vm, vm->exception_class, "listappend on non-list");
+        if (!vm_list_append(vm, lst, val)) {
+            _exc = vm->last_exception;
             goto op_throw;
         }
+        gc_write_barrier(lst, val);
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 45. OP_GETITER */
     op_getiter: {
-        Value iter = REG(RB);
-        if (IS_DICT(iter)) {
-            ObjDict *dict = (ObjDict*)AS_OBJ(iter);
-            ObjList *keys = new_list(dict->entry_count);
-            if (dict->entries == NULL) {
-                for (int i = 0; i < dict->entry_count; i++)
-                    list_add(keys, dict->inline_entries[i].key);
-            } else {
-                for (int i = 0; i < dict->order_count; i++) {
-                    int idx = dict->order[i];
-                    if (dict->entries[idx].key != EMPTY_VAL && dict->entries[idx].key != TOMBSTONE_VAL)
-                        list_add(keys, dict->entries[idx].key);
-                }
-            }
-            SET_REG(RA, make_obj((Object*)keys));
-        } else {
-            SET_REG(RA, iter);
+        Value iter_obj, iter_state;
+        if (!vm_iterate(vm, REG(RB), &iter_obj, &iter_state)) {
+            _exc = vm->last_exception;
+            goto op_throw;
         }
-        SET_REG_PRIM(RA + 1, make_int(0));
-        SET_REG_PRIM(RA + 2, make_null());
+        SET_REG(RA, iter_obj);
+        SET_REG(RA + 1, iter_state);
+        SET_REG(RA + 2, make_null());
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 46. OP_FORLOOP */
     op_forloop: {
-        Value iter = REG(RA);
-        Value state = REG(RA + 1);
-        int idx = AS_INT(state);
-        bool has_next = false;
-
-        if (LUNA_LIKELY(IS_LIST(iter))) {
-            ObjList *lst = (ObjList*)AS_OBJ(iter);
-            if (idx < lst->count) {
-                SET_REG(RA + 2, lst->items ? lst->items[idx] : lst->inline_items[idx]);
-                SET_REG_PRIM(RA + 1, make_int(idx + 1));
-                has_next = true;
-            }
-        } else if (LUNA_LIKELY(IS_STRING(iter))) {
-            ObjString *str = (ObjString*)AS_OBJ(iter);
-            if (idx < str->length) {
-                char buf[2] = {str->chars[idx], '\0'};
-                SET_REG(RA + 2, make_obj((Object*)new_string(buf, 1)));
-                SET_REG_PRIM(RA + 1, make_int(idx + 1));
-                has_next = true;
-            }
-        } else {
-            _exc = make_exception_instance(vm, vm->exception_class, "object is not iterable");
-            goto op_throw;
-        }
-
-        if (LUNA_LIKELY(has_next)) {
+        Value _state = REG(RA + 1);
+        Value _elem;
+        if (vm_iter_next(vm, REG(RA), &_state, &_elem)) {
+            SET_REG(RA + 2, _elem);
+            SET_REG(RA + 1, _state);
             pc += SBX;
+        } else if (!IS_NIL(vm->last_exception)) {
+            _exc = vm->last_exception;
+            goto op_throw;
         }
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 48. OP_INDEXGET (strict — throws on missing or null obj) */
     op_indexget: {
-        Value obj = REG(RB);
-        Value key = REG(RC);
-        if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
-            
-                _exc = make_exception_instance(vm, vm->type_error_class, "cannot index null value");
+        /* Semantic indexing belongs to the frontend.  The legacy switch below
+         * remains temporarily as a source-compatibility fallback while the
+         * remaining opcode extraction is completed. */
+        {
+            Value _result;
+            if (vm_getitem(vm, REG(RB), REG(RC), false, &_result)) {
+                SET_REG(RA, _result);
+                DECODE; goto *op_labels[OP(instr)];
+            }
+            _exc = vm->last_exception;
             goto op_throw;
         }
-        switch (AS_OBJ(obj)->type->kind) {
-            case OBJ_LIST: {
-                if (!IS_INT(key)) {
-                    
-                    _exc = make_exception_instance(vm, vm->type_error_class, "list index must be integer");
-                    goto op_throw;
-                }
-                int idx = (int)AS_INT(key);
-                ObjList *lst = (ObjList*)AS_OBJ(obj);
-                int len = lst->count;
-                if (idx < 0) idx += len;
-                if (idx < 0 || idx >= len) {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "list index out of bounds (index: %d, size: %d)", idx, len);
-                    
-                    _exc = make_exception_instance(vm, vm->index_error_class, buf);
-                    goto op_throw;
-                }
-                SET_REG(RA, lst->items ? lst->items[idx] : lst->inline_items[idx]);
-                break;
-            }
-            case OBJ_DICT: {
-                ObjDict *d = (ObjDict*)AS_OBJ(obj);
-                if (!dict_has(d, key)) {
-                    char *ks = value_to_string(key);
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "%s not found in dict", ks);
-                    free(ks);
-                    
-                    _exc = make_exception_instance(vm, vm->key_error_class, buf);
-                    goto op_throw;
-                }
-                SET_REG(RA, dict_get(d, key));
-                break;
-            }
-            case OBJ_STRING: {
-                ObjString *s = (ObjString*)AS_OBJ(obj);
-                if (!IS_INT(key)) {
-                    
-                    _exc = make_exception_instance(vm, vm->type_error_class, "string index must be integer");
-                    goto op_throw;
-                }
-                int idx = (int)AS_INT(key);
-                if (idx < 0) idx += s->length;
-                if (idx < 0 || idx >= s->length) {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "string index out of bounds (index: %d, length: %d)", idx, s->length);
-                    
-                    _exc = make_exception_instance(vm, vm->index_error_class, buf);
-                    goto op_throw;
-                }
-                SET_REG(RA, make_obj((Object*)new_string(&s->chars[idx], 1)));
-                break;
-            }
-            default: {
-                
-                _exc = make_exception_instance(vm, vm->type_error_class, "value is not indexable");
-                goto op_throw;
-            }
-        }
-        DECODE; goto *op_labels[OP(instr)];
     }
-
-    /* 64. OP_INDEXGET_SAFE (safe — null on missing or null obj) */
     op_indexget_safe: {
-        Value obj = REG(RB);
-        Value key = REG(RC);
-        if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
-        switch (AS_OBJ(obj)->type->kind) {
-            case OBJ_LIST:
-                SET_REG(RA, IS_INT(key) ? list_get((ObjList*)AS_OBJ(obj), AS_INT(key)) : make_null());
-                break;
-            case OBJ_DICT:
-                SET_REG(RA, dict_get((ObjDict*)AS_OBJ(obj), key));
-                break;
-            case OBJ_STRING: {
-                ObjString *s = (ObjString*)AS_OBJ(obj);
-                if (IS_INT(key) && AS_INT(key) >= 0 && AS_INT(key) < s->length)
-                    SET_REG(RA, make_obj((Object*)new_string(&s->chars[AS_INT(key)], 1)));
-                else
-                    SET_REG_PRIM(RA, make_null());
-                break;
+        {
+            Value _result;
+            if (vm_getitem(vm, REG(RB), REG(RC), true, &_result)) {
+                SET_REG(RA, _result);
+                DECODE; goto *op_labels[OP(instr)];
             }
-            default: SET_REG_PRIM(RA, make_null()); break;
-        }
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    /* 48. OP_INDEXSET */
-    op_indexset: {
-        Value obj = REG(RA);
-        Value key = REG(RB);
-        Value val = REG(RC);
-        if (IS_OBJ(obj) && AS_OBJ(obj)) {
-            if (IS_LIST(obj) && IS_INT(key)) {
-                ObjList *lst = (ObjList*)AS_OBJ(obj);
-                int idx = (int)AS_INT(key);
-                if (idx < 0) idx += lst->count;
-                if (idx < 0 || idx >= lst->count) {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "list index out of bounds (index: %d, size: %d)", idx, lst->count);
-                    _exc = make_exception_instance(vm, vm->index_error_class, buf);
-                    goto op_throw;
-                }
-                list_set(lst, idx, val);
-            } else if (IS_DICT(obj)) {
-                dict_set((ObjDict*)AS_OBJ(obj), key, val);
-            } else {
-                _exc = make_exception_instance(vm, vm->type_error_class, "invalid index assignment");
-                goto op_throw;
-            }
-        } else {
-            _exc = make_exception_instance(vm, vm->type_error_class, "invalid index assignment");
+            _exc = vm->last_exception;
             goto op_throw;
         }
-        gc_write_barrier(obj, val);
-        DECODE; goto *op_labels[OP(instr)];
     }
-
-    /* 49. OP_SLICE */
+    op_indexset: {
+        if (vm_setitem(vm, REG(RA), REG(RB), REG(RC))) {
+            gc_write_barrier(REG(RA), REG(RC));
+            DECODE; goto *op_labels[OP(instr)];
+        }
+        _exc = vm->last_exception;
+        goto op_throw;
+        /* Legacy type switch below is unreachable during frontend dispatch. */
+    }
     op_slice: {
-        Value obj = REG(RB);
-        Value start_val = REG(RB + 1);
-        Value stop_val  = REG(RB + 2);
-        Value step_val  = REG(RB + 3);
-        if (IS_LIST(obj)) {
-            ObjList *lst = (ObjList*)AS_OBJ(obj);
-            int len = list_length(lst);
-            int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
-            if (step == 0) {
-                SET_REG(RA, make_obj((Object*)new_list(0)));
-            } else {
-                int start, stop;
-                if (IS_NIL(start_val)) {
-                    start = (step < 0) ? len - 1 : 0;
-                } else if (IS_INT(start_val)) {
-                    start = AS_INT(start_val);
-                    if (start < 0) start += len;
-                    if (start < 0) start = (step < 0) ? -1 : 0;
-                    if (start > len) start = len;
-                } else {
-                    start = (step < 0) ? len - 1 : 0;
-                }
-                if (IS_NIL(stop_val)) {
-                    stop = (step < 0) ? -1 : len;
-                } else if (IS_INT(stop_val)) {
-                    stop = AS_INT(stop_val);
-                    if (stop < 0) stop += len;
-                    if (stop < 0) stop = -1;
-                    if (stop > len) stop = len;
-                } else {
-                    stop = (step < 0) ? -1 : len;
-                }
-                ObjList *result = new_list(0);
-                if (step > 0) {
-                    for (int i = start; i < stop; i += step) {
-                        Value v = lst->items ? lst->items[i] : lst->inline_items[i];
-                        list_add(result, v);
-                    }
-                } else {
-                    for (int i = start; i > stop; i += step) {
-                        Value v = lst->items ? lst->items[i] : lst->inline_items[i];
-                        list_add(result, v);
-                    }
-                }
-                SET_REG(RA, make_obj((Object*)result));
-            }
-        } else if (IS_STRING(obj)) {
-            ObjString *s = (ObjString*)AS_OBJ(obj);
-            int byte_len = s->length;
-            int cp_count = utf8_code_point_count(s->chars, byte_len);
-            int len = cp_count;
-            int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
-            if (step == 0) {
-                SET_REG(RA, make_obj((Object*)new_string("", 0)));
-            } else {
-                int start, stop;
-                if (IS_NIL(start_val)) {
-                    start = (step < 0) ? len - 1 : 0;
-                } else if (IS_INT(start_val)) {
-                    start = AS_INT(start_val);
-                    if (start < 0) start += len;
-                    if (start < 0) start = (step < 0) ? -1 : 0;
-                    if (start > len) start = len;
-                } else {
-                    start = (step < 0) ? len - 1 : 0;
-                }
-                if (IS_NIL(stop_val)) {
-                    stop = (step < 0) ? -1 : len;
-                } else if (IS_INT(stop_val)) {
-                    stop = AS_INT(stop_val);
-                    if (stop < 0) stop += len;
-                    if (stop < 0) stop = -1;
-                    if (stop > len) stop = len;
-                } else {
-                    stop = (step < 0) ? -1 : len;
-                }
-                int *cp_pos = (int*)malloc(cp_count * sizeof(int));
-                if (!cp_pos) { fprintf(stderr, "OOM\n"); exit(1); }
-                int ci = 0;
-                for (int i = 0; i < byte_len; i++) {
-                    if ((s->chars[i] & 0xC0) != 0x80) cp_pos[ci++] = i;
-                }
-                int total_bytes = 0;
-                if (step > 0) {
-                    for (int i = start; i < stop; i += step) {
-                        int cp_start = cp_pos[i];
-                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-                        total_bytes += cp_end - cp_start;
-                    }
-                } else {
-                    for (int i = start; i > stop; i += step) {
-                        int cp_start = cp_pos[i];
-                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-                        total_bytes += cp_end - cp_start;
-                    }
-                }
-                char *buf = (char*)malloc(total_bytes + 1);
-                if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
-                int j = 0;
-                if (step > 0) {
-                    for (int i = start; i < stop; i += step) {
-                        int cp_start = cp_pos[i];
-                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-                        int cp_len = cp_end - cp_start;
-                        memcpy(buf + j, s->chars + cp_start, cp_len);
-                        j += cp_len;
-                    }
-                } else {
-                    for (int i = start; i > stop; i += step) {
-                        int cp_start = cp_pos[i];
-                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-                        int cp_len = cp_end - cp_start;
-                        memcpy(buf + j, s->chars + cp_start, cp_len);
-                        j += cp_len;
-                    }
-                }
-                buf[j] = '\0';
-                ObjString *result = new_string(buf, j);
-                free(buf);
-                free(cp_pos);
-                SET_REG(RA, make_obj((Object*)result));
-            }
-        } else {
-            SET_REG_PRIM(RA, make_null());
+        /* Slicing is a frontend concern; the core only issues the neutral
+         * opcode and lets the frontend build the resulting object. */
+        Value _result;
+        if (vm_slice(vm, REG(RB), REG(RB + 1), REG(RB + 2), REG(RB + 3), false, &_result)) {
+            SET_REG(RA, _result);
+            CHECK_GC;
+            DECODE; goto *op_labels[OP(instr)];
         }
-        CHECK_GC;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* 65. OP_SLICE_SAFE (safe — null on null obj) */
-    op_slice_safe: {
-        Value obj = REG(RB);
-        Value start_val = REG(RB + 1);
-        Value stop_val  = REG(RB + 2);
-        Value step_val  = REG(RB + 3);
-        if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
-        if (IS_LIST(obj)) {
-            ObjList *lst = (ObjList*)AS_OBJ(obj);
-            int len = list_length(lst);
-            int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
-            if (step == 0) {
-                SET_REG(RA, make_obj((Object*)new_list(0)));
-            } else {
-                int start, stop;
-                if (IS_NIL(start_val)) {
-                    start = (step < 0) ? len - 1 : 0;
-                } else if (IS_INT(start_val)) {
-                    start = AS_INT(start_val);
-                    if (start < 0) start += len;
-                    if (start < 0) start = (step < 0) ? -1 : 0;
-                    if (start > len) start = len;
-                } else {
-                    start = (step < 0) ? len - 1 : 0;
-                }
-                if (IS_NIL(stop_val)) {
-                    stop = (step < 0) ? -1 : len;
-                } else if (IS_INT(stop_val)) {
-                    stop = AS_INT(stop_val);
-                    if (stop < 0) stop += len;
-                    if (stop < 0) stop = -1;
-                    if (stop > len) stop = len;
-                } else {
-                    stop = (step < 0) ? -1 : len;
-                }
-                ObjList *result = new_list(0);
-                if (step > 0) {
-                    for (int i = start; i < stop; i += step) {
-                        Value v = lst->items ? lst->items[i] : lst->inline_items[i];
-                        list_add(result, v);
-                    }
-                } else {
-                    for (int i = start; i > stop; i += step) {
-                        Value v = lst->items ? lst->items[i] : lst->inline_items[i];
-                        list_add(result, v);
-                    }
-                }
-                SET_REG(RA, make_obj((Object*)result));
-            }
-        } else if (IS_STRING(obj)) {
-            ObjString *s = (ObjString*)AS_OBJ(obj);
-            int byte_len = s->length;
-            int cp_count = utf8_code_point_count(s->chars, byte_len);
-            int len = cp_count;
-            int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
-            if (step == 0) {
-                SET_REG(RA, make_obj((Object*)new_string("", 0)));
-            } else {
-                int start, stop;
-                if (IS_NIL(start_val)) {
-                    start = (step < 0) ? len - 1 : 0;
-                } else if (IS_INT(start_val)) {
-                    start = AS_INT(start_val);
-                    if (start < 0) start += len;
-                    if (start < 0) start = (step < 0) ? -1 : 0;
-                    if (start > len) start = len;
-                } else {
-                    start = (step < 0) ? len - 1 : 0;
-                }
-                if (IS_NIL(stop_val)) {
-                    stop = (step < 0) ? -1 : len;
-                } else if (IS_INT(stop_val)) {
-                    stop = AS_INT(stop_val);
-                    if (stop < 0) stop += len;
-                    if (stop < 0) stop = -1;
-                    if (stop > len) stop = len;
-                } else {
-                    stop = (step < 0) ? -1 : len;
-                }
-                int *cp_pos = (int*)malloc(cp_count * sizeof(int));
-                if (!cp_pos) { fprintf(stderr, "OOM\n"); exit(1); }
-                int ci = 0;
-                for (int i = 0; i < byte_len; i++) {
-                    if ((s->chars[i] & 0xC0) != 0x80) cp_pos[ci++] = i;
-                }
-                int total_bytes = 0;
-                if (step > 0) {
-                    for (int i = start; i < stop; i += step) {
-                        int cp_start = cp_pos[i];
-                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-                        total_bytes += cp_end - cp_start;
-                    }
-                } else {
-                    for (int i = start; i > stop; i += step) {
-                        int cp_start = cp_pos[i];
-                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-                        total_bytes += cp_end - cp_start;
-                    }
-                }
-                char *buf = (char*)malloc(total_bytes + 1);
-                if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
-                int j = 0;
-                if (step > 0) {
-                    for (int i = start; i < stop; i += step) {
-                        int cp_start = cp_pos[i];
-                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-                        int cp_len = cp_end - cp_start;
-                        memcpy(buf + j, s->chars + cp_start, cp_len);
-                        j += cp_len;
-                    }
-                } else {
-                    for (int i = start; i > stop; i += step) {
-                        int cp_start = cp_pos[i];
-                        int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-                        int cp_len = cp_end - cp_start;
-                        memcpy(buf + j, s->chars + cp_start, cp_len);
-                        j += cp_len;
-                    }
-                }
-                buf[j] = '\0';
-                ObjString *result = new_string(buf, j);
-                free(buf);
-                free(cp_pos);
-                SET_REG(RA, make_obj((Object*)result));
-            }
-        } else {
-            SET_REG_PRIM(RA, make_null());
-        }
-        CHECK_GC;
-        DECODE; goto *op_labels[OP(instr)];
+        _exc = vm->last_exception;
+        goto op_throw;
     }
 
     /* 51. OP_MEMBERGET (strict — throws on missing) */
     op_memberget: {
-        Value obj = REG(RB);
-        ObjString *field = KSTROBJ(RC);
-        if (!IS_OBJ(obj) || !AS_OBJ(obj)) {
-            
-                _exc = make_exception_instance(vm, vm->attribute_error_class, "cannot access member of null value");
-            goto op_throw;
-        }
-        switch (AS_OBJ(obj)->type->kind) {
-            case OBJ_INSTANCE: {
-                ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-                uint32_t ic_idx = ((uint32_t)(uintptr_t)current_chunk ^ (uint32_t)(pc - current_chunk->code)) & (IC_CACHE_SIZE - 1);
-                IC_MemberEntry *ic = &vm->member_ic[ic_idx];
-                if (ic->klass == inst->klass && ic->name == field) {
-                    SET_REG(RA, inst->fields[ic->index]);
-                } else {
-                    int fi = -1;
-                    if (inst->klass && inst->klass->field_slot_map) {
-                        Value slot_v = dict_get(inst->klass->field_slot_map, make_obj((Object*)field));
-                        if (IS_INT(slot_v)) fi = AS_INT(slot_v);
-                    }
-                    if (fi >= 0) {
-                        SET_REG(RA, inst->fields[fi]);
-                        ic->klass = inst->klass; ic->name = field; ic->index = fi;
-                    } else {
-                        int mi = -1;
-                        if (inst->klass) {
-                            for (int i = 0; i < inst->klass->method_count; i++) {
-                                if (strcmp(inst->klass->method_names[i], field->chars) == 0) { mi = i; break; }
-                            }
-                        }
-                        if (mi >= 0) {
-                            ObjBoundMethod *bm = new_bound_method(obj, inst->klass->methods[mi]);
-                            SET_REG(RA, make_obj((Object*)bm));
-                        } else {
-                            
-                            char buf[256];
-                            snprintf(buf, sizeof(buf), "instance has no field or method '%s'", field->chars);
-                            _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                            goto op_throw;
-                        }
-                    }
-                }
-                break;
-            }
-            case OBJ_MODULE: {
-                ObjModule *mod = (ObjModule*)AS_OBJ(obj);
-                Value export_val = dict_get(mod->exports, make_obj((Object*)field));
-                if (!IS_NIL(export_val)) {
-                    SET_REG(RA, export_val);
-                } else {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "module '%s' has no attribute '%s'", mod->name->chars, field->chars);
-
-                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                    goto op_throw;
-                }
-                break;
-            }
-            case OBJ_DICT: {
-                /* Try method lookup first, then dict_get */
-                ObjClass *dklass = vm->dict_class;
-                ObjFunction *mfn = dklass ? class_find_method(dklass, field->chars) : NULL;
-                if (mfn) {
-                    ObjBoundMethod *bm = new_bound_method(obj, mfn);
-                    SET_REG(RA, make_obj((Object*)bm));
-                } else {
-                    Value val = dict_get((ObjDict*)AS_OBJ(obj), make_obj((Object*)field));
-                    if (IS_NIL(val)) {
-                        char buf[256];
-                        snprintf(buf, sizeof(buf), "'%s' not found in dict", field->chars);
-                        _exc = make_exception_instance(vm, vm->key_error_class, buf);
-                        goto op_throw;
-                    }
-                    SET_REG(RA, val);
-                }
-                break;
-            }
-            case OBJ_STRING:
-            case OBJ_LIST: {
-                /* Unified: try find_method on canonical class */
-                ObjClass *klass = get_class(vm, obj);
-                ObjFunction *mfn = klass ? class_find_method(klass, field->chars) : NULL;
-                if (mfn) {
-                    if (mfn->is_native && mfn->param_count == 0) {
-                        /* Auto-call 0-arg native methods (like .length) */
-                        Value result;
-                        Value native_args[1] = { obj };
-                        if (!vm_call_native(vm, mfn->native_fn, native_args, 1, &result)) goto op_throw;
-                        SET_REG(RA, result);
-                    } else {
-                        ObjBoundMethod *bm = new_bound_method(obj, mfn);
-                        SET_REG(RA, make_obj((Object*)bm));
-                    }
-                } else {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "%s has no field '%s'",
-                             AS_OBJ(obj)->type == OBJ_STRING ? "string" : "list", field->chars);
-                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                    goto op_throw;
-                }
-                break;
-            }
-            case OBJ_ENUM: {
-                ObjEnum *e = (ObjEnum*)AS_OBJ(obj);
-                int fi = -1;
-                for (int i = 0; i < e->count; i++) {
-                    if (strcmp(e->names[i], field->chars) == 0) { fi = i; break; }
-                }
-                if (fi >= 0) SET_REG_PRIM(RA, make_int(e->values[fi]));
-                else {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "enum has no variant '%s'", field->chars);
-                    
-                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                    goto op_throw;
-                }
-                break;
-            }
-            case OBJ_CLASS: {
-                ObjClass *cls = (ObjClass*)AS_OBJ(obj);
-                if (strcmp(field->chars, "name") == 0)
-                    SET_REG(RA, make_obj((Object*)new_string(cls->name, (int)strlen(cls->name))));
-                else if (strcmp(field->chars, "base") == 0)
-                    SET_REG(RA, cls->base ? make_obj((Object*)cls->base) : make_null());
-                else if (cls->fields) {
-                    Value val = dict_get(cls->fields, make_obj((Object*)field));
-                    if (!IS_NIL(val)) {
-                        SET_REG(RA, val);
-                    } else {
-                        char buf[256];
-                        snprintf(buf, sizeof(buf), "class '%s' has no field '%s'", cls->name, field->chars);
-                        
-                        _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                        goto op_throw;
-                    }
-                } else {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "class '%s' has no field '%s'", cls->name, field->chars);
-                    
-                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                    goto op_throw;
-                }
-                break;
-            }
-            case OBJ_VECTOR: {
-                ObjVector *vec = (ObjVector*)AS_OBJ(obj);
-                if (field->length == 1) {
-                    char c = field->chars[0];
-                    float v = 0.0f;
-                    if (c == 'x') v = vec->data[0];
-                    else if (c == 'y') v = vec->data[1];
-                    else if (c == 'z') v = vec->data[2];
-                    else if (c == 'w') v = vec->data[3];
-                    else {
-                        char buf[256];
-                        snprintf(buf, sizeof(buf), "vector has no field '%s'", field->chars);
-                        
-                        _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                        goto op_throw;
-                    }
-                    SET_REG_PRIM(RA, make_double((double)v));
-                } else {
-                    char buf[256];
-                    snprintf(buf, sizeof(buf), "vector has no field '%s'", field->chars);
-                    
-                    _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                    goto op_throw;
-                }
-                break;
-            }
-            default: {
-                
-                _exc = make_exception_instance(vm, vm->attribute_error_class, "value has no fields");
-                goto op_throw;
+        {
+            Value _result;
+            Value _name = make_obj((Object *)KSTROBJ(RC));
+            if (vm_getattr(vm, REG(RB), _name, false, &_result)) {
+                SET_REG(RA, _result);
+                DECODE; goto *op_labels[OP(instr)];
             }
         }
+        _exc = vm->last_exception;
+        goto op_throw;
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 63. OP_MEMBERGET_SAFE (safe — null on missing or null obj) */
     op_memberget_safe: {
-        Value obj = REG(RB);
-        ObjString *field = KSTROBJ(RC);
-        if (!IS_OBJ(obj) || !AS_OBJ(obj)) { SET_REG_PRIM(RA, make_null()); DECODE; goto *op_labels[OP(instr)]; }
-        switch (AS_OBJ(obj)->type->kind) {
-            case OBJ_INSTANCE: {
-                ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-                int fi = -1;
-                if (inst->klass && inst->klass->field_slot_map) {
-                    Value slot_v = dict_get(inst->klass->field_slot_map, make_obj((Object*)field));
-                    if (IS_INT(slot_v)) fi = AS_INT(slot_v);
-                }
-                if (fi < 0) {
-                    for (int i = 0; i < inst->field_count; i++) {
-                    if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
-                }
-                }
-                if (fi >= 0) { SET_REG(RA, inst->fields[fi]); break; }
-                int mi = -1;
-                if (inst->klass) {
-                    for (int i = 0; i < inst->klass->method_count; i++) {
-                        if (strcmp(inst->klass->method_names[i], field->chars) == 0) { mi = i; break; }
-                    }
-                }
-                if (mi >= 0) {
-                    ObjBoundMethod *bm = new_bound_method(obj, inst->klass->methods[mi]);
-                    SET_REG(RA, make_obj((Object*)bm));
-                } else {
-                    SET_REG_PRIM(RA, make_null());
-                }
-                break;
+        {
+            Value _result;
+            Value _name = make_obj((Object *)KSTROBJ(RC));
+            if (vm_getattr(vm, REG(RB), _name, true, &_result)) {
+                SET_REG(RA, _result);
+                DECODE; goto *op_labels[OP(instr)];
             }
-            case OBJ_MODULE: {
-                ObjModule *mod = (ObjModule*)AS_OBJ(obj);
-                SET_REG(RA, dict_get(mod->exports, make_obj((Object*)field)));
-                break;
-            }
-            case OBJ_DICT: {
-                ObjClass *dklass = vm->dict_class;
-                ObjFunction *mfn = dklass ? class_find_method(dklass, field->chars) : NULL;
-                if (mfn) {
-                    ObjBoundMethod *bm = new_bound_method(obj, mfn);
-                    SET_REG(RA, make_obj((Object*)bm));
-                } else {
-                    SET_REG(RA, dict_get((ObjDict*)AS_OBJ(obj), make_obj((Object*)field)));
-                }
-                break;
-            }
-            case OBJ_STRING:
-            case OBJ_LIST: {
-                ObjClass *klass = get_class(vm, obj);
-                ObjFunction *mfn = klass ? class_find_method(klass, field->chars) : NULL;
-                if (mfn) {
-                    if (mfn->is_native && mfn->param_count == 0) {
-                        Value result;
-                        Value native_args[1] = { obj };
-                        if (!vm_call_native(vm, mfn->native_fn, native_args, 1, &result)) { SET_REG_PRIM(RA, make_null()); break; }
-                        SET_REG(RA, result);
-                    } else {
-                        ObjBoundMethod *bm = new_bound_method(obj, mfn);
-                        SET_REG(RA, make_obj((Object*)bm));
-                    }
-                } else {
-                    SET_REG_PRIM(RA, make_null());
-                }
-                break;
-            }
-            case OBJ_ENUM: {
-                ObjEnum *e = (ObjEnum*)AS_OBJ(obj);
-                int fi = -1;
-                for (int i = 0; i < e->count; i++) {
-                    if (strcmp(e->names[i], field->chars) == 0) { fi = i; break; }
-                }
-                if (fi >= 0) SET_REG_PRIM(RA, make_int(e->values[fi]));
-                else SET_REG_PRIM(RA, make_null());
-                break;
-            }
-            case OBJ_CLASS: {
-                ObjClass *cls = (ObjClass*)AS_OBJ(obj);
-                if (strcmp(field->chars, "name") == 0)
-                    SET_REG(RA, make_obj((Object*)new_string(cls->name, (int)strlen(cls->name))));
-                else if (strcmp(field->chars, "base") == 0)
-                    SET_REG(RA, cls->base ? make_obj((Object*)cls->base) : make_null());
-                else SET_REG_PRIM(RA, make_null());
-                break;
-            }
-            default: SET_REG_PRIM(RA, make_null()); break;
         }
+        SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 51. OP_MEMBERSET */
     op_memberset: {
-        Value obj = REG(RA);
-        ObjString *field = KSTROBJ(RC);
-        if (IS_INSTANCE(obj)) {
-            ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-            uint32_t ic_idx = ((uint32_t)(uintptr_t)CHUNK ^ (uint32_t)IP) & (IC_CACHE_SIZE - 1);
-            IC_MemberEntry *ic = &vm->member_ic[ic_idx];
-            if (ic->klass == inst->klass && ic->name == field) {
-                SET_FIELD(inst, ic->index, REG(RB));
-            } else {
-                int fi = -1;
-                if (inst->klass && inst->klass->field_slot_map) {
-                    Value slot_v = dict_get(inst->klass->field_slot_map, make_obj((Object*)field));
-                    if (IS_INT(slot_v)) fi = AS_INT(slot_v);
-                }
-                if (fi < 0) {
-                    for (int i = 0; i < inst->field_count; i++) {
-                        if (strcmp(inst->field_names[i], field->chars) == 0) { fi = i; break; }
-                    }
-                }
-                if (fi >= 0) {
-                    SET_FIELD(inst, fi, REG(RB));
-                    ic->klass = inst->klass; ic->name = field; ic->index = fi;
-                } else {
-                    instance_set_field(inst, field->chars, REG(RB));
-                }
+        {
+            Value _name = make_obj((Object *)KSTROBJ(RC));
+            if (vm_setattr(vm, REG(RA), _name, REG(RB))) {
+                gc_write_barrier(REG(RA), REG(RB));
+                DECODE; goto *op_labels[OP(instr)];
             }
-        } else if (IS_VECTOR(obj)) {
-            ObjVector *vec = (ObjVector*)AS_OBJ(obj);
-            float v = (float)value_to_double(REG(RB));
-            if (field->length == 1) {
-                char c = field->chars[0];
-                if (c == 'x') vec->data[0] = v;
-                else if (c == 'y') vec->data[1] = v;
-                else if (c == 'z') vec->data[2] = v;
-                else if (c == 'w') vec->data[3] = v;
-                else {
-                    
-                    _exc = make_exception_instance(vm, vm->attribute_error_class, "vector has no field");
-                    goto op_throw;
-                }
-            } else {
-                
-                _exc = make_exception_instance(vm, vm->attribute_error_class, "vector has no field");
-                goto op_throw;
-            }
-        } else {
-            _exc = make_exception_instance(vm, vm->attribute_error_class, "cannot set field on this type");
-            goto op_throw;
         }
-        gc_write_barrier(obj, REG(RB));
-        DECODE; goto *op_labels[OP(instr)];
+        _exc = vm->last_exception;
+        goto op_throw;
     }
 
     /* OP_GETFIELD (slot-based field get: A = B->fields[C]) */
     op_getfield: {
         Value obj = REG(RB);
-        if (IS_INSTANCE(obj)) {
-            ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-            int slot = (int)RC;
-            if (slot >= 0 && slot < inst->field_count) {
-                SET_REG(RA, inst->fields[slot]);
-            } else {
-                SET_REG_PRIM(RA, make_null());
-            }
-        } else {
-            SET_REG_PRIM(RA, make_null());
-        }
+        Value _f;
+        vm_get_field_slot(vm, obj, (int)RC, &_f);
+        SET_REG(RA, _f);
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* OP_SETFIELD (slot-based field set: A->fields[C] = B) */
     op_setfield: {
         Value obj = REG(RA);
-        if (IS_INSTANCE(obj)) {
-            ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-            int slot = (int)RC;
-            if (slot >= 0 && slot < inst->field_count) {
-                SET_FIELD(inst, slot, REG(RB));
-            } else if (slot >= inst->field_count) {
-                /* slot out of range: expand instance to accommodate */
-                while (slot >= inst->field_capacity) {
-                    inst->field_capacity = inst->field_capacity < 4 ? 4 : inst->field_capacity * 2;
-                    inst->field_names = realloc(inst->field_names, inst->field_capacity * sizeof(char *));
-                    inst->fields      = realloc(inst->fields,      inst->field_capacity * sizeof(Value));
-                }
-                while (inst->field_count <= slot) {
-                    inst->field_names[inst->field_count] = NULL;
-                    inst->fields[inst->field_count] = make_null();
-                    inst->field_count++;
-                }
-                SET_FIELD(inst, slot, REG(RB));
-            }
-        }
+        vm_set_field_slot(vm, obj, (int)RC, REG(RB));
         gc_write_barrier(obj, REG(RB));
         DECODE; goto *op_labels[OP(instr)];
     }
@@ -1664,458 +896,74 @@
         uint8_t nargs   = C;
         Value method_val = REG(obj_reg + 1);
         Value obj = REG(obj_reg);
-        if (!IS_STRING(method_val)) { SET_REG_PRIM(ret_reg, make_null()); DECODE; goto *op_labels[OP(instr)]; }
-        const char *mname = ((ObjString*)AS_OBJ(method_val))->chars;
+        /* method_val must be a string constant; the frontend owns the string
+           concept, so ask it through the is_string hook (legacy no-op guard). */
+        if (vm->frontend && vm->frontend->is_string &&
+            !vm->frontend->is_string(vm, method_val)) {
+            SET_REG_PRIM(ret_reg, make_null());
+            DECODE; goto *op_labels[OP(instr)];
+        }
 
         Value scratch[256];
         for (int i = 0; i < nargs; i++) scratch[i] = REG(obj_reg + 2 + i);
 
-        Value result = make_null();
-        bool handled = false;
-        Value native_scratch[256];
-        if (IS_OBJ(obj) && AS_OBJ(obj)) {
-            switch (AS_OBJ(obj)->type->kind) {
-                case OBJ_CLASS: {
-                    ObjClass *cls = (ObjClass*)AS_OBJ(obj);
-                    ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
-                    Value fn_val = cls->fields ? dict_get(cls->fields, make_obj((Object*)mname_obj)) : make_null();
-                    if (IS_FUNCTION(fn_val)) {
-                        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
-                        if (fn->is_native) {
-                            if (fn->cfunc) {
-                                result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
-                            } else {
-                                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
-                            }
-                        } else if (vm->frame_count < MAX_FRAMES) {
-                            /* Leaf fast path: skip full frame push */
-                            if (LUNA_LIKELY(fn->is_leaf)) {
-                                CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                                cf->leaf_ret_chunk = current_chunk;
-                                cf->leaf_ret_base = FRAME.base;
-                                cf->leaf_ret_reg = ret_reg;
-                                cf->leaf_ret_closure = FRAME.closure;
-                                cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
-                                FRAME.base = cf->base + obj_reg + 2;
-                                FRAME.nargs = nargs;
-                                FRAME.chunk = fn->chunk;
-                                FRAME.ip = 0;
-                                SYNC_LOCALS();
-                                int _needed = FRAME.base + fn->chunk->max_registers;
-                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                    REG_BASE = vm->stack + FRAME.base;
-                                }
-                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                                    REG_BASE[_i] = make_null();
-                                DECODE; goto *op_labels[OP(instr)];
-                            }
-                            CallFrame *caller = &FRAME;
-                            CallFrame *callee = &vm->frames[vm->frame_count];
-                            callee->chunk = fn->chunk;
-                            callee->ip = 0;
-                            callee->base = caller->base + obj_reg + 2;
-                            callee->ret_reg = ret_reg;
-                            callee->nargs = nargs;
-                            callee->kw_args = make_null();
-                            frame_set_refs(callee, (Object*)NULL, (Object*)fn);
-                            callee->saved_globals = NULL;
-                            int need = callee->base + fn->chunk->max_registers;
-                            if (need > vm->stack_cap) {
-                                vm->stack_cap = need < 64 ? 64 : need * 2;
-                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                            }
-                            for (int j = nargs; j < fn->chunk->max_registers; j++)
-                                vm->stack[callee->base + j] = make_null();
-                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                            caller->ip = (int)(pc - current_chunk->code);
-                            vm->frame_count++;
-                            SYNC_LOCALS();
-                            DECODE;
-                            goto *op_labels[OP(instr)];
-                        }
-                        handled = true;
-                    } else if (IS_CLOSURE(fn_val)) {
-                        ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
-                        ObjFunction *fn = cl->function;
-                        if (fn->is_native) {
-                            if (fn->cfunc) {
-                                result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
-                            } else {
-                                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
-                            }
-                        } else if (vm->frame_count < MAX_FRAMES) {
-                            /* Leaf fast path: skip full frame push */
-                            if (LUNA_LIKELY(fn->is_leaf)) {
-                                CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                                cf->leaf_ret_chunk = current_chunk;
-                                cf->leaf_ret_base = FRAME.base;
-                                cf->leaf_ret_reg = ret_reg;
-                                cf->leaf_ret_closure = FRAME.closure;
-                                cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, (Object*)cl, (Object*)fn);
-                                FRAME.base = cf->base + obj_reg + 2;
-                                FRAME.nargs = nargs;
-                                FRAME.chunk = fn->chunk;
-                                FRAME.ip = 0;
-                                SYNC_LOCALS();
-                                int _needed = FRAME.base + fn->chunk->max_registers;
-                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                    REG_BASE = vm->stack + FRAME.base;
-                                }
-                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                                    REG_BASE[_i] = make_null();
-                                DECODE; goto *op_labels[OP(instr)];
-                            }
-                            CallFrame *caller = &FRAME;
-                            CallFrame *callee = &vm->frames[vm->frame_count];
-                            callee->chunk = fn->chunk;
-                            callee->ip = 0;
-                            callee->base = caller->base + obj_reg + 2;
-                            callee->ret_reg = ret_reg;
-                            callee->nargs = nargs;
-                            callee->kw_args = make_null();
-                            frame_set_refs(callee, (Object*)cl, (Object*)fn);
-                            callee->saved_globals = NULL;
-                            int need = callee->base + fn->chunk->max_registers;
-                            if (need > vm->stack_cap) {
-                                vm->stack_cap = need < 64 ? 64 : need * 2;
-                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                            }
-                            for (int j = nargs; j < fn->chunk->max_registers; j++)
-                                vm->stack[callee->base + j] = make_null();
-                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                            caller->ip = (int)(pc - current_chunk->code);
-                            vm->frame_count++;
-                            SYNC_LOCALS();
-                            DECODE;
-                            goto *op_labels[OP(instr)];
-                        }
-                        handled = true;
-                    }
-                    if (!handled) {
-                        char buf[256];
-                        snprintf(buf, sizeof(buf), "class '%s' has no method '%s'", cls->name, mname_obj->chars);
-                        
-                        _exc = make_exception_instance(vm, vm->attribute_error_class, buf);
-                        goto op_throw;
-                    }
-                    break;
-                }
-case OBJ_MODULE: {
-                    ObjModule *mod = (ObjModule*)AS_OBJ(obj);
-                    Value fn_val = dict_get(mod->exports, make_obj((Object*)((ObjString*)AS_OBJ(method_val))));
-                    if (IS_FUNCTION(fn_val)) {
-                        ObjFunction *fn = (ObjFunction*)AS_OBJ(fn_val);
-                        if (fn->is_native) {
-                            if (fn->cfunc) {
-                                result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
-                            } else {
-                                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
-                            }
-                        } else if (vm->frame_count < MAX_FRAMES) {
-                            /* Leaf fast path: skip full frame push */
-                            if (LUNA_LIKELY(fn->is_leaf)) {
-                                CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                                cf->leaf_ret_chunk = current_chunk;
-                                cf->leaf_ret_base = FRAME.base;
-                                cf->leaf_ret_reg = ret_reg;
-                                cf->leaf_ret_closure = FRAME.closure;
-                                cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
-                                FRAME.base = cf->base + obj_reg + 2;
-                                FRAME.nargs = nargs;
-                                FRAME.chunk = fn->chunk;
-                                FRAME.ip = 0;
-                                SYNC_LOCALS();
-                                int _needed = FRAME.base + fn->chunk->max_registers;
-                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                    REG_BASE = vm->stack + FRAME.base;
-                                }
-                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                                    REG_BASE[_i] = make_null();
-                                DECODE; goto *op_labels[OP(instr)];
-                            }
-                            CallFrame *caller = &FRAME;
-                            CallFrame *callee = &vm->frames[vm->frame_count];
-                            callee->chunk = fn->chunk;
-                            callee->ip = 0;
-                            callee->base = caller->base + obj_reg + 2;
-                            callee->ret_reg = ret_reg;
-                            callee->nargs = nargs;
-                            callee->kw_args = make_null();
-                            frame_set_refs(callee, (Object*)NULL, (Object*)fn);
-                            callee->saved_globals = NULL;
-                            int need = callee->base + fn->chunk->max_registers;
-                            if (need > vm->stack_cap) {
-                                vm->stack_cap = need < 64 ? 64 : need * 2;
-                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                            }
-                            for (int j = nargs; j < fn->chunk->max_registers; j++)
-                                vm->stack[callee->base + j] = make_null();
-                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                            caller->ip = (int)(pc - current_chunk->code);
-                            vm->frame_count++;
-                            SYNC_LOCALS();
-                            DECODE;
-                            goto *op_labels[OP(instr)];
-                        }
-                        handled = true;
-                    } else if (IS_CLOSURE(fn_val)) {
-                        ObjClosure *cl = (ObjClosure*)AS_OBJ(fn_val);
-                        ObjFunction *fn = cl->function;
-                        if (fn->is_native) {
-                            if (fn->cfunc) {
-                                result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
-                            } else {
-                                if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
-                            }
-                        } else if (vm->frame_count < MAX_FRAMES) {
-                            /* Leaf fast path: skip full frame push */
-                            if (LUNA_LIKELY(fn->is_leaf)) {
-                                CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                                cf->leaf_ret_chunk = current_chunk;
-                                cf->leaf_ret_base = FRAME.base;
-                                cf->leaf_ret_reg = ret_reg;
-                                cf->leaf_ret_closure = FRAME.closure;
-                                cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, (Object*)cl, (Object*)fn);
-                                FRAME.base = cf->base + obj_reg + 2;
-                                FRAME.nargs = nargs;
-                                FRAME.chunk = fn->chunk;
-                                FRAME.ip = 0;
-                                SYNC_LOCALS();
-                                int _needed = FRAME.base + fn->chunk->max_registers;
-                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                    REG_BASE = vm->stack + FRAME.base;
-                                }
-                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                                for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                                    REG_BASE[_i] = make_null();
-                                DECODE; goto *op_labels[OP(instr)];
-                            }
-                            CallFrame *caller = &FRAME;
-                            CallFrame *callee = &vm->frames[vm->frame_count];
-                            callee->chunk = fn->chunk;
-                            callee->ip = 0;
-                            callee->base = caller->base + obj_reg + 2;
-                            callee->ret_reg = ret_reg;
-                            callee->nargs = nargs;
-                            callee->kw_args = make_null();
-                            frame_set_refs(callee, (Object*)cl, (Object*)fn);
-                            callee->saved_globals = NULL;
-                            int need = callee->base + fn->chunk->max_registers;
-                            if (need > vm->stack_cap) {
-                                vm->stack_cap = need < 64 ? 64 : need * 2;
-                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                            }
-                            for (int j = nargs; j < fn->chunk->max_registers; j++)
-                                vm->stack[callee->base + j] = make_null();
-                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                            caller->ip = (int)(pc - current_chunk->code);
-                            vm->frame_count++;
-                            SYNC_LOCALS();
-                            DECODE;
-                            goto *op_labels[OP(instr)];
-                        }
-                        handled = true;
-                    }
-                    break;
-                }
-                case OBJ_INSTANCE: {
-                    ObjInstance *obj_inst = (ObjInstance*)AS_OBJ(obj);
-                    ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
-                    ObjClass *k = obj_inst->klass;
-                    if (k) {
-                        ObjFunction *method = NULL;
-                        uint32_t ic_idx = ((uint32_t)(uintptr_t)current_chunk ^ (uint32_t)(pc - current_chunk->code)) & (IC_CACHE_SIZE - 1);
-                        IC_InvokeEntry *ic = &vm->invoke_ic[ic_idx];
-                        if (ic->klass == k && ic->name == mname_obj) {
-                            method = ic->method;
-                        } else {
-                            for (int i = k->method_count - 1; i >= 0; i--) {
-                                ObjFunction *m = k->methods[i];
-                                if (m && strcmp(k->method_names[i], mname_obj->chars) == 0) { method = m; break; }
-                            }
-                            if (method) { ic->klass = k; ic->name = mname_obj; ic->method = method; }
-                        }
-                        if (method) {
-                            SET_REG(obj_reg + 1, obj);
-                            if (method->is_native) {
-                                Value native_scratch[256];
-                                native_scratch[0] = obj;
-                                for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
-                                if (!vm_call_native(vm, method->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
-                            } else {
-                                /* Leaf fast path: skip full frame push */
-                                if (LUNA_LIKELY(method->is_leaf)) {
-                                    CallFrame *cf = &FRAME;
-                                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                                    cf->leaf_ret_chunk = current_chunk;
-                                    cf->leaf_ret_base = FRAME.base;
-                                    cf->leaf_ret_reg = ret_reg;
-                                    cf->leaf_ret_closure = FRAME.closure;
-                                    cf->leaf_ret_fn      = FRAME.fn;
-                                    frame_set_refs(&FRAME, (Object*)NULL, (Object*)method);
-                                    FRAME.base = cf->base + obj_reg + 1;
-                                    FRAME.nargs = nargs + 1;
-                                    FRAME.chunk = method->chunk;
-                                    FRAME.ip = 0;
-                                    SYNC_LOCALS();
-                                    REG_BASE[0] = obj; /* Set self */
-                                    int _needed = FRAME.base + method->chunk->max_registers;
-                                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                        REG_BASE = vm->stack + FRAME.base;
-                                    }
-                                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                                    for (int _i = 1 + nargs; _i < method->chunk->max_registers; _i++)
-                                        REG_BASE[_i] = make_null();
-                                    DECODE; goto *op_labels[OP(instr)];
-                                }
-                                if (vm->frame_count < MAX_FRAMES) {
-                                    CallFrame *caller = &FRAME;
-                                    CallFrame *callee = &vm->frames[vm->frame_count];
-                                    callee->chunk = method->chunk;
-                                    callee->ip = 0;
-                                    callee->base = caller->base + obj_reg + 1;
-                                    callee->ret_reg = ret_reg;
-                                    callee->nargs = nargs + 1;
-                                    callee->kw_args = make_null();
-                                    frame_set_refs(callee, (Object*)NULL, (Object*)method);
-                                    callee->saved_globals = NULL;
-                                    int need = callee->base + method->chunk->max_registers;
-                                    if (need > vm->stack_cap) {
-                                        vm->stack_cap = need < 64 ? 64 : need * 2;
-                                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                    }
-                                    vm->stack[callee->base] = obj;
-                                    for (int j = 1 + nargs; j < method->chunk->max_registers; j++)
-                                        vm->stack[callee->base + j] = make_null();
-                                    vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                                    caller->ip = (int)(pc - current_chunk->code);
-                                    vm->frame_count++;
-                                    SYNC_LOCALS();
-                                    DECODE;
-                                    goto *op_labels[OP(instr)];
-                                }
-                            }
-                            handled = true;
-                        } else if (strcmp(mname, "_init") == 0) {
-                            result = make_null();
-                            handled = true;
-                        }
-                    }
-                    break;
-                }
-                /* All other types — use unified get_class + find_method with inline cache */
-                default: {
-                    ObjClass *klass = get_class(vm, obj);
-                    ObjFunction *method = NULL;
-                    if (klass) {
-                        ObjString *mname_obj = (ObjString*)AS_OBJ(method_val);
-                        uint32_t ic_h = ((uint32_t)(uintptr_t)klass ^ mname_obj->hash);
-                        int ic_idx = ic_h & (IC_CACHE_SIZE - 1);
-                        IC_InvokeEntry *ic = &vm->invoke_ic[ic_idx];
-                        if (ic->klass == klass && ic->name == mname_obj) {
-                            method = ic->method;
-                        } else {
-                            method = class_find_method(klass, mname);
-                            if (method) { ic->klass = klass; ic->name = mname_obj; ic->method = method; }
-                        }
-                    }
-                    if (method) {
-                        if (method->is_native) {
-                            native_scratch[0] = obj;
-                            for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
-                            if (!vm_call_native(vm, method->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
-                        } else {
-                            /* Leaf fast path: skip full frame push */
-                            if (LUNA_LIKELY(method->is_leaf)) {
-                                CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                                cf->leaf_ret_chunk = current_chunk;
-                                cf->leaf_ret_base = FRAME.base;
-                                cf->leaf_ret_reg = ret_reg;
-                                cf->leaf_ret_closure = FRAME.closure;
-                                cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, (Object*)NULL, (Object*)method);
-                                FRAME.base = cf->base + obj_reg + 1;
-                                FRAME.nargs = nargs + 1;
-                                FRAME.chunk = method->chunk;
-                                FRAME.ip = 0;
-                                SYNC_LOCALS();
-                                REG_BASE[0] = obj; /* self at reg 0 */
-                                int _needed = FRAME.base + method->chunk->max_registers;
-                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                    REG_BASE = vm->stack + FRAME.base;
-                                }
-                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                                for (int _i = 1 + nargs; _i < method->chunk->max_registers; _i++)
-                                    REG_BASE[_i] = make_null();
-                                DECODE; goto *op_labels[OP(instr)];
-                            }
-                            if (vm->frame_count < MAX_FRAMES) {
-                                CallFrame *caller = &FRAME;
-                                CallFrame *callee = &vm->frames[vm->frame_count];
-                                callee->chunk = method->chunk;
-                                callee->ip = 0;
-                                callee->base = caller->base + obj_reg + 1;
-                                callee->ret_reg = ret_reg;
-                                callee->nargs = nargs + 1;
-                                callee->kw_args = make_null();
-                                frame_set_refs(callee, (Object*)NULL, (Object*)method);
-                                callee->saved_globals = NULL;
-                                int need = callee->base + method->chunk->max_registers;
-                                if (need > vm->stack_cap) {
-                                    vm->stack_cap = need < 64 ? 64 : need * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                }
-                                vm->stack[callee->base] = obj; /* self at reg 0 */
-                                for (int j = 1 + nargs; j < method->chunk->max_registers; j++)
-                                    vm->stack[callee->base + j] = make_null();
-                                vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                                caller->ip = (int)(pc - current_chunk->code);
-                                vm->frame_count++;
-                                SYNC_LOCALS();
-                                DECODE;
-                                goto *op_labels[OP(instr)];
-                            }
-                        }
-                        handled = true;
-                    } else if (klass && strcmp(mname, "_init") == 0) {
-                        /* Constructors are optional: allow new Class() when no _init exists. */
-                        result = make_null();
-                        handled = true;
-                    }
-                    break;
-                }
-            }
-        }
-        if (handled) SET_REG(ret_reg, result);
-        else {
-            char buf[256]; snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
+        /* Resolve the callable + self-binding layout via the frontend. */
+        Value self_arg, callable;
+        if (!vm_invoke(vm, obj, method_val, &self_arg, &callable)) {
+            _exc = vm->last_exception;
             goto op_throw;
         }
+        if (IS_NIL(callable)) { /* optional _init / no-op */
+            SET_REG_PRIM(ret_reg, make_null());
+            DECODE; goto *op_labels[OP(instr)];
+        }
+        Type *t = (IS_OBJ(callable) && AS_OBJ(callable)->type) ? AS_OBJ(callable)->type : NULL;
+        if (!t || !t->call) {
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, "attempt to call non-function");
+            goto op_throw;
+        }
+        bool is_method = !IS_NIL(self_arg);
+
+        /* Bytecode callables expose their chunk via the vtable; native callables
+           return NULL and run synchronously through `call`. The core never names
+           a concrete Luna callable kind (function / closure / bound_method). */
+        Chunk *chunk = t->get_chunk ? t->get_chunk(callable) : NULL;
+        if (chunk) {
+            Value self = is_method ? self_arg
+                         : (t->get_self ? t->get_self(callable) : make_null());
+            /* The method-name slot (obj_reg+1) doubles as the callee fn slot;
+               self lands at callee reg 0 and the args follow at reg 1+ (already
+               sitting in the caller's obj_reg+2.. registers, so re-basing maps
+               them into place with no copy). */
+            uint8_t fn_slot = (uint8_t)(obj_reg + 1);
+            int base = FRAME.base + fn_slot + 1;   /* = obj_reg + 2 */
+            int argc = nargs;
+            int extra = 0;
+            if (!is_null(self)) {
+                SET_REG(fn_slot, self);
+                base = FRAME.base + fn_slot;       /* self at callee reg 0 */
+                argc = nargs + 1;
+                extra = 1;
+            }
+            PUSH_FRAME(AS_OBJ(callable), AS_OBJ(callable), base, ret_reg, argc, extra);
+            APPLY_DEFAULTS(callable, nargs + (is_method ? 1 : 0), make_null());
+            DECODE; goto *op_labels[OP(instr)];
+        }
+
+        /* Native callable: prepend the explicit self for methods, else pass args
+           as-is.  Dispatch through vm_call_value so a native function that throws
+           (via longjmp) surfaces as a catchable exception instead of being
+           swallowed — mirroring the old inline `goto op_throw` on native failure. */
+        int off = is_method ? 1 : 0;
+        Value native_scratch[256];
+        if (is_method) native_scratch[0] = self_arg;
+        for (int i = 0; i < nargs; i++) native_scratch[off + i] = scratch[i];
+        Value result;
+        if (vm_call_value(vm, callable, native_scratch, nargs + off, &result) == VM_EXCEPTION) {
+            _exc = vm->last_exception;
+            goto op_throw;
+        }
+        SET_REG(ret_reg, result);
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -2126,98 +974,51 @@ case OBJ_MODULE: {
         uint8_t nargs   = RC;
         Value method_val = REG(ret_reg + 1);
         Value self = REG(self_reg);
-        if (!IS_STRING(method_val) || !IS_INSTANCE(self)) {
+
+        Value scratch[256];
+        for (int i = 0; i < nargs; i++) scratch[i] = REG(ret_reg + 2 + i);
+
+        /* The frontend (luna_super) validates method_val/self and no-ops by
+           returning a NIL callable, so no inline IS_STRING/IS_INSTANCE guard is
+           needed here. */
+        Value self_arg, callable;
+        if (!vm_super_fn(vm, self, method_val, &self_arg, &callable)) {
+            _exc = vm->last_exception;
+            goto op_throw;
+        }
+        if (IS_NIL(callable)) { /* no-op */
             SET_REG_PRIM(ret_reg, make_null());
             DECODE; goto *op_labels[OP(instr)];
         }
-        const char *mname = ((ObjString*)AS_OBJ(method_val))->chars;
-        ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
-
-        Value result = make_null();
-        bool handled = false;
-
-        /* Look up parent class via klass->base */
-        if (inst->klass && inst->klass->base) {
-            ObjClass *base = inst->klass->base;
-            for (int i = 0; i < base->method_count; i++) {
-                ObjFunction *m = base->methods[i];
-                    if (m && strcmp(base->method_names[i], mname) == 0) {
-                        SET_REG(self_reg + 1, self);
-                        if (m->is_native) {
-                            Value native_scratch[256];
-                            native_scratch[0] = self;
-                            for (int j = 0; j < nargs; j++)
-                                native_scratch[j + 1] = REG(ret_reg + 2 + j);
-                            if (!vm_call_native(vm, m->native_fn, native_scratch, nargs + 1, &result)) goto op_throw;
-                        } else {
-                            /* Leaf fast path: skip full frame push */
-                            if (LUNA_LIKELY(m->is_leaf)) {
-                                CallFrame *cf = &FRAME;
-                                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                                cf->leaf_ret_chunk = current_chunk;
-                                cf->leaf_ret_base = FRAME.base;
-                                cf->leaf_ret_reg = ret_reg;
-                                cf->leaf_ret_closure = FRAME.closure;
-                                cf->leaf_ret_fn      = FRAME.fn;
-                                frame_set_refs(&FRAME, (Object*)NULL, (Object*)m);
-                                FRAME.base = cf->base + self_reg + 1;
-                                FRAME.nargs = nargs + 1;
-                                FRAME.chunk = m->chunk;
-                                FRAME.ip = 0;
-                                SYNC_LOCALS();
-                                REG_BASE[0] = self;
-                                int _needed = FRAME.base + m->chunk->max_registers;
-                                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                                    REG_BASE = vm->stack + FRAME.base;
-                                }
-                                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                                for (int _i = 1 + nargs; _i < m->chunk->max_registers; _i++)
-                                    REG_BASE[_i] = make_null();
-                                DECODE; goto *op_labels[OP(instr)];
-                            }
-                        if (vm->frame_count < MAX_FRAMES) {
-                            CallFrame *caller = &FRAME;
-                            CallFrame *callee = &vm->frames[vm->frame_count];
-                            callee->chunk = m->chunk;
-                            callee->ip = 0;
-                            callee->base = caller->base + self_reg + 1;
-                            callee->ret_reg = ret_reg;
-                            callee->nargs = nargs + 1;
-                            callee->kw_args = make_null();
-                            frame_set_refs(callee, (Object*)NULL, (Object*)m);
-                            callee->saved_globals = NULL;
-                            int need = callee->base + m->chunk->max_registers;
-                            if (need > vm->stack_cap) {
-                                vm->stack_cap = need < 64 ? 64 : need * 2;
-                                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                            }
-                            vm->stack[callee->base] = self;
-                            for (int j = 1 + nargs; j < m->chunk->max_registers; j++)
-                                vm->stack[callee->base + j] = make_null();
-                            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-                            caller->ip = (int)(pc - current_chunk->code);
-                            vm->frame_count++;
-                            SYNC_LOCALS();
-                            DECODE;
-                            goto *op_labels[OP(instr)];
-                        }
-                    }
-                    handled = true;
-                    break;
-                }
-            }
-        }
-
-        if (handled) SET_REG(ret_reg, result);
-        else {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "unknown super method '%s'", mname);
-            
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
+        Type *t = (IS_OBJ(callable) && AS_OBJ(callable)->type) ? AS_OBJ(callable)->type : NULL;
+        if (!t || !t->call) {
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, "attempt to call non-function");
             goto op_throw;
         }
+
+        /* Bytecode callable: push a real frame (mirrors op_call).  self is always
+           present for a super method and lives at callee reg 0. */
+        Chunk *chunk = t->get_chunk ? t->get_chunk(callable) : NULL;
+        if (chunk) {
+            uint8_t fn_slot = (uint8_t)(self_reg + 1);
+            SET_REG(fn_slot, self);
+            int base = FRAME.base + fn_slot;          /* self at callee reg 0 */
+            PUSH_FRAME(AS_OBJ(callable), AS_OBJ(callable), base, ret_reg, nargs + 1, 1);
+            APPLY_DEFAULTS(callable, nargs + 1, make_null());
+            DECODE; goto *op_labels[OP(instr)];
+        }
+
+        /* Native super method: self prepended as first argument.  Dispatch through
+           vm_call_value so a throwing native surfaces as a catchable exception. */
+        Value native_scratch[256];
+        native_scratch[0] = self;
+        for (int i = 0; i < nargs; i++) native_scratch[i + 1] = scratch[i];
+        Value result;
+        if (vm_call_value(vm, callable, native_scratch, nargs + 1, &result) == VM_EXCEPTION) {
+            _exc = vm->last_exception;
+            goto op_throw;
+        }
+        SET_REG(ret_reg, result);
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -2225,15 +1026,22 @@ case OBJ_MODULE: {
     /* 54. OP_THROW */
     op_throw: {
         if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
-            if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception)) {
-                _exc = vm->last_exception;
-            } else {
-                _exc = REG(RA);
+            /* _exc was not pre-set (user OP_THROW or a re-throw). The value
+               lives in REG(RA); only fall back to the still-active exception
+               when REG(RA) itself is empty (a genuine argument-less re-throw). */
+            _exc = REG(RA);
+            if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
+                if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception))
+                    _exc = vm->last_exception;
             }
         }
-        if (!IS_INSTANCE(_exc)) {
+        /* The frontend owns the object model, so ask it whether _exc is already
+           an instance (a proper exception object) before wrapping it. */
+        bool _is_inst = (vm->frontend && vm->frontend->is_instance)
+                        ? vm->frontend->is_instance(vm, _exc) : false;
+        if (!_is_inst) {
             char *msg = value_to_string(_exc);
-            _exc = make_exception_instance(vm, vm->exception_class, msg);
+            _exc = vm_make_exception(vm, VM_EXCEPTION_GENERIC, msg);
             free(msg);
         }
         vm->last_exception = _exc;
@@ -2245,7 +1053,6 @@ case OBJ_MODULE: {
                 while (vm->frame_count > tf->frame_depth) {
                     CallFrame *unwound = &vm->frames[vm->frame_count - 1];
                     
-                    unwound->kw_args = make_null();
                     frame_release_refs(unwound);
                     close_upvalues(vm, vm->frame_count);
                     vm->frame_count--;
@@ -2294,293 +1101,8 @@ case OBJ_MODULE: {
         Value obj = REG(RB);
         Value cls = REG(RC);
         bool result = false;
-        if (IS_OBJ(obj) && AS_OBJ(obj) && AS_OBJ(obj)->type->kind == OBJ_INSTANCE) {
-            ObjClass *obj_class = ((ObjInstance*)AS_OBJ(obj))->klass;
-            if (IS_OBJ(cls) && AS_OBJ(cls) && AS_OBJ(cls)->type->kind == OBJ_CLASS) {
-                ObjClass *target = (ObjClass*)AS_OBJ(cls);
-                while (obj_class) {
-                    if (obj_class == target) { result = true; break; }
-                    obj_class = obj_class->base;
-                }
-            }
-        }
+        vm_instance_of(vm, obj, cls, &result);
         SET_REG_PRIM(RA, make_bool(result));
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* 59. OP_DEFAULT */
-    op_default: {
-        uint8_t param_idx = RA;
-        int32_t skip = sBx;
-        bool has_arg = (FRAME.nargs > (int)param_idx);
-        if (!has_arg && FRAME.fn && FRAME.fn->type->param_count && IS_DICT(FRAME.kw_args)) {
-            Value key_val = FRAME.fn->type->get_param_name(make_obj(FRAME.fn), param_idx);
-            if (!is_null(key_val)) {
-                Value v = dict_get((ObjDict*)AS_OBJ(FRAME.kw_args), key_val);
-                has_arg = !IS_NIL(v);
-            }
-        }
-        if (has_arg) {
-            pc += skip;
-        }
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* 60. OP_KWARGS */
-    op_kwargs: {
-        if (FRAME.fn && FRAME.fn->type->param_count && IS_DICT(FRAME.kw_args)) {
-            int pcount = FRAME.fn->type->param_count(make_obj(FRAME.fn));
-            ObjDict *kw = (ObjDict*)AS_OBJ(FRAME.kw_args);
-            for (int i = 0; i < pcount; i++) {
-                Value key_val = FRAME.fn->type->get_param_name(make_obj(FRAME.fn), i);
-                if (is_null(key_val)) continue;
-                Value v = dict_get(kw, key_val);
-                if (!IS_NIL(v)) {
-                    SET_REG(i, v);
-                }
-            }
-        }
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* 61. OP_KCALL */
-    op_kcall: {
-        uint8_t ret_reg = RA;
-        uint8_t fn_reg  = B;
-        uint8_t nargs   = C;
-        Value fn_val = REG(fn_reg);
-        Value kw_args_val = REG(fn_reg + nargs + 1);
-        if (IS_FUNCTION(fn_val)) {
-            ObjFunction *fn = (ObjFunction *)AS_OBJ(fn_val);
-            if (fn->is_native) {
-                Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result;
-                if (fn->cfunc) {
-                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
-                } else {
-                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
-                }
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            } else {
-                /* Leaf fast path for kcall */
-                if (LUNA_LIKELY(fn->is_leaf)) {
-                    CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                    cf->leaf_ret_chunk = current_chunk;
-                    cf->leaf_ret_base = FRAME.base;
-                    cf->leaf_ret_reg = ret_reg;
-                    cf->leaf_ret_closure = FRAME.closure;
-                    cf->leaf_ret_fn      = FRAME.fn;
-                    frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
-                    FRAME.base = cf->base + fn_reg + 1;
-                    FRAME.nargs = nargs;
-                    FRAME.kw_args = kw_args_val;
-                    FRAME.chunk = fn->chunk;
-                    FRAME.ip = 0;
-                    SYNC_LOCALS();
-                    int _needed = FRAME.base + fn->chunk->max_registers;
-                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                        REG_BASE = vm->stack + FRAME.base;
-                    }
-                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                    for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                        REG_BASE[_i] = make_null();
-                    DECODE; goto *op_labels[OP(instr)];
-                }
-                if (vm->frame_count >= MAX_FRAMES) {
-                    
-                    _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
-                    goto op_throw;
-                }
-                CallFrame *caller = &FRAME;
-                CallFrame *callee = &vm->frames[vm->frame_count];
-                callee->chunk = fn->chunk;
-                callee->ip = 0;
-                callee->base = caller->base + fn_reg + 1;
-                callee->ret_reg = ret_reg;
-                callee->nargs = nargs;
-                callee->kw_args = kw_args_val;
-                
-                frame_set_refs(callee, (Object*)NULL, (Object*)fn);
-                callee->saved_globals = NULL;
-                int needed = callee->base + fn->chunk->max_registers;
-                if (needed > vm->stack_cap) {
-                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                }
-                for (int i = nargs; i < fn->chunk->max_registers; i++)
-                    vm->stack[callee->base + i] = make_null();
-                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
-                caller->ip = (int)(pc - current_chunk->code);
-                vm->frame_count++;
-                SYNC_LOCALS();
-                DECODE;
-                goto *op_labels[OP(instr)];
-            }
-        } else if (IS_CLOSURE(fn_val)) {
-            ObjClosure *cl = (ObjClosure *)AS_OBJ(fn_val);
-            ObjFunction *fn = cl->function;
-            if (fn->is_native) {
-                Value scratch[256];
-                for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
-                Value result;
-                if (fn->cfunc) {
-                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs);
-                } else {
-                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs, &result)) goto op_throw;
-                }
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            } else {
-                /* Leaf fast path for kcall closure */
-                if (LUNA_LIKELY(fn->is_leaf)) {
-                    CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                    cf->leaf_ret_chunk = current_chunk;
-                    cf->leaf_ret_base = FRAME.base;
-                    cf->leaf_ret_reg = ret_reg;
-                    cf->leaf_ret_closure = FRAME.closure;
-                    cf->leaf_ret_fn      = FRAME.fn;
-                    frame_set_refs(&FRAME, (Object*)cl, (Object*)fn);
-                    FRAME.base = cf->base + fn_reg + 1;
-                    FRAME.nargs = nargs;
-                    FRAME.kw_args = kw_args_val;
-                    FRAME.chunk = fn->chunk;
-                    FRAME.ip = 0;
-                    SYNC_LOCALS();
-                    int _needed = FRAME.base + fn->chunk->max_registers;
-                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                        REG_BASE = vm->stack + FRAME.base;
-                    }
-                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                    for (int _i = nargs; _i < fn->chunk->max_registers; _i++)
-                        REG_BASE[_i] = make_null();
-                    DECODE; goto *op_labels[OP(instr)];
-                }
-                if (vm->frame_count >= MAX_FRAMES) {
-                    
-                    _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
-                    goto op_throw;
-                }
-                CallFrame *caller = &FRAME;
-                CallFrame *callee = &vm->frames[vm->frame_count];
-                callee->chunk = fn->chunk;
-                callee->ip = 0;
-                callee->base = caller->base + fn_reg + 1;
-                callee->ret_reg = ret_reg;
-                callee->nargs = nargs;
-                callee->kw_args = kw_args_val;
-                
-                frame_set_refs(callee, (Object*)cl, (Object*)fn);
-                callee->saved_globals = NULL;
-                int needed = callee->base + fn->chunk->max_registers;
-                if (needed > vm->stack_cap) {
-                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                }
-                for (int i = nargs; i < fn->chunk->max_registers; i++)
-                    vm->stack[callee->base + i] = make_null();
-                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
-                caller->ip = (int)(pc - current_chunk->code);
-                vm->frame_count++;
-                SYNC_LOCALS();
-                DECODE;
-                goto *op_labels[OP(instr)];
-            }
-        } else if (IS_BOUND_METHOD(fn_val)) {
-            ObjBoundMethod *bm = (ObjBoundMethod *)AS_OBJ(fn_val);
-            ObjFunction *fn = bm->fn;
-            if (fn->is_native) {
-                Value scratch[256];
-                scratch[0] = bm->self;
-                for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(fn_reg + 1 + i);
-                Value result;
-                if (fn->cfunc) {
-                    result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
-                } else {
-                    if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
-                }
-                SET_REG(ret_reg, result);
-                DECODE; goto *op_labels[OP(instr)];
-            } else {
-                /* Leaf fast path for bound-method kcall */
-                if (LUNA_LIKELY(fn->is_leaf)) {
-                    CallFrame *cf = &FRAME;
-                    cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                    cf->leaf_ret_chunk = current_chunk;
-                    cf->leaf_ret_base = FRAME.base;
-                    cf->leaf_ret_reg = ret_reg;
-                    cf->leaf_ret_closure = FRAME.closure;
-                    cf->leaf_ret_fn      = FRAME.fn;
-                    frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
-                    SET_REG(fn_reg, bm->self);
-                    FRAME.base = cf->base + fn_reg;
-                    FRAME.nargs = nargs + 1;
-                    FRAME.kw_args = kw_args_val;
-                    FRAME.chunk = fn->chunk;
-                    FRAME.ip = 0;
-                    SYNC_LOCALS();
-                    int _needed = FRAME.base + fn->chunk->max_registers;
-                    if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                        vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                        vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                        REG_BASE = vm->stack + FRAME.base;
-                    }
-                    vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                    for (int _i = nargs + 1; _i < fn->chunk->max_registers; _i++)
-                        REG_BASE[_i] = make_null();
-                    DECODE; goto *op_labels[OP(instr)];
-                }
-                if (vm->frame_count >= MAX_FRAMES) {
-                    
-                    _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
-                    goto op_throw;
-                }
-                CallFrame *caller = &FRAME;
-                CallFrame *callee = &vm->frames[vm->frame_count];
-                callee->chunk = fn->chunk;
-                callee->ip = 0;
-                SET_REG(fn_reg, bm->self);
-                callee->base = caller->base + fn_reg;
-                callee->ret_reg = ret_reg;
-                callee->nargs = nargs + 1;
-                callee->kw_args = kw_args_val;
-                
-                frame_set_refs(callee, (Object*)NULL, (Object*)fn);
-                callee->saved_globals = NULL;
-                int needed = callee->base + fn->chunk->max_registers;
-                if (needed > vm->stack_cap) {
-                    vm->stack_cap = needed < 64 ? 64 : needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                }
-                for (int i = nargs + 1; i < fn->chunk->max_registers; i++)
-                    vm->stack[callee->base + i] = make_null();
-                vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
-                caller->ip = (int)(pc - current_chunk->code);
-                vm->frame_count++;
-                SYNC_LOCALS();
-                DECODE;
-                goto *op_labels[OP(instr)];
-            }
-        } else {
-            char *s = value_to_string(fn_val);
-            char buf[256];
-            if (IS_OBJ(fn_val)) {
-                snprintf(buf, sizeof(buf), "attempt to call non-function (type=%d, value=%s)", (int)AS_OBJ(fn_val)->type->kind, s);
-            } else {
-                snprintf(buf, sizeof(buf), "attempt to call non-function (got %s)", s);
-            }
-            free(s);
-            
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
-            goto op_throw;
-        }
         DECODE; goto *op_labels[OP(instr)];
     }
 
@@ -2599,241 +1121,20 @@ case OBJ_MODULE: {
     op_import: {
         uint8_t dst = RA;
         Value mod_name_val = CONST(BX);
-        if (!IS_STRING(mod_name_val)) {
-            
-            _exc = make_exception_instance(vm, vm->exception_class, "import: module name must be a string");
-            goto op_throw;
-        }
-        const char *mod_name = ((ObjString*)AS_OBJ(mod_name_val))->chars;
-
-        Value cached = dict_get(vm->module_cache, mod_name_val);
-        if (!IS_NIL(cached) && IS_MODULE(cached)) {
-            SET_REG(dst, cached);
-            DECODE; goto *op_labels[OP(instr)];
-        }
-
-        char from_dir[1024];
-        path_dirname(FRAME.chunk && FRAME.chunk->source_path ? FRAME.chunk->source_path : NULL, from_dir, sizeof(from_dir));
-
-        char *filepath = module_resolve_path(mod_name, from_dir[0] ? from_dir : NULL);
-        if (!filepath) {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "module '%s' not found", mod_name);
-            
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
-            goto op_throw;
-        }
-
-        char *source = module_read_source(filepath);
-        if (!source) {
-            free(filepath);
-            char buf[256];
-            snprintf(buf, sizeof(buf), "cannot read module '%s'", mod_name);
-            
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
-            goto op_throw;
-        }
-
-        Lexer *lexer = lexer_new(source);
-        TokenList *tokens = lexer_tokenize(lexer);
-
-        bool had_lex_errors = false;
-        for (Token *t = tokens->head; t; t = t->next) {
-            if (t->type == TOK_ERROR) {
-                had_lex_errors = true;
-                fprintf(stderr, "Lexer error in '%s': %s\n", mod_name, t->value);
-            }
-        }
-
-        if (had_lex_errors) {
-            token_list_free(tokens);
-            lexer_free(lexer);
-            free(source);
-            char buf[256];
-            snprintf(buf, sizeof(buf), "import: lexer errors in '%s'", mod_name);
-            
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
-            goto op_throw;
-        }
-
-        Parser *parser = parser_new(tokens, source, filepath);
-        Program *program = parser_parse(parser);
-
-        if (parser->had_error) {
-            parser_free(parser);
-            token_list_free(tokens);
-            lexer_free(lexer);
-            free(source);
-            free(filepath);
-            char buf[256];
-            snprintf(buf, sizeof(buf), "import: parser errors in '%s'", mod_name);
-            
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
-            goto op_throw;
-        }
-
-        /* Save current globals, create fresh table for module compilation+execution */
-        GlobalEntry **saved_globals = vm_globals_save(vm);
-        vm_globals_fresh(vm);
-
-        Chunk mod_chunk;
-        if (!compile_program(program, &mod_chunk, vm, false, true)) {
-            vm_globals_restore(vm, saved_globals);
-            parser_free(parser);
-            token_list_free(tokens);
-            lexer_free(lexer);
-            char buf[256];
-            snprintf(buf, sizeof(buf), "import: compilation errors in '%s'", mod_name);
-            
-            _exc = make_exception_instance(vm, vm->exception_class, buf);
-            goto op_throw;
-        }
-
-        parser_free(parser);
-        token_list_free(tokens);
-        lexer_free(lexer);
-        free(source);
-
-        /* Create ObjFunction wrapper for the module chunk */
-        ObjFunction *mod_fn = new_function(mod_name);
-        mod_fn->chunk = malloc(sizeof(Chunk));
-        *mod_fn->chunk = mod_chunk;
-        mod_fn->chunk->source_path = filepath;
-
-        /* Push function onto stack and set up call frame */
-        SET_REG(dst, make_obj((Object*)mod_fn));
-
-        if (vm->frame_count >= MAX_FRAMES) {
-            
-            _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
-            goto op_throw;
-        }
-
-        CallFrame *caller = &FRAME;
-        CallFrame *callee = &vm->frames[vm->frame_count];
-        callee->chunk         = mod_fn->chunk;
-        callee->ip            = 0;
-        callee->base          = caller->base + dst + 1; /* registers start after the fn slot */
-        callee->ret_reg       = dst;
-        callee->nargs         = 0;
-        callee->kw_args       = make_null();
-        frame_set_refs(callee, (Object*)NULL, (Object*)mod_fn);
-        callee->saved_globals = saved_globals;
-
-        int needed = callee->base + mod_fn->chunk->max_registers;
-        if (needed > vm->stack_cap) {
-            vm->stack_cap = needed < 64 ? 64 : needed * 2;
-            vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-        }
-        for (int i = 0; i < mod_fn->chunk->max_registers; i++)
-            vm->stack[callee->base + i] = make_null();
-        vm->stack_count = needed > vm->stack_count ? needed : vm->stack_count;
-        caller->ip = (int)(pc - current_chunk->code);
-        vm->frame_count++;
-        SYNC_LOCALS();
-        DECODE;
-        goto *op_labels[OP(instr)];
-    }
-
-    /* 67. OP_TRYINIT */
-    op_tryinit: {
-        uint8_t obj_reg = RA;
-        uint8_t nargs   = C;
-        Value obj = REG(obj_reg);
-        if (!IS_INSTANCE(obj)) {
-            
-            _exc = make_exception_instance(vm, vm->type_error_class, "tryinit on non-instance");
-            goto op_throw;
-        }
-        ObjInstance *inst = (ObjInstance*)AS_OBJ(obj);
-        ObjClass *cls = inst->klass;
-        int mi = -1;
-        if (cls) {
-            for (int i = 0; i < cls->method_count; i++) {
-                if (cls->method_names[i] && strcmp(cls->method_names[i], "_init") == 0) { mi = i; break; }
-            }
-        }
-        if (mi < 0) {
-            if (nargs == 0) {
+        {
+            char _from_dir[1024];
+            path_dirname(FRAME.chunk && FRAME.chunk->source_path ? FRAME.chunk->source_path : NULL,
+                         _from_dir, sizeof(_from_dir));
+            Value _module;
+            if (vm_import_module(vm, mod_name_val, _from_dir[0] ? _from_dir : NULL, &_module)) {
+                SET_REG(dst, _module);
                 DECODE; goto *op_labels[OP(instr)];
             }
-            
-            char buf[256];
-            snprintf(buf, sizeof(buf), "class '%s' has no _init constructor but %d argument(s) were provided",
-                     cls ? cls->name : "?", nargs);
-            _exc = make_exception_instance(vm, vm->runtime_error_class, buf);
-            goto op_throw;
+            if (!IS_NIL(vm->last_exception)) {
+                _exc = vm->last_exception;
+                goto op_throw;
+            }
         }
-        ObjFunction *fn = cls->methods[mi];
-        if (fn->is_native) {
-            Value scratch[256];
-            scratch[0] = obj;
-            for (int i = 0; i < nargs; i++) scratch[i + 1] = REG(obj_reg + 2 + i);
-            Value result;
-            if (fn->cfunc) {
-                result = luna_cfunc_dispatch(vm, fn, scratch, nargs + 1);
-            } else {
-                if (!vm_call_native(vm, fn->native_fn, scratch, nargs + 1, &result)) goto op_throw;
-            }
-        } else if (vm->frame_count < MAX_FRAMES) {
-            /* Leaf fast path: skip full frame push */
-            if (LUNA_LIKELY(fn->is_leaf)) {
-                CallFrame *cf = &FRAME;
-                cf->leaf_ret_ip   = (int)(pc - current_chunk->code);
-                cf->leaf_ret_chunk = current_chunk;
-                cf->leaf_ret_base = FRAME.base;
-                cf->leaf_ret_reg = (uint8_t)(obj_reg + nargs + 1);
-                frame_set_refs(&FRAME, (Object*)NULL, (Object*)fn);
-                FRAME.base = cf->base + obj_reg + 1;
-                FRAME.nargs = nargs + 1;
-                FRAME.kw_args = make_null();
-                FRAME.chunk = fn->chunk;
-                FRAME.ip = 0;
-                SYNC_LOCALS();
-                REG_BASE[0] = obj; /* self */
-                int _needed = FRAME.base + fn->chunk->max_registers;
-                if (LUNA_UNLIKELY(_needed > vm->stack_cap)) {
-                    vm->stack_cap = _needed < 64 ? 64 : _needed * 2;
-                    vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-                    REG_BASE = vm->stack + FRAME.base;
-                }
-                vm->stack_count = _needed > vm->stack_count ? _needed : vm->stack_count;
-                for (int _i = 1 + nargs; _i < fn->chunk->max_registers; _i++)
-                    REG_BASE[_i] = make_null();
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            CallFrame *caller = &FRAME;
-            CallFrame *callee = &vm->frames[vm->frame_count];
-            callee->chunk = fn->chunk;
-            callee->ip = 0;
-            callee->base = caller->base + obj_reg + 1;
-            /* Use a dummy ret_reg past the args so _init's nil return
-             * doesn't overwrite the instance at obj_reg. */
-            callee->ret_reg = (uint8_t)(obj_reg + nargs + 1);
-            callee->nargs = nargs + 1;
-            callee->kw_args = make_null();
-            frame_set_refs(callee, (Object*)NULL, (Object*)fn);
-            callee->saved_globals = NULL;
-            int need = callee->base + fn->chunk->max_registers;
-            if (need > vm->stack_cap) {
-                vm->stack_cap = need < 64 ? 64 : need * 2;
-                vm->stack = realloc(vm->stack, vm->stack_cap * sizeof(Value));
-            }
-            vm->stack[callee->base] = obj;
-            for (int j = 1 + nargs; j < fn->chunk->max_registers; j++)
-                vm->stack[callee->base + j] = make_null();
-            vm->stack_count = need > vm->stack_count ? need : vm->stack_count;
-            caller->ip = (int)(pc - current_chunk->code);
-            vm->frame_count++;
-            SYNC_LOCALS();
-            DECODE;
-            goto *op_labels[OP(instr)];
-        } else {
-            
-            _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow");
-            goto op_throw;
-        }
-        DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 68. OP_HALT */
@@ -2842,7 +1143,6 @@ case OBJ_MODULE: {
         vm->last_return_value = REG(0);
         close_upvalues(vm, 0);
         
-        frame->kw_args = make_null();
         for (int i = 0; i < frame->chunk->max_registers; i++) SET_REG(i, make_null());
         frame_release_refs(frame);
         vm->stack_count = 0;

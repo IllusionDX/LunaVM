@@ -8,6 +8,7 @@
 #include <string.h>
 #include "stdlib_math.h"
 #include "value.h"
+#include "luna/object.h"
 
 /* ============================================================ */
 /* Validation helpers                                           */

@@ -8,6 +8,7 @@
 #include <string.h>
 #include "stdlib_buffer.h"
 #include "value.h"
+#include "luna/object.h"
 
 static Value buffer_new(VM *vm, Value *args, int n) {
     if (n > 1) {

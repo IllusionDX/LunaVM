@@ -16,6 +16,115 @@
 #include "chunk.h"
 #include "value.h"
 
+/* Host-callable ABI owned by the core. Frontends may typedef their own name
+ * for the same signature, but the VM must not depend on that frontend name. */
+typedef Value (*VMNativeFn)(struct VM *vm, Value *args, int arg_count);
+
+/* Primitive operation identifiers are part of the VM ABI, not a language
+ * object model.  A frontend can implement these operations without exposing
+ * its classes, slots, or exception hierarchy to the core. */
+typedef enum {
+    VM_OP_ADD, VM_OP_SUB, VM_OP_MUL, VM_OP_DIV, VM_OP_MOD,
+    VM_OP_NEG, VM_OP_BAND, VM_OP_BOR, VM_OP_BXOR, VM_OP_BNOT,
+    VM_OP_SHL, VM_OP_SHR,
+    VM_OP_EQ, VM_OP_NE, VM_OP_LT, VM_OP_LE, VM_OP_GT, VM_OP_GE
+} VMOperation;
+
+typedef bool (*VMUnaryOperation)(struct VM *vm, VMOperation op,
+                                 Value operand, Value *result);
+typedef bool (*VMBinaryOperation)(struct VM *vm, VMOperation op,
+                                  Value left, Value right, Value *result);
+typedef bool (*VMCompareOperation)(struct VM *vm, VMOperation op,
+                                   Value left, Value right, Value *result);
+typedef bool (*VMIndexGetOperation)(struct VM *vm, Value object, Value key,
+                                    bool safe, Value *result);
+typedef bool (*VMIndexSetOperation)(struct VM *vm, Value object, Value key,
+                                     Value value);
+typedef bool (*VMIndexSliceOperation)(struct VM *vm, Value object, Value start,
+                                       Value stop, Value step, bool safe,
+                                       Value *result);
+typedef bool (*VMIterateOperation)(struct VM *vm, Value object, Value *iter,
+                                   Value *state);
+typedef bool (*VMIterNextOperation)(struct VM *vm, Value iter, Value *state,
+                                    Value *elem);
+typedef bool (*VMNewListOperation)(struct VM *vm, int capacity, Value *out);
+typedef bool (*VMNewDictOperation)(struct VM *vm, Value *out);
+typedef Value (*VMNewStringOperation)(struct VM *vm, const char *chars, int length);
+typedef bool (*VMListAppendOperation)(struct VM *vm, Value list, Value value);
+typedef bool (*VMConstructOperation)(struct VM *vm, Value class_name, Value *out);
+typedef bool (*VMMemberGetOperation)(struct VM *vm, Value object, Value name,
+                                     bool safe, Value *result);
+typedef bool (*VMMemberSetOperation)(struct VM *vm, Value object, Value name,
+                                     Value value);
+typedef bool (*VMInstanceOfOperation)(struct VM *vm, Value obj, Value cls,
+                                      bool *result);
+typedef bool (*VMGetFieldSlotOperation)(struct VM *vm, Value obj, int slot,
+                                        Value *out);
+typedef bool (*VMSetFieldSlotOperation)(struct VM *vm, Value obj, int slot,
+                                        Value value);
+typedef bool (*VMInvokeOperation)(struct VM *vm, Value obj, Value name,
+                                  Value *self_arg, Value *callable);
+typedef bool (*VMContainsOperation)(struct VM *vm, Value needle, Value haystack,
+                                    bool *found);
+typedef bool (*VMImportOperation)(struct VM *vm, Value module_name,
+                                  const char *from_path, Value *result);
+typedef enum {
+    VM_EXCEPTION_GENERIC, VM_EXCEPTION_TYPE, VM_EXCEPTION_KEY,
+    VM_EXCEPTION_INDEX, VM_EXCEPTION_ATTRIBUTE, VM_EXCEPTION_VALUE,
+    VM_EXCEPTION_RUNTIME, VM_EXCEPTION_ARGUMENT
+} VMExceptionKind;
+typedef Value (*VMExceptionOperation)(struct VM *vm, VMExceptionKind kind,
+                                       const char *message);
+typedef Value (*VMExceptionClassOperation)(struct VM *vm, void *cls,
+                                            const char *message);
+
+/* Frontend boundary.  The VM owns the execution machinery; a language
+ * frontend supplies these optional hooks for roots and language objects.
+ * Keeping this table in the core lets the Luna implementation evolve without
+ * adding another Luna type to VM's public ABI. */
+typedef struct VMFrontendHooks {
+    void  (*mark_roots)(struct VM *vm);
+    /* Upvalue lifecycle.  The open-upvalue list is frontend state: the core
+     * captures/closes via these hooks and never inspects ObjUpvalue internals. */
+    Object *(*capture_upvalue)(struct VM *vm, int stack_idx);
+    void    (*close_upvalues)(struct VM *vm, int frame_depth);
+    VMUnaryOperation unary;
+    VMBinaryOperation binary;
+    VMCompareOperation compare;
+    VMIndexGetOperation getitem;
+    VMIndexSetOperation setitem;
+    VMMemberGetOperation getattr;
+    VMMemberSetOperation setattr;
+    VMIndexSliceOperation slice;
+    VMIterateOperation iterate;
+    VMIterNextOperation iter_next;
+    VMNewListOperation new_list;
+    VMNewDictOperation new_dict;
+    VMNewStringOperation new_string;
+    VMListAppendOperation list_append;
+    VMConstructOperation construct;
+    VMInstanceOfOperation instance_of;
+    VMGetFieldSlotOperation get_field_slot;
+    VMSetFieldSlotOperation set_field_slot;
+    VMInvokeOperation invoke;
+    VMInvokeOperation super_fn;
+    VMContainsOperation contains;
+    VMImportOperation import_module;
+    VMExceptionOperation make_exception;
+    /* Build an exception from a frontend class object.  Used by luna_throw,
+     * which native functions call with the class pointer they were given. */
+    VMExceptionClassOperation make_exception_for_class;
+    /* Opaque type queries — the frontend owns the object model, so the core
+     * asks "is this a string / instance?" through these hooks rather than
+     * switching on inline object kinds (which would couple it to Luna). */
+    bool (*is_string)(struct VM *vm, Value v);
+    bool (*is_instance)(struct VM *vm, Value v);
+    /* Build a closure from a function constant, capturing upvalues from the
+     * current frame.  The frontend owns the closure layout, so OP_CLOSURE
+     * delegates the whole construction here. */
+    Object *(*new_closure)(struct VM *vm, Value fn_val);
+} VMFrontendHooks;
+
 /* ---- Limits ---- */
 #define VM_MAX_FRAMES    256
 #define VM_MAX_REGISTERS 256
@@ -35,7 +144,6 @@ typedef struct {
     Object *closure;     /* opaque callable for upvalue access (type->get_upvalue) */
     int ret_reg;         /* caller's destination register */
     int nargs;           /* number of positional args passed */
-    Value kw_args;       /* kwargs dict or make_null() if none */
     Object *fn;          /* opaque callable being executed (type->name_of for module naming) */
     struct GlobalEntry **saved_globals; /* non-NULL for module-import frames */
     int leaf_ret_ip;     /* saved IP for leaf-call fast return */
@@ -69,30 +177,35 @@ typedef struct TryFrame {
 #define IC_CACHE_SIZE 1024  /* must be power of 2 */
 
 typedef struct {
-    ObjString   *key;      /* interned string (pointer compare) */
+    void        *key;      /* frontend string object (pointer compare) */
     GlobalEntry *entry;    /* cached hash bucket entry */
 } IC_GlobalEntry;
 
 typedef struct {
-    struct ObjClass *klass;   /* cached class (pointer compare) */
-    ObjString   *name;     /* field/method name */
+    void        *klass;   /* frontend class object (pointer compare) */
+    void        *name;    /* field/method name */
     int          index;    /* cached index */
 } IC_MemberEntry;
 
 typedef struct {
-    struct ObjClass *klass;   /* cached class (pointer compare) */
-    ObjString       *name;    /* interned method name */
-    ObjFunction     *method;  /* cached method pointer */
+    void            *klass;   /* frontend class object (pointer compare) */
+    void            *name;    /* interned method name */
+    void            *method;  /* cached method object */
 } IC_InvokeEntry;
 
 typedef struct {
     Value        fn_val;     /* cached callable value (NaN-boxing compare) */
-    ObjFunction *fn;         /* resolved function */
-    ObjClosure  *cl;         /* closure (NULL for non-closure functions) */
+    void        *fn;         /* resolved callable */
+    void        *cl;         /* closure (NULL for non-closure functions) */
 } IC_CallEntry;
 
 /* ---- VM State ---- */
 typedef struct VM {
+    const VMFrontendHooks *frontend;
+    void *frontend_state;
+    void **frontend_slots;
+    size_t frontend_slot_count;
+    size_t frontend_slot_capacity;
     CallFrame   frames[VM_MAX_FRAMES];
     int         frame_count;
 
@@ -111,7 +224,13 @@ typedef struct VM {
     TryFrame   *try_stack;
 
     /* Open upvalues (not yet closed) */
-    ObjUpvalue *open_upvalues;
+    void       *open_upvalues;
+
+    /* Keyword-argument prefix state.  Set by OP_KW_PREFIX and consumed by the
+     * immediately-following OP_CALL, then reset to zero.  The positional
+     * fast path pays only a register read + compare here. */
+    uint16_t    next_call_kw_idx;   /* constant-pool index of the kw-names tuple */
+    uint8_t     next_call_kw_count; /* number of keyword arguments            */
 
     /* Last unhandled exception */
     Value       last_exception;
@@ -133,32 +252,32 @@ typedef struct VM {
     uint64_t       time_start_us; /* monotonic microseconds captured at vm_init */
 
     /* Module cache — maps module name string to ObjModule */
-    ObjDict *module_cache;
+    void *module_cache;
 
     /* Built-in Exception classes (fast access) */
-    struct ObjClass *exception_class;
-    struct ObjClass *type_error_class;
-    struct ObjClass *key_error_class;
-    struct ObjClass *index_error_class;
-    struct ObjClass *attribute_error_class;
-    struct ObjClass *value_error_class;
-    struct ObjClass *runtime_error_class;
-    struct ObjClass *argument_error_class;
+    void *exception_class;
+    void *type_error_class;
+    void *key_error_class;
+    void *index_error_class;
+    void *attribute_error_class;
+    void *value_error_class;
+    void *runtime_error_class;
+    void *argument_error_class;
 
     /* Canonical classes for built-in types (fast dispatch) */
-    struct ObjClass *string_class;
-    struct ObjClass *list_class;
-    struct ObjClass *dict_class;
-    struct ObjClass *enum_class;
-    struct ObjClass *buffer_class;
-    struct ObjClass *vector_class;
-    struct ObjClass *matrix_class;
-    struct ObjClass *function_class;
-    struct ObjClass *closure_class;
-    struct ObjClass *bound_method_class;
-    struct ObjClass *class_class;
-    struct ObjClass *module_class;
-    struct ObjClass *userdata_class;
+    void *string_class;
+    void *list_class;
+    void *dict_class;
+    void *enum_class;
+    void *buffer_class;
+    void *vector_class;
+    void *matrix_class;
+    void *function_class;
+    void *closure_class;
+    void *bound_method_class;
+    void *class_class;
+    void *module_class;
+    void *userdata_class;
 
     /* Native exception jump stack (for longjmp from C builtins) */
     LunaJump *native_jump;
@@ -175,13 +294,43 @@ typedef enum { VM_OK = 0, VM_EXCEPTION = 1, VM_ERROR = 2 } VMResult;
 /* ============================================================ */
 
 void     vm_init(VM *vm);
+void     vm_set_frontend(VM *vm, const VMFrontendHooks *hooks);
+bool     vm_unary(VM *vm, VMOperation op, Value operand, Value *result);
+bool     vm_binary(VM *vm, VMOperation op, Value left, Value right, Value *result);
+bool     vm_compare(VM *vm, VMOperation op, Value left, Value right, Value *result);
+bool     vm_getitem(VM *vm, Value object, Value key, bool safe, Value *result);
+bool     vm_setitem(VM *vm, Value object, Value key, Value value);
+bool     vm_slice(VM *vm, Value object, Value start, Value stop, Value step,
+                 bool safe, Value *result);
+bool     vm_iterate(VM *vm, Value object, Value *iter, Value *state);
+bool     vm_iter_next(VM *vm, Value iter, Value *state, Value *elem);
+bool     vm_new_list(VM *vm, int capacity, Value *out);
+bool     vm_new_dict(VM *vm, Value *out);
+bool     vm_list_append(VM *vm, Value list, Value value);
+bool     vm_construct(VM *vm, Value class_name, Value *out);
+bool     vm_instance_of(VM *vm, Value obj, Value cls, bool *result);
+bool     vm_get_field_slot(VM *vm, Value obj, int slot, Value *out);
+bool     vm_set_field_slot(VM *vm, Value obj, int slot, Value value);
+bool     vm_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *callable);
+bool     vm_super_fn(VM *vm, Value self, Value name, Value *self_arg, Value *callable);
+bool     vm_contains(VM *vm, Value needle, Value haystack, bool *found);
+bool     vm_getattr(VM *vm, Value object, Value name, bool safe, Value *result);
+bool     vm_setattr(VM *vm, Value object, Value name, Value value);
+bool     vm_import_module(VM *vm, Value name, const char *from_path, Value *result);
+Value    vm_make_exception(VM *vm, VMExceptionKind kind, const char *message);
+int      vm_register_slot(VM *vm, void *value);
+void    *vm_get_slot(const VM *vm, int slot);
 void     vm_free(VM *vm);
 
-void     vm_define_native(VM *vm, const char *name, NativeFn fn);
+void     vm_define_native(VM *vm, const char *name, VMNativeFn fn);
 void     vm_set_process_args(VM *vm, int argc, char **argv);
 void     vm_set_global(VM *vm, const char *name, Value value, bool is_const);
 bool     vm_get_global(VM *vm, const char *name, Value *out);
-bool     vm_get_global_fast(VM *vm, ObjString *name, Value *out);
+GlobalEntry **vm_globals_save(VM *vm);
+void          vm_globals_restore(VM *vm, GlobalEntry **saved);
+void          vm_globals_fresh(VM *vm);
+void         *vm_globals_to_dict(VM *vm);
+bool     vm_get_global_fast(VM *vm, Value name, Value *out);
 GlobalEntry *vm_resolve_global(VM *vm, const char *name);
 void     vm_set_system_global(VM *vm, const char *name, Value value);
 
@@ -193,8 +342,8 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk);
 VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *out);
 
 /* Native exception throw — usable from C builtin functions */
-void luna_throw(VM *vm, struct ObjClass *error_class, const char *format, ...);
-bool vm_call_native(VM *vm, NativeFn fn, Value *args, int arg_count, Value *out);
+void luna_throw(VM *vm, void *error_class, const char *format, ...);
+bool vm_call_native(VM *vm, VMNativeFn fn, Value *args, int arg_count, Value *out);
 
 /* Stack trace — formats the call stack into a string buffer (GCC-style) */
 void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error_msg);
@@ -203,10 +352,7 @@ void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error
 void vm_mark_value(VM *vm, Value v);
 void mark_and_sweep(VM *vm);
 
-/* C function dispatch — called by VM when fn->cfunc is non-NULL */
-Value luna_cfunc_dispatch(VM *vm, struct ObjFunction *fn, Value *args, int arg_count);
-
 /* Upvalue capture — declared here because vm.c defines it after vm_run_chunk */
-ObjUpvalue *capture_upvalue(VM *vm, int stack_idx);
+Object *capture_upvalue(VM *vm, int stack_idx);
 
 #endif /* LUNA_VM_H */

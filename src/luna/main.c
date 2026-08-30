@@ -18,6 +18,10 @@
 #include "vm.h"
 #include "version.h"
 
+/* Frontend lifecycle wiring: must be called once after vm_init (before running). */
+extern void luna_wire_lifecycle(void);
+extern void luna_init_vm(VM *vm);
+
 static void print_usage(const char *program) {
     fprintf(stderr, "Usage: %s [options] <source_file>\n", program);
     fprintf(stderr, "       %s -e <code>   # Execute inline code\n", program);
@@ -97,6 +101,8 @@ static int execute_native_program(const char *source, const char *filepath, int 
 
     VM vm;
     vm_init(&vm);
+    luna_init_vm(&vm);
+    luna_wire_lifecycle();
     vm_set_process_args(&vm, argc, argv);
 #ifdef DEBUG
     fprintf(stderr, "DEBUG: vm_init done\n");
@@ -215,6 +221,8 @@ static int execute_repl_line(VM *vm, const char *source) {
 static void repl(void) {
     VM vm;
     vm_init(&vm);
+    luna_init_vm(&vm);
+    luna_wire_lifecycle();
     vm_set_process_args(&vm, 0, NULL);
 
     bool is_tty = _isatty(_fileno(stdin));

@@ -12,6 +12,7 @@
 #include <time.h>
 #include "vm.h"
 #include "value.h"
+#include "luna/object.h"
 #include "chunk.h"
 
 /* Extern declarations for static mat4 helpers in vm.c */
@@ -66,26 +67,27 @@ bool vm_get_global(VM *vm, const char *name, Value *out) {
     return false;
 }
 
-bool vm_get_global_fast(VM *vm, ObjString *name, Value *out) {
-    uint32_t h = name->hash;
+bool vm_get_global_fast(VM *vm, Value name, Value *out) {
+    ObjString *s = (ObjString*)AS_OBJ(name);
+    uint32_t h = s->hash;
     int idx = h & (IC_CACHE_SIZE - 1);
     IC_GlobalEntry *ic = &vm->global_ic[idx];
-    if (ic->key == name) {
+    if (ic->key == (void*)s) {
         *out = ic->entry->value;
         return true;
     }
     uint32_t bucket = h & (VM_GLOBAL_BUCKETS - 1);
     for (GlobalEntry *e = vm->globals[bucket]; e; e = e->next) {
-        if (e->name == name->chars || strcmp(e->name, name->chars) == 0) {
+        if (e->name == s->chars || strcmp(e->name, s->chars) == 0) {
             *out = e->value;
-            ic->key = name;
+            ic->key = (void*)s;
             ic->entry = e;
             return true;
         }
     }
     /* fall back to system globals (no inline cache for system globals) */
     for (GlobalEntry *e = vm->system_globals[bucket]; e; e = e->next) {
-        if (e->name == name->chars || strcmp(e->name, name->chars) == 0) {
+        if (e->name == s->chars || strcmp(e->name, s->chars) == 0) {
             *out = e->value;
             return true;
         }

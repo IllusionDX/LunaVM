@@ -19,6 +19,7 @@
 #include <time.h>
 #include "vm.h"
 #include "value.h"
+#include "luna/object.h"
 #include "stdlib_random.h"
 
 /* ============================================================ */

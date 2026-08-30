@@ -17,6 +17,11 @@
 #include "chunk.h"
 #include "vm.h"
 
+/* Forward declarations for helpers used by the lifecycle/formatting vtable
+ * (defined later in this file, but referenced by the per-type free funcs). */
+static void intern_remove(ObjString *s);
+static void userdata_run_finalizer(ObjUserdata *ud);
+
 /* ---- helpers available to vtable functions ---- */
 static inline bool is_int64_type(Value v) { return IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == luna_types[OBJ_INT64]; }
 
@@ -142,6 +147,22 @@ static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc
 
 static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc) {
     if (!IS_CLOSURE(self)) return make_null();
+    ObjClosure *cl = (ObjClosure *)AS_OBJ(self);
+    if (cl->function->is_native) {
+        /* Native closure: dispatch like luna_function_call.  This mirrors the
+         * old inline OP_INVOKE native path (which inspected fn->is_native) and
+         * avoids an infinite loop when the core routes a native closure through
+         * t->call (get_chunk returns NULL, so vm_call_value would re-enter). */
+        Value scratch[256];
+        for (int i = 0; i < argc; i++) scratch[i] = args[i];
+        Value result;
+        if (cl->function->cfunc) return luna_cfunc_dispatch(vm, cl->function, scratch, argc);
+        if (!vm_call_native(vm, cl->function->native_fn, scratch, argc, &result)) {
+            if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+            return make_null();
+        }
+        return result;
+    }
     Value out;
     if (vm_call_value(vm, self, args, argc, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
@@ -242,6 +263,79 @@ static const char* luna_instance_name_of(Value self) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     return inst->klass ? inst->klass->name : "instance";
 }
+
+static bool luna_bind_keyword_arguments(struct VM *vm, Value fn_val, uint8_t nargs,
+                                         Value kw_names) {
+    ObjFunction *fn = NULL;
+    int self_skip = 0;
+    if (IS_FUNCTION(fn_val)) {
+        fn = (ObjFunction*)AS_OBJ(fn_val);
+    } else if (IS_CLOSURE(fn_val)) {
+        fn = ((ObjClosure*)AS_OBJ(fn_val))->function;
+    } else if (IS_BOUND_METHOD(fn_val)) {
+        fn = ((ObjBoundMethod*)AS_OBJ(fn_val))->fn;
+        self_skip = 1;
+    } else {
+        return true; /* native / instance callable — core handles it */
+    }
+
+    int param_count = fn->param_count;
+    int eff_count = param_count - self_skip;
+    if (eff_count < 0) eff_count = 0;
+
+    int kw_count = (IS_LIST(kw_names)) ? list_length((ObjList*)AS_OBJ(kw_names)) : 0;
+    int positional = (int)nargs - kw_count;
+    if (positional < 0) positional = 0;
+
+    /* Fast path: no keywords and every parameter already supplied positionally. */
+    if (kw_count == 0 && positional >= eff_count) return true;
+
+    /* Operate on the callee frame's locals (PUSH_FRAME already ran). */
+    int base = vm->frames[vm->frame_count - 1].base;
+    uint8_t first = (uint8_t)self_skip;
+
+    /* Snapshot kwarg values before any nested default evaluation (which may
+       reallocate vm->stack). */
+    Value kw_vals[256];
+    for (int m = 0; m < kw_count && m < 256; m++)
+        kw_vals[m] = vm->stack[base + first + positional + m];
+
+    Value results[256];
+    for (int e = 0; e < eff_count && e < 256; e++) {
+        if (e < positional) {
+            results[e] = vm->stack[base + first + e];
+            continue;
+        }
+        int p = e + self_skip;
+        ObjString *want = fn->param_name_objs[p];
+        int m = -1;
+        for (int k = 0; k < kw_count; k++) {
+            Value kv = list_get((ObjList*)AS_OBJ(kw_names), k);
+            ObjString *ks = (ObjString*)AS_OBJ(kv);
+            if (ks == want) { m = k; break; }
+            if (ks && want && ks->length == want->length &&
+                memcmp(ks->chars, want->chars, (size_t)ks->length) == 0) { m = k; break; }
+        }
+        Value val;
+        if (m >= 0) {
+            val = kw_vals[m];
+        } else if (p < fn->default_count && !IS_NIL(fn->defaults[p])) {
+            Value out;
+            if (vm_call_value(vm, fn->defaults[p], NULL, 0, &out) != VM_OK)
+                return false;
+            val = out;
+        } else {
+            val = make_null();
+        }
+        results[e] = val;
+    }
+
+    for (int e = 0; e < eff_count && e < 256; e++)
+        vm->stack[base + first + e] = results[e];
+
+    return true;
+}
+
 static Value luna_string_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_string_hash(Value self) { return ((ObjString*)AS_OBJ(self))->hash; }
 static int luna_string_len(struct VM *vm, Value self) { (void)vm; return utf8_code_point_count(((ObjString*)AS_OBJ(self))->chars, ((ObjString*)AS_OBJ(self))->length); }
@@ -576,7 +670,7 @@ static int luna_default_len(struct VM *vm, Value self) { (void)vm; return 0; }
  * Type instance definitions (vtable filled)
  * ============================================================ */
 Type luna_string_type  = {
-    .name = "string", .kind = OBJ_STRING,
+    .name = "str", .kind = OBJ_STRING,
     .add = luna_string_add, .sub = luna_string_sub, .mul = luna_string_mul, .div = luna_string_div, .mod = luna_string_mod,
     .neg = luna_string_neg, .cmp = luna_string_cmp,
     .getitem = luna_string_getitem, .setitem = luna_string_setitem,
@@ -620,7 +714,8 @@ Type luna_function_type = {
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
     .call = luna_function_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
     .get_chunk = luna_function_get_chunk, .get_self = luna_function_get_self, .name_of = luna_function_name_of,
-    .param_count = luna_function_param_count, .get_param_name = luna_function_get_param_name
+    .param_count = luna_function_param_count, .get_param_name = luna_function_get_param_name,
+    .bind_keyword_arguments = luna_bind_keyword_arguments
 };
 
 Type luna_closure_type = {
@@ -632,7 +727,8 @@ Type luna_closure_type = {
     .call = luna_closure_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
     .get_chunk = luna_closure_get_chunk, .get_self = luna_closure_get_self, .name_of = luna_closure_name_of,
     .get_upvalue = luna_closure_get_upvalue, .set_upvalue = luna_closure_set_upvalue, .get_upvalue_ref = luna_closure_get_upvalue_ref,
-    .param_count = luna_closure_param_count, .get_param_name = luna_closure_get_param_name
+    .param_count = luna_closure_param_count, .get_param_name = luna_closure_get_param_name,
+    .bind_keyword_arguments = luna_bind_keyword_arguments
 };
 
 Type luna_upvalue_type = {
@@ -669,7 +765,8 @@ Type luna_bound_method_type = {
     .getitem = luna_default_getitem, .setitem = luna_default_setitem,
     .getattr = luna_default_getattr, .setattr = luna_default_setattr,
     .call = luna_bound_method_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
-    .get_chunk = luna_bound_method_get_chunk, .get_self = luna_bound_method_get_self, .name_of = luna_bound_method_name_of
+    .get_chunk = luna_bound_method_get_chunk, .get_self = luna_bound_method_get_self, .name_of = luna_bound_method_name_of,
+    .bind_keyword_arguments = luna_bind_keyword_arguments
 };
 
 Type luna_module_type = {
@@ -745,6 +842,365 @@ Type *luna_types[] = {
     [OBJ_VECTOR]       = &luna_vector_type,
     [OBJ_MATRIX]       = &luna_matrix_type,
 };
+
+/* ============================================================
+ * Lifecycle / formatting vtable (Part 6c)
+ *
+ * The core reaches GC mark, free, equality, and string formatting through
+ * these vtable methods instead of switching on ObjType. The frontend owns
+ * the kind switch here (luna_wire_lifecycle), keeping the core generic.
+ * ============================================================ */
+
+/* defaults — shared by types with no extra resources and no child references */
+static void luna_default_free(Object *obj) { free(obj); }
+static void luna_default_mark(struct VM *vm, Object *obj) { (void)vm; (void)obj; }
+static bool luna_default_eq(Value a, Value b) { return a == b; }
+static char* luna_generic_to_cstr(Value self) {
+    Object *o = AS_OBJ(self);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "<%s>", o->type->name);
+    return strdup(buf);
+}
+
+/* string */
+static void luna_string_free(Object *obj) {
+    ObjString *s = (ObjString*)obj;
+    intern_remove(s);
+    free(s->chars);
+    free(s);
+}
+static char* luna_string_to_cstr(Value self) {
+    return strdup(((ObjString*)AS_OBJ(self))->chars);
+}
+static const char* luna_string_chars(Value self) {
+    return ((ObjString*)AS_OBJ(self))->chars;
+}
+
+/* list */
+static void luna_list_free(Object *obj) {
+    ObjList *l = (ObjList*)obj;
+    if (l->items) free(l->items);
+    free(l);
+}
+static void luna_list_mark(struct VM *vm, Object *obj) {
+    ObjList *l = (ObjList*)obj;
+    if (l->items) {
+        for (int i = 0; i < l->count; i++) vm_mark_value(vm, l->items[i]);
+    } else {
+        for (int i = 0; i < l->count; i++) vm_mark_value(vm, l->inline_items[i]);
+    }
+}
+static char* luna_list_to_cstr(Value self) {
+    ObjList *l = (ObjList*)AS_OBJ(self);
+    int cap = 32; char *out = malloc(cap); int pos = 0;
+    out[pos++] = '[';
+    for (int i = 0; i < l->count; i++) {
+        Value item = l->items ? l->items[i] : l->inline_items[i];
+        char *e = value_to_string(item);
+        bool is_str = IS_STRING(item);
+        int need = pos + (int)strlen(e) + (is_str ? 2 : 0) + 4;
+        if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
+        if (i > 0) { out[pos++] = ','; out[pos++] = ' '; }
+        if (is_str) out[pos++] = '"';
+        int el = (int)strlen(e); memcpy(out + pos, e, el); pos += el;
+        if (is_str) out[pos++] = '"';
+        free(e);
+    }
+    if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
+    out[pos++] = ']'; out[pos] = '\0';
+    char *r = strdup(out); free(out); return r;
+}
+
+/* dict */
+static void luna_dict_free(Object *obj) {
+    ObjDict *d = (ObjDict*)obj;
+    if (d->entries) { free(d->entries); free(d->order); }
+    free(d);
+}
+static void luna_dict_mark(struct VM *vm, Object *obj) {
+    ObjDict *d = (ObjDict*)obj;
+    if (d->entries == NULL) {
+        for (int i = 0; i < d->entry_count; i++) {
+            vm_mark_value(vm, d->inline_entries[i].key);
+            vm_mark_value(vm, d->inline_entries[i].value);
+        }
+    } else {
+        for (int i = 0; i < d->capacity; i++) {
+            if (d->entries[i].key != EMPTY_VAL && d->entries[i].key != TOMBSTONE_VAL) {
+                vm_mark_value(vm, d->entries[i].key);
+                vm_mark_value(vm, d->entries[i].value);
+            }
+        }
+    }
+}
+static char* luna_dict_to_cstr(Value self) {
+    ObjDict *d = (ObjDict*)AS_OBJ(self);
+    int cap = 32; char *out = malloc(cap); int pos = 0; bool first = true;
+    out[pos++] = '{';
+    if (d->entries == NULL) {
+        for (int i = 0; i < d->entry_count; i++) {
+            ObjDictEntry *e = &d->inline_entries[i];
+            char *k = value_to_string(e->key), *val = value_to_string(e->value);
+            bool ks = IS_STRING(e->key);
+            bool vs = IS_STRING(e->value);
+            int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
+            if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
+            if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
+            if (ks) out[pos++] = '"';
+            int kl = (int)strlen(k); memcpy(out + pos, k, kl); pos += kl;
+            if (ks) out[pos++] = '"';
+            out[pos++] = ':'; out[pos++] = ' ';
+            if (vs) out[pos++] = '"';
+            int vl = (int)strlen(val); memcpy(out + pos, val, vl); pos += vl;
+            if (vs) out[pos++] = '"';
+            free(k); free(val);
+        }
+    } else {
+        for (int i = 0; i < d->order_count; i++) {
+            int idx = d->order[i];
+            if (d->entries[idx].key == EMPTY_VAL || d->entries[idx].key == TOMBSTONE_VAL) continue;
+            ObjDictEntry *e = &d->entries[idx];
+            char *k = value_to_string(e->key), *val = value_to_string(e->value);
+            bool ks = IS_STRING(e->key);
+            bool vs = IS_STRING(e->value);
+            int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
+            if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
+            if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
+            if (ks) out[pos++] = '"';
+            int kl = (int)strlen(k); memcpy(out + pos, k, kl); pos += kl;
+            if (ks) out[pos++] = '"';
+            out[pos++] = ':'; out[pos++] = ' ';
+            if (vs) out[pos++] = '"';
+            int vl = (int)strlen(val); memcpy(out + pos, val, vl); pos += vl;
+            if (vs) out[pos++] = '"';
+            free(k); free(val);
+        }
+    }
+    if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
+    out[pos++] = '}'; out[pos] = '\0';
+    char *r = strdup(out); free(out); return r;
+}
+
+/* instance */
+static void luna_instance_free(Object *obj) {
+    ObjInstance *inst = (ObjInstance*)obj;
+    if (inst->class_name) free(inst->class_name);
+    for (int i = 0; i < inst->field_count; i++) {
+        if (inst->field_names[i]) free(inst->field_names[i]);
+    }
+    free(inst->field_names); free(inst->fields); free(inst);
+}
+static void luna_instance_mark(struct VM *vm, Object *obj) {
+    ObjInstance *inst = (ObjInstance*)obj;
+    for (int i = 0; i < inst->field_count; i++) vm_mark_value(vm, inst->fields[i]);
+    if (inst->klass) vm_mark_value(vm, make_obj((Object*)inst->klass));
+}
+static char* luna_instance_to_cstr(Value self) {
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
+    Value msgv = instance_get_field(inst, "message");
+    char buf[64];
+    if (IS_STRING(msgv)) {
+        return strdup(((ObjString*)AS_OBJ(msgv))->chars);
+    } else {
+        snprintf(buf, sizeof(buf), "<instance of %s>", inst->class_name);
+        return strdup(buf);
+    }
+}
+static const char* luna_instance_message(struct VM *vm, Value self) {
+    (void)vm;
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
+    Value msgv = instance_get_field(inst, "message");
+    if (IS_STRING(msgv)) return ((ObjString*)AS_OBJ(msgv))->chars;
+    return NULL;
+}
+static const char* luna_instance_class_name(Value self) {
+    ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
+    return inst->class_name ? inst->class_name : "Error";
+}
+
+/* function */
+static void luna_function_free(Object *obj) {
+    ObjFunction *f = (ObjFunction*)obj;
+    free(f->name);
+    if (f->param_names) {
+        for (int i = 0; i < f->param_count; i++) free(f->param_names[i]);
+        free(f->param_names);
+    }
+    free(f->param_name_objs);
+    if (f->chunk) { chunk_free(f->chunk); free(f->chunk); }
+    free(f->upvalue_descriptors);
+    /* Default thunks are GC-managed objects referenced only by fn->defaults;
+       the GC frees them.  We only release the index/value array here. */
+    free(f->defaults);
+    free(f);
+}
+static void luna_function_mark(struct VM *vm, Object *obj) {
+    ObjFunction *f = (ObjFunction*)obj;
+    if (f->chunk) {
+        for (int i = 0; i < f->chunk->const_count; i++) vm_mark_value(vm, f->chunk->constants[i]);
+    }
+    if (f->defaults) {
+        for (int i = 0; i < f->default_count; i++) vm_mark_value(vm, f->defaults[i]);
+    }
+}
+static char* luna_function_to_cstr(Value self) {
+    ObjFunction *f = (ObjFunction*)AS_OBJ(self);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "<%s %s>", f->is_native ? "native fn" : "fn", f->name ? f->name : "?");
+    return strdup(buf);
+}
+
+/* upvalue */
+static void luna_upvalue_mark(struct VM *vm, Object *obj) {
+    ObjUpvalue *uv = (ObjUpvalue*)obj;
+    vm_mark_value(vm, uv->closed);
+}
+
+/* closure */
+static void luna_closure_free(Object *obj) {
+    ObjClosure *cl = (ObjClosure*)obj;
+    free(cl->upvalues);
+    free(cl);
+}
+static void luna_closure_mark(struct VM *vm, Object *obj) {
+    ObjClosure *cl = (ObjClosure*)obj;
+    if (cl->function) vm_mark_value(vm, make_obj((Object*)cl->function));
+    for (int i = 0; i < cl->upvalue_count; i++) {
+        if (cl->upvalues[i]) vm_mark_value(vm, make_obj((Object*)cl->upvalues[i]));
+    }
+}
+
+/* enum */
+static void luna_enum_free(Object *obj) {
+    ObjEnum *e = (ObjEnum*)obj;
+    free(e->name);
+    for (int i = 0; i < e->count; i++) free(e->names[i]);
+    free(e->names);
+    free(e->values);
+    free(e);
+}
+static char* luna_enum_to_cstr(Value self) {
+    ObjEnum *e = (ObjEnum*)AS_OBJ(self);
+    char *out = malloc(64);
+    int n = snprintf(out, 64, "<enum %s (%d variants)>", e->name, e->count);
+    if (n >= 64) { out = realloc(out, (size_t)n + 1); snprintf(out, (size_t)n + 1, "<enum %s (%d variants)>", e->name, e->count); }
+    char *r = strdup(out); free(out); return r;
+}
+
+/* class */
+static void luna_class_free(Object *obj) {
+    ObjClass *cls = (ObjClass*)obj;
+    free(cls->name);
+    if (cls->method_names) {
+        for (int i = 0; i < cls->method_count; i++)
+            if (cls->method_names[i]) free(cls->method_names[i]);
+        free(cls->method_names);
+    }
+    free(cls->methods);
+    free(cls);
+}
+static void luna_class_mark(struct VM *vm, Object *obj) {
+    ObjClass *cls = (ObjClass*)obj;
+    if (cls->base) vm_mark_value(vm, make_obj((Object*)cls->base));
+    if (cls->prototype) vm_mark_value(vm, make_obj((Object*)cls->prototype));
+    for (int i = 0; i < cls->method_count; i++) {
+        if (cls->methods[i]) vm_mark_value(vm, make_obj((Object*)cls->methods[i]));
+    }
+    if (cls->fields) vm_mark_value(vm, make_obj((Object*)cls->fields));
+}
+
+/* bound_method */
+static void luna_bound_method_mark(struct VM *vm, Object *obj) {
+    ObjBoundMethod *bm = (ObjBoundMethod*)obj;
+    vm_mark_value(vm, bm->self);
+    if (bm->fn) vm_mark_value(vm, make_obj((Object*)bm->fn));
+}
+static char* luna_bound_method_to_cstr(Value self) {
+    ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(self);
+    ObjFunction *f = bm->fn;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "<bound method %s>", f && f->name ? f->name : "?");
+    return strdup(buf);
+}
+
+/* module */
+static void luna_module_mark(struct VM *vm, Object *obj) {
+    ObjModule *mod = (ObjModule*)obj;
+    if (mod->name) vm_mark_value(vm, make_obj((Object*)mod->name));
+    if (mod->exports) vm_mark_value(vm, make_obj((Object*)mod->exports));
+}
+static char* luna_module_to_cstr(Value self) {
+    ObjModule *mod = (ObjModule*)AS_OBJ(self);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "<module %s>", mod->name ? mod->name->chars : "?");
+    return strdup(buf);
+}
+
+/* buffer */
+static void luna_buffer_free(Object *obj) {
+    ObjBuffer *bufv = (ObjBuffer*)obj;
+    free(bufv->data);
+    free(bufv);
+}
+static char* luna_buffer_to_cstr(Value self) {
+    ObjBuffer *bufv = (ObjBuffer*)AS_OBJ(self);
+    char out[64];
+    snprintf(out, sizeof(out), "<buffer %zu bytes>", bufv->size);
+    return strdup(out);
+}
+
+/* userdata */
+static void luna_userdata_free(Object *obj) {
+    ObjUserdata *ud = (ObjUserdata*)obj;
+    userdata_run_finalizer(ud);
+    free(ud->tag);
+    free(ud);
+}
+
+/* One-time wiring: the frontend owns this kind switch; the core stays generic. */
+void luna_wire_lifecycle(void) {
+    for (int k = 0; k <= OBJ_MATRIX; k++) {
+        Type *t = luna_types[k];
+        /* ObjType intentionally has reserved values; there is no Type for
+         * those slots in luna_types[]. */
+        if (!t) continue;
+        if (!t->free) t->free = luna_default_free;
+        if (!t->mark) t->mark = luna_default_mark;
+        if (!t->eq) t->eq = luna_default_eq;
+        if (!t->to_cstr) t->to_cstr = luna_generic_to_cstr;
+        switch (k) {
+            case OBJ_STRING:
+                t->free = luna_string_free; t->to_cstr = luna_string_to_cstr;
+                t->string_chars = luna_string_chars; break;
+            case OBJ_LIST:
+                t->free = luna_list_free; t->mark = luna_list_mark; t->to_cstr = luna_list_to_cstr; break;
+            case OBJ_DICT:
+                t->free = luna_dict_free; t->mark = luna_dict_mark; t->to_cstr = luna_dict_to_cstr; break;
+            case OBJ_INSTANCE:
+                t->free = luna_instance_free; t->mark = luna_instance_mark; t->to_cstr = luna_instance_to_cstr;
+                t->message = luna_instance_message; t->class_name = luna_instance_class_name; break;
+            case OBJ_FUNCTION:
+                t->free = luna_function_free; t->mark = luna_function_mark; t->to_cstr = luna_function_to_cstr; break;
+            case OBJ_UPVALUE:
+                t->mark = luna_upvalue_mark; break;
+            case OBJ_CLOSURE:
+                t->free = luna_closure_free; t->mark = luna_closure_mark; break;
+            case OBJ_ENUM:
+                t->free = luna_enum_free; t->to_cstr = luna_enum_to_cstr; break;
+            case OBJ_CLASS:
+                t->free = luna_class_free; t->mark = luna_class_mark; break;
+            case OBJ_BOUND_METHOD:
+                t->mark = luna_bound_method_mark; t->to_cstr = luna_bound_method_to_cstr; break;
+            case OBJ_MODULE:
+                t->mark = luna_module_mark; t->to_cstr = luna_module_to_cstr; break;
+            case OBJ_BUFFER:
+                t->free = luna_buffer_free; t->to_cstr = luna_buffer_to_cstr; break;
+            case OBJ_USERDATA:
+                t->free = luna_userdata_free; break;
+            default: break;
+        }
+    }
+}
 /* ============================================================ */
 /* Hashing                                                       */
 /* ============================================================ */
@@ -1048,6 +1504,8 @@ ObjFunction *new_function(const char *name) {
     f->body = NULL;
     f->body_count = 0;
     f->closure = NULL;
+    f->defaults = NULL;
+    f->default_count = 0;
     return f;
 }
 
@@ -1203,7 +1661,8 @@ void buffer_append_data(ObjBuffer *buf, const uint8_t *data, size_t len) {
     buf->size += len;
 }
 
-Value make_exception_instance(struct VM *vm, ObjClass *cls, const char *message) {
+Value make_exception_instance(struct VM *vm, void *cls_obj, const char *message) {
+    ObjClass *cls = (ObjClass*)cls_obj;
     if (!cls) cls = vm->exception_class;
     if (!cls) return make_null();
     ObjInstance *inst = new_instance(cls, 4);
@@ -1253,99 +1712,7 @@ void free_object_container(Object *obj) {
     allocated_objects--;
     bytes_allocated -= obj->size;
 
-    switch (obj->type->kind) {
-        case OBJ_STRING: { ObjString *s = (ObjString *)obj; intern_remove(s); free(s->chars); free(s); break; }
-        case OBJ_LIST: {
-            ObjList *l = (ObjList *)obj;
-            if (l->items) free(l->items);
-            free(l); break;
-        }
-        case OBJ_DICT: {
-            ObjDict *d = (ObjDict *)obj;
-            if (d->entries) { free(d->entries); free(d->order); }
-            free(d); break;
-        }
-        case OBJ_INSTANCE: {
-            ObjInstance *inst = (ObjInstance *)obj;
-            if (inst->class_name) free(inst->class_name);
-            for (int i = 0; i < inst->field_count; i++) {
-                if (inst->field_names[i]) free(inst->field_names[i]);
-            }
-            free(inst->field_names); free(inst->fields); free(inst); break;
-        }
-        case OBJ_FUNCTION: {
-            ObjFunction *f = (ObjFunction *)obj;
-            free(f->name);
-            if (f->param_names) {
-                for (int i = 0; i < f->param_count; i++) free(f->param_names[i]);
-                free(f->param_names);
-            }
-            free(f->param_name_objs);
-            if (f->chunk) {
-                chunk_free(f->chunk);
-                free(f->chunk);
-            }
-            free(f->upvalue_descriptors);
-            free(f); break;
-        }
-        case OBJ_UPVALUE: {
-            free((ObjUpvalue *)obj); break;
-        }
-        case OBJ_CLOSURE: {
-            ObjClosure *cl = (ObjClosure *)obj;
-            free(cl->upvalues);
-            free(cl); break;
-        }
-        case OBJ_ENUM: {
-            ObjEnum *e = (ObjEnum *)obj;
-            free(e->name);
-            for (int i = 0; i < e->count; i++) free(e->names[i]);
-            free(e->names); free(e->values); free(e); break;
-        }
-        case OBJ_CLASS: {
-            ObjClass *cls = (ObjClass *)obj;
-            free(cls->name);
-            if (cls->method_names) {
-                for (int i = 0; i < cls->method_count; i++)
-                    if (cls->method_names[i]) free(cls->method_names[i]);
-                free(cls->method_names);
-            }
-            free(cls->methods);
-            free(cls); break;
-        }
-        case OBJ_BOUND_METHOD: {
-            free(obj); break;
-        }
-        case OBJ_MODULE: {
-            free(obj); break;
-        }
-        case OBJ_BUFFER: {
-            ObjBuffer *buf = (ObjBuffer*)obj;
-            free(buf->data);
-            free(buf);
-            break;
-        }
-        case OBJ_INT64: {
-            free(obj);
-            break;
-        }
-        case OBJ_USERDATA: {
-            ObjUserdata *ud = (ObjUserdata*)obj;
-            userdata_run_finalizer(ud);
-            free(ud->tag);
-            free(ud);
-            break;
-        }
-        case OBJ_VECTOR: {
-            free(obj);
-            break;
-        }
-        case OBJ_MATRIX: {
-            free(obj);
-            break;
-        }
-        default: free(obj); break;
-    }
+    if (obj->type->free) obj->type->free(obj);
 }
 
 
@@ -1379,6 +1746,13 @@ bool values_equal(Value a, Value b) {
     if ((IS_DOUBLE(a) || IS_INT(a) || IS_INT64(a)) && (IS_DOUBLE(b) || IS_INT(b) || IS_INT64(b))) {
         return as_double(a) == as_double(b);
     }
+    /* Heap objects: route through the type's eq vtable. The default impl is
+     * pointer equality (matching the previous behaviour); concrete types may
+     * override for value semantics. */
+    if (IS_OBJ(a) && IS_OBJ(b)) {
+        Type *ta = AS_OBJ(a)->type, *tb = AS_OBJ(b)->type;
+        if (ta == tb && ta->eq) return ta->eq(a, b);
+    }
     return false;
 }
 
@@ -1392,134 +1766,8 @@ char *value_to_string(Value v) {
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
         if (!obj) return strdup("null");
-        switch (obj->type->kind) {
-            case OBJ_STRING:  return strdup(((ObjString *)obj)->chars);
-            case OBJ_FUNCTION: {
-                ObjFunction *f = (ObjFunction *)obj;
-                snprintf(buf, sizeof(buf), "<%s %s>", f->is_native ? "native fn" : "fn", f->name ? f->name : "?");
-                return strdup(buf);
-            }
-            case OBJ_INSTANCE: {
-                ObjInstance *inst = (ObjInstance*)obj;
-                Value msgv = instance_get_field(inst, "message");
-                if (IS_STRING(msgv)) {
-                    return strdup(((ObjString*)AS_OBJ(msgv))->chars);
-                } else {
-                    snprintf(buf, sizeof(buf), "<instance of %s>", inst->class_name);
-                    return strdup(buf);
-                }
-            }
-            case OBJ_LIST: {
-                ObjList *l = (ObjList *)obj;
-                int cap = 32; char *out = malloc(cap); int pos = 0;
-                out[pos++] = '[';
-                for (int i = 0; i < l->count; i++) {
-                    Value item = l->items ? l->items[i] : l->inline_items[i];
-                    char *e = value_to_string(item);
-                    bool is_str = IS_STRING(item);
-                    int need = pos + (int)strlen(e) + (is_str ? 2 : 0) + 4;
-                    if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
-                    if (i > 0) { out[pos++] = ','; out[pos++] = ' '; }
-                    if (is_str) out[pos++] = '"';
-                    int el = (int)strlen(e); memcpy(out + pos, e, el); pos += el;
-                    if (is_str) out[pos++] = '"';
-                    free(e);
-                }
-                if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
-                out[pos++] = ']'; out[pos] = '\0';
-                char *r = strdup(out); free(out); return r;
-            }
-            case OBJ_DICT: {
-                ObjDict *d = (ObjDict *)obj;
-                int cap = 32; char *out = malloc(cap); int pos = 0; bool first = true;
-                out[pos++] = '{';
-                if (d->entries == NULL) {
-                    for (int i = 0; i < d->entry_count; i++) {
-                        ObjDictEntry *e = &d->inline_entries[i];
-                        char *k = value_to_string(e->key), *val = value_to_string(e->value);
-                        bool ks = IS_STRING(e->key);
-                        bool vs = IS_STRING(e->value);
-                        int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
-                        if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
-                        if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
-                        if (ks) out[pos++] = '"';
-                        int kl = (int)strlen(k); memcpy(out + pos, k, kl); pos += kl;
-                        if (ks) out[pos++] = '"';
-                        out[pos++] = ':'; out[pos++] = ' ';
-                        if (vs) out[pos++] = '"';
-                        int vl = (int)strlen(val); memcpy(out + pos, val, vl); pos += vl;
-                        if (vs) out[pos++] = '"';
-                        free(k); free(val);
-                    }
-                } else {
-                    for (int i = 0; i < d->order_count; i++) {
-                        int idx = d->order[i];
-                        if (d->entries[idx].key == EMPTY_VAL || d->entries[idx].key == TOMBSTONE_VAL) continue;
-                        ObjDictEntry *e = &d->entries[idx];
-                        char *k = value_to_string(e->key), *val = value_to_string(e->value);
-                        bool ks = IS_STRING(e->key);
-                        bool vs = IS_STRING(e->value);
-                        int need = pos + (int)strlen(k) + (int)strlen(val) + (ks ? 2 : 0) + (vs ? 2 : 0) + 8;
-                        if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
-                        if (!first) { out[pos++] = ','; out[pos++] = ' '; } first = false;
-                        if (ks) out[pos++] = '"';
-                        int kl = (int)strlen(k); memcpy(out + pos, k, kl); pos += kl;
-                        if (ks) out[pos++] = '"';
-                        out[pos++] = ':'; out[pos++] = ' ';
-                        if (vs) out[pos++] = '"';
-                        int vl = (int)strlen(val); memcpy(out + pos, val, vl); pos += vl;
-                        if (vs) out[pos++] = '"';
-                        free(k); free(val);
-                    }
-                }
-                if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
-                out[pos++] = '}'; out[pos] = '\0';
-                char *r = strdup(out); free(out); return r;
-            }
-            case OBJ_ENUM: {
-                ObjEnum *e = (ObjEnum*)obj;
-                int cap = 64; char *out = malloc(cap);
-                int n = snprintf(out, cap, "<enum %s (%d variants)>", e->name, e->count);
-                if (n >= cap) { cap = n + 1; out = realloc(out, cap); snprintf(out, cap, "<enum %s (%d variants)>", e->name, e->count); }
-                char *r = strdup(out); free(out); return r;
-            }
-            case OBJ_BOUND_METHOD: {
-                ObjBoundMethod *bm = (ObjBoundMethod*)obj;
-                ObjFunction *f = bm->fn;
-                snprintf(buf, sizeof(buf), "<bound method %s>", f && f->name ? f->name : "?");
-                return strdup(buf);
-            }
-            case OBJ_MODULE: {
-                ObjModule *mod = (ObjModule*)obj;
-                snprintf(buf, sizeof(buf), "<module %s>", mod->name ? mod->name->chars : "?");
-                return strdup(buf);
-            }
-            case OBJ_BUFFER: {
-                ObjBuffer *bufv = (ObjBuffer*)obj;
-                snprintf(buf, sizeof(buf), "<buffer %zu bytes>", bufv->size);
-                return strdup(buf);
-            }
-            case OBJ_INT64: {
-                ObjInt64 *i64 = (ObjInt64*)obj;
-                snprintf(buf, sizeof(buf), "<int64 %" PRId64 ">", (int64_t)i64->value);
-                return strdup(buf);
-            }
-            case OBJ_USERDATA: {
-                ObjUserdata *ud = (ObjUserdata*)obj;
-                snprintf(buf, sizeof(buf), "<userdata %s>", ud->tag ? ud->tag : "?");
-                return strdup(buf);
-            }
-            case OBJ_VECTOR: {
-                ObjVector *vec = (ObjVector*)obj;
-                snprintf(buf, sizeof(buf), "vec4(%.6g, %.6g, %.6g, %.6g)",
-                         vec->data[0], vec->data[1], vec->data[2], vec->data[3]);
-                return strdup(buf);
-            }
-            case OBJ_MATRIX: {
-                return strdup("<mat4>");
-            }
-            default: return strdup("<object>");
-        }
+        if (obj->type->to_cstr) return obj->type->to_cstr(v);
+        return strdup("<object>");
     }
     return strdup("<unknown>");
 }
@@ -1723,7 +1971,8 @@ static void dict_resize(ObjDict *d) {
     d->tombstone_count = 0;
 }
 
-void dict_set(ObjDict *d, Value key, Value value) {
+void dict_set(void *obj, Value key, Value value) {
+    ObjDict *d = (ObjDict*)obj;
     if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key)) {
@@ -1781,7 +2030,8 @@ void dict_set(ObjDict *d, Value key, Value value) {
     d->entry_count++;
 }
 
-Value dict_get(ObjDict *d, Value key) {
+Value dict_get(void *obj, Value key) {
+    ObjDict *d = (ObjDict*)obj;
     if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key))
@@ -1807,7 +2057,8 @@ Value dict_get(ObjDict *d, Value key) {
     return make_null();
 }
 
-bool dict_has(ObjDict *d, Value key) {
+bool dict_has(void *obj, Value key) {
+    ObjDict *d = (ObjDict*)obj;
     if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key))
@@ -1833,7 +2084,8 @@ bool dict_has(ObjDict *d, Value key) {
     return false;
 }
 
-Value dict_remove(ObjDict *d, Value key) {
+Value dict_remove(void *obj, Value key) {
+    ObjDict *d = (ObjDict*)obj;
     if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
             if (values_equal(d->inline_entries[i].key, key)) {
@@ -1869,7 +2121,8 @@ Value dict_remove(ObjDict *d, Value key) {
     return make_null();
 }
 
-void dict_clear(ObjDict *d) {
+void dict_clear(void *obj) {
+    ObjDict *d = (ObjDict*)obj;
     if (d->entries == NULL) {
         d->entry_count = 0;
         return;
@@ -1880,9 +2133,10 @@ void dict_clear(ObjDict *d) {
     d->tombstone_count = 0;
 }
 
-int dict_length(ObjDict *d) { return d->entry_count; }
+int dict_length(void *obj) { return ((ObjDict*)obj)->entry_count; }
 
-Value dict_keys(ObjDict *d) {
+Value dict_keys(void *obj) {
+    ObjDict *d = (ObjDict*)obj;
     ObjList *list = new_list(d->entry_count);
     if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++)
@@ -1897,7 +2151,8 @@ Value dict_keys(ObjDict *d) {
     return make_obj((Object *)list);
 }
 
-Value dict_values(ObjDict *d) {
+Value dict_values(void *obj) {
+    ObjDict *d = (ObjDict*)obj;
     ObjList *list = new_list(d->entry_count);
     if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++)
@@ -1916,7 +2171,8 @@ Value dict_values(ObjDict *d) {
 /* Class method helpers                                           */
 /* ============================================================ */
 
-void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn) {
+void class_add_native_method(void *cls_obj, const char *name, NativeFn fn) {
+    ObjClass *cls = (ObjClass*)cls_obj;
     if (cls->method_count >= cls->method_capacity) {
         int new_cap = cls->method_capacity < 8 ? 8 : cls->method_capacity * 2;
         cls->methods      = realloc(cls->methods,      new_cap * sizeof(ObjFunction*));

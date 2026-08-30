@@ -5,6 +5,7 @@
 #include <string.h>
 #include "chunk.h"
 #include "value.h"
+#include "vm.h"
 
 #define GROW_FACTOR  2
 #define INIT_CAP     8
@@ -103,21 +104,21 @@ int chunk_add_const(Chunk *chunk, Value value) {
     return idx;
 }
 
-int chunk_add_string(Chunk *chunk, const char *cstr) {
-    return chunk_add_string_len(chunk, cstr, (int)strlen(cstr));
+int chunk_add_string(VM *vm, Chunk *chunk, const char *cstr) {
+    return chunk_add_string_len(vm, chunk, cstr, (int)strlen(cstr));
 }
 
-int chunk_add_string_len(Chunk *chunk, const char *chars, int length) {
+int chunk_add_string_len(VM *vm, Chunk *chunk, const char *chars, int length) {
     /* De-duplicate: return existing index if already interned */
     for (int i = 0; i < chunk->const_count; i++) {
         Value v = chunk->constants[i];
-        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type->kind == OBJ_STRING) {
-            ObjString *s = (ObjString *)AS_OBJ(v);
-            if (s->length == length && memcmp(s->chars, chars, (size_t)length) == 0) return i;
+        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type->string_chars) {
+            const char *sc = AS_OBJ(v)->type->string_chars(v);
+            if (sc && strlen(sc) == (size_t)length && memcmp(sc, chars, (size_t)length) == 0) return i;
         }
     }
-    ObjString *obj = new_string(chars, length);
-    int idx = chunk_add_const(chunk, make_obj((Object *)obj));
+    Value obj = vm->frontend->new_string(vm, chars, length);
+    int idx = chunk_add_const(chunk, obj);
     return idx;
 }
 
@@ -163,9 +164,9 @@ static const char *op_mnemonics[] = {
     "MEMBERGET","MEMBERSET","GETFIELD",  "SETFIELD",
     "INVOKE",    "SUPER",
     "THROW",   "TRY",      "ENDTRY",    "ISINSTANCE",
-    "DEFAULT", "KWARGS",   "KCALL",     "COALESCE",
-    "MEMBERGET_SAFE","INDEXGET_SAFE","SLICE_SAFE",
-    "IMPORT",  "TRYINIT",  "HALT",
+    "KW_PREFIX", "COALESCE",
+    "MEMBERGET_SAFE","INDEXGET_SAFE",
+    "IMPORT",  "HALT",
     "LT_JZ",   "LE_JZ",    "GT_JZ",     "GE_JZ",
     "EQ_JZ",   "NE_JZ",
     "LT_JZ_IMM","LE_JZ_IMM","GT_JZ_IMM","GE_JZ_IMM",
@@ -219,15 +220,11 @@ static OpFormat op_formats[] = {
     /* TRY */      FMT_AsBx,
     /* ENDTRY */   FMT_ABC,
     /* ISINSTANCE*/FMT_ABC,
-    /* DEFAULT */  FMT_AsBx,
-    /* KWARGS */   FMT_ABC,
-    /* KCALL */    FMT_ABC,
+    /* KW_PREFIX */FMT_ABx,
     /* COALESCE */ FMT_AsBx,
     /* MEMBERGET_SAFE */FMT_ABC,
     /* INDEXGET_SAFE */ FMT_ABC,
-    /* SLICE_SAFE */    FMT_ABC,
     /* IMPORT */   FMT_ABx,
-    /* TRYINIT */  FMT_ABC,
     /* HALT */     FMT_ABC,
     /* LT_JZ */    FMT_ABC,
     /* LE_JZ */    FMT_ABC,
@@ -277,19 +274,27 @@ void chunk_disassemble(Chunk *chunk) {
             printf(" R%d R%d %+d", a, b, -(int8_t)c);
         } else if (opcode == OP_ADDK) {
             Value cv = chunk->constants[c];
-            if (IS_INT(cv) || IS_INT64(cv))
-                printf(" R%d R%d %lld", a, b, (long long)as_int64(cv));
+            if (IS_INT(cv))
+                printf(" R%d R%d %lld", a, b, (long long)AS_INT(cv));
             else if (IS_DOUBLE(cv))
                 printf(" R%d R%d %g", a, b, AS_DOUBLE(cv));
-            else
+            else if (IS_OBJ(cv)) {
+                char *s = value_to_string(cv);
+                printf(" R%d R%d %s", a, b, s);
+                free(s);
+            } else
                 printf(" R%d R%d const[%d]", a, b, c);
         } else if (opcode == OP_MULK) {
             Value cv = chunk->constants[c];
-            if (IS_INT(cv) || IS_INT64(cv))
-                printf(" R%d R%d %lld", a, b, (long long)as_int64(cv));
+            if (IS_INT(cv))
+                printf(" R%d R%d %lld", a, b, (long long)AS_INT(cv));
             else if (IS_DOUBLE(cv))
                 printf(" R%d R%d %g", a, b, AS_DOUBLE(cv));
-            else
+            else if (IS_OBJ(cv)) {
+                char *s = value_to_string(cv);
+                printf(" R%d R%d %s", a, b, s);
+                free(s);
+            } else
                 printf(" R%d R%d const[%d]", a, b, c);
         }
         /* Special: LT_JZ / LE_JZ / GT_JZ / GE_JZ use A=left, B=right, C=offset */
@@ -320,14 +325,14 @@ void chunk_disassemble(Chunk *chunk) {
         printf("\n");
     }
 
-    /* Recurse into function constants */
+    /* Recurse into function constants (via vtable: native callables have no chunk) */
     for (int i = 0; i < chunk->const_count; i++) {
         Value v = chunk->constants[i];
-        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type->kind == OBJ_FUNCTION) {
-            ObjFunction *fn = (ObjFunction *)AS_OBJ(v);
-            if (fn->chunk && !fn->is_native) {
+        if (IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type->get_chunk) {
+            Chunk *c = AS_OBJ(v)->type->get_chunk(v);
+            if (c) {
                 depth++;
-                chunk_disassemble(fn->chunk);
+                chunk_disassemble(c);
                 depth--;
             }
         }

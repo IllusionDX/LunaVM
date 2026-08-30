@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include "stdlib_json.h"
 #include "value.h"
+#include "luna/object.h"
 
 typedef struct {
     const char *src;

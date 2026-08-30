@@ -31,15 +31,9 @@ typedef enum {
     OBJ_MATRIX = 16
 } ObjType;
 
-typedef struct Object {
-    Type          *type;   /* MOP vtable pointer (frontend-owned); replaces the inline ObjType tag */
-    uint8_t        gc_color;
-    size_t         size;
-    struct Object *next;
-    struct Object *prev;
-    struct Object *finalizer_next;
-    struct Object *finalizer_prev;
-} Object;
+/* Object and Type are defined in the core value model (src/value.h).
+ * This file owns only Luna's concrete kinds, their predicates, and the
+ * operations the VM dispatches to via the MOP vtable. */
 
 /* Heap object kind checks: compare the object's Type* against the table entry
  * for kind `t`. No inline type tag; the type lives in the heap object. */
@@ -60,71 +54,16 @@ typedef struct Object {
 #define IS_MATRIX(v)       IS_OBJ_KIND(v, OBJ_MATRIX)
 #define IS_INT64(v)    IS_OBJ_KIND(v, OBJ_INT64)
 
-/* ============================================================
- * MOP: language-agnostic operation dispatch via vtable.
- *
- * The frontend (Luna) defines one `Type` instance per heap-object kind and
- * fills its vtable. In Part 1 only `name`/`kind` are used; the function
- * pointers are wired in later parts (arith/cmp, index, attr, call). The VM
- * core reaches operations through `Object.type` and never names a concrete
- * Luna type. Immediate int/double are handled natively by the core.
- * ============================================================ */
-typedef Value (*MOP_Bin)(struct VM *vm, Value a, Value b);
-typedef int   (*MOP_Cmp)(struct VM *vm, Value a, Value b);          /* -1 / 0 / +1 */
-typedef Value (*MOP_Un)(struct VM *vm, Value self);
-typedef Value (*MOP_Idx)(struct VM *vm, Value self, Value key);
-typedef void  (*MOP_IdxSet)(struct VM *vm, Value self, Value key, Value val);
-typedef Value (*MOP_Attr)(struct VM *vm, Value self, const char *name);
-typedef int   (*MOP_AttrSet)(struct VM *vm, Value self, const char *name, Value val);
-typedef Value (*MOP_Call)(struct VM *vm, Value self, Value *args, int argc);
-typedef uint32_t (*MOP_Hash)(Value self);
-typedef int   (*MOP_Len)(struct VM *vm, Value self);
-
-/* Part 6b: callable / closure protocol — how the core invokes & inspects a
- * callable object through the vtable instead of switching on concrete Luna
- * kinds. The core never names ObjClosure / ObjFunction / ObjBoundMethod. */
-typedef struct Chunk* (*MOP_Chunk)(Value self);     /* bytecode chunk; NULL for native callables */
-typedef Value    (*MOP_Self)(Value self);           /* self to bind before a bytecode frame (NIL if none) */
-typedef const char* (*MOP_Name)(Value self);        /* object display name (stack traces / module naming) */
-typedef Value    (*MOP_Upval)(struct VM *vm, Value closure, int i); /* read upvalue i (NIL if absent) */
-typedef void     (*MOP_UpvalSet)(struct VM *vm, Value closure, int i, Value v); /* write upvalue i */
-typedef Value    (*MOP_UpvalRef)(Value closure, int i); /* shared upvalue object (closure capture), NIL if absent */
-typedef int      (*MOP_ParamCount)(Value self);          /* number of declared parameters */
-typedef Value    (*MOP_ParamName)(Value self, int i);     /* parameter name i as a string Value (NIL if absent) */
-
-typedef struct Type {
-    const char *name;   /* human-readable type name (e.g. "list") */
-    ObjType     kind;   /* frontend discriminator: ObjType value, for fast-path caches / GC */
-    /* arithmetic / comparison */
-    MOP_Bin  add, sub, mul, div, mod;
-    MOP_Un   neg;
-    MOP_Cmp  cmp;
-    /* indexing */
-    MOP_Idx     getitem;
-    MOP_IdxSet  setitem;
-    /* attributes */
-    MOP_Attr    getattr;
-    MOP_AttrSet setattr;
-    /* call */
-    MOP_Call call;
-    /* misc */
-    MOP_Un   tostring;  /* returns a string Value */
-    MOP_Hash hash;
-    MOP_Len  len;
-    /* callable / closure protocol (Part 6b) */
-    MOP_Chunk    get_chunk;     /* bytecode chunk for a callable; NULL for native callables */
-    MOP_Self     get_self;      /* self to bind before a bytecode frame (NIL if none) */
-    MOP_Name     name_of;       /* object display name */
-    MOP_Upval    get_upvalue;   /* read upvalue i (NIL if absent) */
-    MOP_UpvalSet set_upvalue;   /* write upvalue i */
-    MOP_UpvalRef get_upvalue_ref; /* shared upvalue object (closure capture), NIL if absent */
-    MOP_ParamCount param_count;   /* number of declared parameters (kwargs binding) */
-    MOP_ParamName  get_param_name; /* parameter name i as a string Value (NIL if absent) */
-} Type;
+/* MOP typedefs and the `Type` vtable struct are defined in the core value
+ * model (src/value.h). Luna fills the vtable instances in luna/object.c. */
 
 /* Indexed by ObjType so the core can map a kind to its Type* (used by the
  * IS_X predicates and by constructors). Defined in luna/object.c. */
 extern Type *luna_types[];
+
+/* One-time wiring of the Part 6c lifecycle/formatting vtable methods. Called
+ * from the frontend's state init (luna_new_state) after vm_init. */
+void luna_wire_lifecycle(void);
 
 struct VM;
 struct ObjClass;
@@ -259,6 +198,11 @@ typedef struct ObjFunction {
     struct Stmt **body;
     int body_count;
     struct Environment *closure;
+    /* Default-value thunks (one per parameter, NIL where no default).  Applied
+     * by bind_keyword_arguments when a parameter is not supplied positionally
+     * or by keyword.  default_count == param_count. */
+    Value *defaults;
+    int default_count;
 } ObjFunction;
 
 typedef struct ObjUpvalue {
@@ -295,7 +239,13 @@ ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
 ObjUserdata *new_userdata_tagged(const char *tag, void *data, UserdataFinalizer finalizer);
 #define new_userdata(data, finalizer) new_userdata_tagged("userdata", (data), (finalizer))
-Value make_exception_instance(struct VM *vm, struct ObjClass *cls, const char *message);
+Value make_exception_instance(struct VM *vm, void *cls, const char *message);
+
+/* C-function dispatch — invoked by the Luna `call` MOP when a function's
+ * `cfunc` field is set.  Declared here (frontend header), not in vm.h, because
+ * it names the Luna ObjFunction type. */
+Value luna_cfunc_dispatch(struct VM *vm, struct ObjFunction *fn, Value *args, int arg_count);
+
 ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);
 ObjEnum     *new_enum(const char *name, int count);
@@ -343,21 +293,21 @@ int   list_length(ObjList *list);
 bool  list_contains(ObjList *list, Value value);
 
 /* Dict operations */
-void  dict_set(ObjDict *dict, Value key, Value value);
-Value dict_get(ObjDict *dict, Value key);
-bool  dict_has(ObjDict *dict, Value key);
-Value dict_remove(ObjDict *dict, Value key);
-void  dict_clear(ObjDict *dict);
-int   dict_length(ObjDict *dict);
-Value dict_keys(ObjDict *dict);
-Value dict_values(ObjDict *dict);
+void  dict_set(void *dict, Value key, Value value);
+Value dict_get(void *dict, Value key);
+bool  dict_has(void *dict, Value key);
+Value dict_remove(void *dict, Value key);
+void  dict_clear(void *dict);
+int   dict_length(void *dict);
+Value dict_keys(void *dict);
+Value dict_values(void *dict);
 
 /* Instance field operations */
 Value instance_get_field(ObjInstance *inst, const char *name);
 void  instance_set_field(ObjInstance *inst, const char *name, Value value);
 
 /* Class method helpers */
-void class_add_native_method(ObjClass *cls, const char *name, NativeFn fn);
+void class_add_native_method(void *cls, const char *name, NativeFn fn);
 struct ObjFunction *class_find_method(ObjClass *cls, const char *name);
 
 void runtime_error(const char *fmt, ...);

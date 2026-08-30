@@ -14,6 +14,7 @@
 #include <string.h>
 #include "stdlib_time.h"
 #include "value.h"
+#include "luna/object.h"
 
 #ifdef _WIN32
 #include <windows.h>

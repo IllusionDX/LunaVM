@@ -8,6 +8,7 @@
 #include "compiler.h"
 #include "opcode.h"
 #include "value.h"
+#include "luna/object.h"
 
 /* ---- Scope / Locals ---- */
 
@@ -255,12 +256,8 @@ static void emit_loadbool(Compiler *c, uint8_t dst, bool v) {
 static void emit_loadnull(Compiler *c, uint8_t dst) {
     emit_ABC(c, OP_LOADNULL, dst, 0, 0);
 }
-static void emit_loadstring(Compiler *c, uint8_t dst, const char *s) {
-    int k = chunk_add_string(c->chunk, s);
-    emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
-}
 static void emit_loadstring_len(Compiler *c, uint8_t dst, const char *s, int length) {
-    int k = chunk_add_string_len(c->chunk, s, length);
+    int k = chunk_add_string_len(c->vm, c->chunk, s, length);
     emit_ABx(c, OP_LOADK, dst, (uint16_t)k);
 }
 
@@ -337,6 +334,8 @@ static void loop_pop(Compiler *c) {
 static void compile_expr_into(Compiler *c, Expr *expr, int target);
 static void compile_stmt(Compiler *c, Stmt *stmt);
 static void compile_decl(Compiler *c, Decl *decl);
+static Value compile_default_thunk(Compiler *c, Expr *expr);
+static int build_kw_names_const(Compiler *c, Expr *expr, int nargs);
 static int compile_function_value(Compiler *c, const char *name,
                                    FunctionParam *params, int param_count,
                                    Stmt **body, int body_count);
@@ -421,7 +420,7 @@ static void compile_single_assignment(Compiler *c, Expr *lhs, int src_reg) {
         } else if (kind == VAR_UPVALUE) {
             emit_ABx(c, OP_SETUPVAL, (uint8_t)src_reg, (uint16_t)idx);
         } else {
-            int k = chunk_add_string(c->chunk, name);
+            int k = chunk_add_string(c->vm, c->chunk, name);
             emit_ABx(c, OP_SETGLOBAL, (uint8_t)src_reg, (uint16_t)k);
         }
     } else if (lhs->kind == EXPR_FIELD_ACCESS) {
@@ -437,7 +436,7 @@ static void compile_single_assignment(Compiler *c, Expr *lhs, int src_reg) {
         if (slot >= 0 && slot <= 255) {
             emit_ABC(c, OP_SETFIELD, (uint8_t)obj, (uint8_t)src_reg, (uint8_t)slot);
         } else {
-            int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+            int fk = chunk_add_string(c->vm, c->chunk, lhs->data.field_access.field);
             if (fk > 255) {
                 int temp = alloc_reg(c);
                 emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
@@ -507,7 +506,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         } else if (kind == VAR_UPVALUE) {
             emit_ABx(c, OP_GETUPVAL, (uint8_t)target, (uint16_t)idx);
         } else {
-            int k = chunk_add_string(c->chunk, expr->data.identifier.name);
+            int k = chunk_add_string(c->vm, c->chunk, expr->data.identifier.name);
             emit_ABx(c, OP_GETGLOBAL, (uint8_t)target, (uint16_t)k);
         }
         break;
@@ -637,7 +636,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 char *buf = malloc(len + 1);
                 memcpy(buf, l->data.string.value, l->data.string.length);
                 memcpy(buf + l->data.string.length, r->data.string.value, r->data.string.length + 1);
-                int k = chunk_add_string(c->chunk, buf);
+                int k = chunk_add_string(c->vm, c->chunk, buf);
                 emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
                 free(buf);
                 folded = true;
@@ -814,22 +813,23 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                     compile_expr_into(c, expr->data.call.arguments[i], target + 2 + i);
                 }
                 c->temp_base = saved_base;
-                int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
+                int mk = chunk_add_string(c->vm, c->chunk, callee->data.field_access.field);
                 emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
                 emit_ABC(c, OP_SUPER, (uint8_t)target, 0, (uint8_t)nargs);
             } else if (has_keywords) {
-                /* Keyword method call: resolve to bound method, then OP_KCALL */
+                /* Keyword method call: resolve to bound method, then
+                   OP_KW_PREFIX + OP_CALL. */
                 compile_expr_into(c, obj, target);
-                int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
+                int mk = chunk_add_string(c->vm, c->chunk, callee->data.field_access.field);
                 if (mk <= 255) {
                     emit_ABC(c, OP_MEMBERGET, (uint8_t)target, (uint8_t)target, (uint8_t)mk);
-                    /* Now same as regular keyword call — target holds bound method */
                     int pos_count = 0;
                     for (int i = 0; i < nargs; i++) {
                         if (expr->data.call.arg_names[i] == NULL) pos_count = i + 1;
                     }
+                    int kw_count = nargs - pos_count;
                     int saved_base = c->temp_base;
-                    c->temp_base = target + 1 + nargs + 1;
+                    c->temp_base = target + 1 + nargs;
                     int compiled_pos = 0;
                     for (int i = 0; i < nargs; i++) {
                         if (expr->data.call.arg_names[i] == NULL) {
@@ -837,21 +837,17 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                             compiled_pos++;
                         }
                     }
-                    int kwargs_reg = target + pos_count + 1;
-                    emit_ABC(c, OP_NEWDICT, (uint8_t)kwargs_reg, 0, 0);
-                    int key_reg = alloc_reg(c);
-                    int val_reg = alloc_reg(c);
+                    int kw_reg = target + 1 + pos_count;
                     for (int i = 0; i < nargs; i++) {
                         if (expr->data.call.arg_names[i] != NULL) {
-                            emit_loadstring(c, (uint8_t)key_reg, expr->data.call.arg_names[i]);
-                            compile_expr_into(c, expr->data.call.arguments[i], val_reg);
-                            emit_ABC(c, OP_INDEXSET, (uint8_t)kwargs_reg, (uint8_t)key_reg, (uint8_t)val_reg);
+                            compile_expr_into(c, expr->data.call.arguments[i], kw_reg);
+                            kw_reg++;
                         }
                     }
-                    free_reg(c);
-                    free_reg(c);
+                    int kw_idx = build_kw_names_const(c, expr, nargs);
                     c->temp_base = saved_base;
-                    emit_ABC(c, OP_KCALL, (uint8_t)target, (uint8_t)target, (uint8_t)pos_count);
+                    emit_ABx(c, OP_KW_PREFIX, (uint8_t)kw_count, (uint16_t)kw_idx);
+                    emit_ABC(c, OP_CALL, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
                 } else {
                     /* Method name constant index > 255 — rare edge case.
                      * Fall back to OP_INVOKE (ignores kwargs, positional only). */
@@ -874,19 +870,21 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 }
                 c->temp_base = saved_base;
                 /* Load method name into target+1, then INVOKE */
-                int mk = chunk_add_string(c->chunk, callee->data.field_access.field);
+                int mk = chunk_add_string(c->vm, c->chunk, callee->data.field_access.field);
                 emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
                 emit_ABC(c, OP_INVOKE, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
             }
         } else if (has_keywords) {
-            /* Keyword call: compile callee, positional args, kwargs dict, then OP_KCALL */
+            /* Keyword call: compile callee, positional args, then keyword
+               values, and emit OP_KW_PREFIX + OP_CALL (no kwargs dict). */
             compile_expr_into(c, callee, target);
             int pos_count = 0;
             for (int i = 0; i < nargs; i++) {
                 if (expr->data.call.arg_names[i] == NULL) pos_count = i + 1;
             }
+            int kw_count = nargs - pos_count;
             int saved_base = c->temp_base;
-            c->temp_base = target + 1 + nargs + 1;
+            c->temp_base = target + 1 + nargs;
             /* Compile positional args into target+1..target+pos_count */
             int compiled_pos = 0;
             for (int i = 0; i < nargs; i++) {
@@ -895,23 +893,18 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                     compiled_pos++;
                 }
             }
-            /* Create kwargs dict at target + pos_count + 1 */
-            int kwargs_reg = target + pos_count + 1;
-            emit_ABC(c, OP_NEWDICT, (uint8_t)kwargs_reg, 0, 0);
-            /* Build kwargs dict */
-            int key_reg = alloc_reg(c);
-            int val_reg = alloc_reg(c);
+            /* Compile keyword values (declaration order) into target+pos_count+1.. */
+            int kw_reg = target + 1 + pos_count;
             for (int i = 0; i < nargs; i++) {
                 if (expr->data.call.arg_names[i] != NULL) {
-                    emit_loadstring(c, (uint8_t)key_reg, expr->data.call.arg_names[i]);
-                    compile_expr_into(c, expr->data.call.arguments[i], val_reg);
-                    emit_ABC(c, OP_INDEXSET, (uint8_t)kwargs_reg, (uint8_t)key_reg, (uint8_t)val_reg);
+                    compile_expr_into(c, expr->data.call.arguments[i], kw_reg);
+                    kw_reg++;
                 }
             }
-            free_reg(c);
-            free_reg(c);
+            int kw_idx = build_kw_names_const(c, expr, nargs);
             c->temp_base = saved_base;
-            emit_ABC(c, OP_KCALL, (uint8_t)target, (uint8_t)target, (uint8_t)pos_count);
+            emit_ABx(c, OP_KW_PREFIX, (uint8_t)kw_count, (uint16_t)kw_idx);
+            emit_ABC(c, OP_CALL, (uint8_t)target, (uint8_t)target, (uint8_t)nargs);
         } else {
             compile_expr_into(c, callee, target);
             int saved_base = c->temp_base;
@@ -941,7 +934,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             emit_ABC(c, OP_GETFIELD, (uint8_t)target, (uint8_t)target, (uint8_t)slot);
         } else {
             compile_expr_into(c, expr->data.field_access.obj, target);
-            int fk = chunk_add_string(c->chunk, expr->data.field_access.field);
+            int fk = chunk_add_string(c->vm, c->chunk, expr->data.field_access.field);
             OpCode get_op = expr->data.field_access.optional ? OP_MEMBERGET_SAFE : OP_MEMBERGET;
             if (fk > 255) {
                 int temp = alloc_reg(c);
@@ -967,6 +960,9 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_SLICE: {
+        /* OP_SLICE (kept: Python-style slicing) routes through the frontend
+         * slice hook; a null/non-indexable obj yields null, so the optional
+         * (?.) form needs no separate opcode. */
         compile_expr_into(c, expr->data.slice.obj, target);
         int start_reg = alloc_reg(c);
         int stop_reg  = alloc_reg(c);
@@ -983,8 +979,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             compile_expr_into(c, expr->data.slice.step, step_reg);
         else
             emit_ABC(c, OP_LOADNULL, (uint8_t)step_reg, 0, 0);
-        OpCode slice_op = expr->data.slice.optional ? OP_SLICE_SAFE : OP_SLICE;
-        emit_ABC(c, slice_op, (uint8_t)target, (uint8_t)target, 0);
+        emit_ABC(c, OP_SLICE, (uint8_t)target, (uint8_t)target, 0);
         free_reg(c);
         free_reg(c);
         free_reg(c);
@@ -1006,7 +1001,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 emit_ABx(c, OP_SETUPVAL, (uint8_t)target, (uint16_t)idx);
             } else {
                 compile_expr_into(c, rhs, target);
-                int k = chunk_add_string(c->chunk, name);
+                int k = chunk_add_string(c->vm, c->chunk, name);
                 emit_ABx(c, OP_SETGLOBAL, (uint8_t)target, (uint16_t)k);
             }
         } else if (lhs->kind == EXPR_FIELD_ACCESS) {
@@ -1023,7 +1018,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             if (slot >= 0 && slot <= 255) {
                 emit_ABC(c, OP_SETFIELD, (uint8_t)obj, (uint8_t)target, (uint8_t)slot);
             } else {
-                int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+                int fk = chunk_add_string(c->vm, c->chunk, lhs->data.field_access.field);
                 if (fk > 255) {
                     int temp = alloc_reg(c);
                     emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
@@ -1064,7 +1059,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 } else if (vkind == VAR_UPVALUE) {
                     emit_ABx(c, OP_SETUPVAL, (uint8_t)val_reg, (uint16_t)var_idx);
                 } else {
-                    int k = chunk_add_string(c->chunk, vname);
+                    int k = chunk_add_string(c->vm, c->chunk, vname);
                     emit_ABx(c, OP_SETGLOBAL, (uint8_t)val_reg, (uint16_t)k);
                 }
                 free_reg(c); /* val_reg */
@@ -1093,7 +1088,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 } else if (vkind == VAR_UPVALUE) {
                     emit_ABx(c, OP_SETUPVAL, (uint8_t)val_reg, (uint16_t)var_idx);
                 } else {
-                    int k = chunk_add_string(c->chunk, vname);
+                    int k = chunk_add_string(c->vm, c->chunk, vname);
                     emit_ABx(c, OP_SETGLOBAL, (uint8_t)val_reg, (uint16_t)k);
                 }
                 free_reg(c); /* val_reg */
@@ -1155,7 +1150,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 emit_ABC(c, OP_SETFIELD, (uint8_t)obj, (uint8_t)temp_val, (uint8_t)slot);
                 free_reg(c);
             } else {
-                int fk = chunk_add_string(c->chunk, lhs->data.field_access.field);
+                int fk = chunk_add_string(c->vm, c->chunk, lhs->data.field_access.field);
                 if (fk > 255) {
                     int temp_k = alloc_reg(c);
                     emit_ABx(c, OP_LOADK, (uint8_t)temp_k, (uint16_t)fk);
@@ -1240,7 +1235,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
 
         compile_expr_into(c, expr->data.list_comprehension.iterable, iter);
 
-        int lk = chunk_add_string(c->chunk, "length");
+        int lk = chunk_add_string(c->vm, c->chunk, "length");
         if (lk > 255) {
             int temp = alloc_reg(c);
             emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)lk);
@@ -1304,7 +1299,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_NEW: {
-        int ck = chunk_add_string(c->chunk, expr->data.new_expr.class_name);
+        int ck = chunk_add_string(c->vm, c->chunk, expr->data.new_expr.class_name);
         emit_ABx(c, OP_NEW, (uint8_t)target, (uint16_t)ck);
         int nargs = expr->data.new_expr.arg_count;
         int saved_base = c->temp_base;
@@ -1322,7 +1317,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
          * r_target+2..=args, r_target+nargs+1=scratch (nil return lands here,
          * NOT on the instance).
          */
-        int mk = chunk_add_string(c->chunk, "_init");
+        int mk = chunk_add_string(c->vm, c->chunk, "_init");
         emit_ABx(c, OP_LOADK, (uint8_t)(target + 1), (uint16_t)mk);
         emit_ABC(c, OP_INVOKE, (uint8_t)(target + nargs + 1), (uint8_t)target, (uint8_t)nargs);
         break;
@@ -1401,7 +1396,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                     } else {
                         int t = alloc_reg(c);
                         compile_expr_into(c, expr->data.multi_assign.values[i], t);
-                        int k = chunk_add_string(c->chunk, lhs->data.identifier.name);
+                        int k = chunk_add_string(c->vm, c->chunk, lhs->data.identifier.name);
                         emit_ABx(c, OP_SETGLOBAL, (uint8_t)t, (uint16_t)k);
                         free_reg(c);
                     }
@@ -1479,7 +1474,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                         int idx_reg = alloc_reg(c);
                         emit_loadi(c, (uint8_t)idx_reg, i);
                         emit_ABC(c, OP_INDEXGET, (uint8_t)dst, (uint8_t)src, (uint8_t)idx_reg);
-                        int k = chunk_add_string(c->chunk, var_name);
+                        int k = chunk_add_string(c->vm, c->chunk, var_name);
                         emit_ABx(c, OP_SETGLOBAL, (uint8_t)dst, (uint16_t)k);
                         free_reg(c);
                         free_reg(c);
@@ -1504,7 +1499,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                         int key_reg = alloc_reg(c);
                         compile_expr_into(c, key_expr, key_reg);
                         emit_ABC(c, OP_INDEXGET, (uint8_t)dst, (uint8_t)src, (uint8_t)key_reg);
-                        int k = chunk_add_string(c->chunk, var_name);
+                        int k = chunk_add_string(c->vm, c->chunk, var_name);
                         emit_ABx(c, OP_SETGLOBAL, (uint8_t)dst, (uint16_t)k);
                         free_reg(c);
                         free_reg(c);
@@ -1529,7 +1524,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                 } else {
                     emit_loadnull(c, (uint8_t)r);
                 }
-                int k = chunk_add_string(c->chunk, name);
+                int k = chunk_add_string(c->vm, c->chunk, name);
                 emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
                 free_reg(c);
             }
@@ -1962,7 +1957,7 @@ static void compile_decl(Compiler *c, Decl *decl) {
     case DECL_ENUM:     compile_enum(c, decl);     break;
     case DECL_IMPORT: {
         int mod_reg = alloc_reg(c);
-        int mod_k = chunk_add_string(c->chunk, decl->data.import_decl.module_name);
+        int mod_k = chunk_add_string(c->vm, c->chunk, decl->data.import_decl.module_name);
         emit_ABx(c, OP_IMPORT, (uint8_t)mod_reg, (uint16_t)mod_k);
 
         if (decl->data.import_decl.import_all) {
@@ -1972,7 +1967,7 @@ static void compile_decl(Compiler *c, Decl *decl) {
             /* from X import a, b */
             for (int i = 0; i < decl->data.import_decl.item_count; i++) {
                 int item_reg = alloc_reg(c);
-                int item_k = chunk_add_string(c->chunk, decl->data.import_decl.items[i]);
+                int item_k = chunk_add_string(c->vm, c->chunk, decl->data.import_decl.items[i]);
                 emit_ABC(c, OP_MEMBERGET, (uint8_t)item_reg, (uint8_t)mod_reg, (uint8_t)item_k);
                 emit_ABx(c, OP_SETGLOBAL, (uint8_t)item_reg, (uint16_t)item_k);
                 free_reg(c);
@@ -1985,6 +1980,61 @@ static void compile_decl(Compiler *c, Decl *decl) {
         break;
     }
     }
+}
+
+/* Compile a default-value expression into a 0-argument thunk.  The resulting
+ * ObjFunction is stored in the callee's `defaults` array and invoked by
+ * bind_keyword_arguments when the parameter is not supplied.  Captures of the
+ * enclosing scope are allowed (the thunk is compiled with `c` as parent). */
+static Value compile_default_thunk(Compiler *c, Expr *expr) {
+    Chunk thunk_chunk;
+    chunk_init(&thunk_chunk, "<default>");
+
+    Compiler sub = {
+        .chunk       = &thunk_chunk,
+        .scope       = NULL,
+        .vm          = c->vm,
+        .temp_base   = 0,
+        .max_temp_base = 0,
+        .line        = c->line,
+        .func_depth  = c->func_depth + 1,
+        .loop        = NULL,
+        .finally_ctx = NULL,
+        .parent      = c,
+        .upvalue_count = 0
+    };
+
+    scope_enter(&sub);
+    compile_expr_into(&sub, expr, 0);
+    emit_ret(&sub, 0);
+    scope_exit(&sub);
+
+    thunk_chunk.max_registers = sub.max_temp_base > 0 ? sub.max_temp_base : 1;
+    ObjFunction *thunk = new_function("<default>");
+    thunk->chunk       = malloc(sizeof(Chunk));
+    *thunk->chunk      = thunk_chunk;
+    thunk->param_count = 0;
+    thunk->is_leaf     = true;
+    thunk->upvalue_count = sub.upvalue_count;
+    if (sub.upvalue_count > 0) {
+        thunk->upvalue_descriptors = malloc(sizeof(UpvalueDesc) * sub.upvalue_count);
+        for (int i = 0; i < sub.upvalue_count; i++) {
+            thunk->upvalue_descriptors[i].index = sub.upvalues[i].index;
+            thunk->upvalue_descriptors[i].is_local = sub.upvalues[i].is_local;
+        }
+    }
+    return make_obj((Object*)thunk);
+}
+
+/* Build a constant List of keyword argument names (in declaration order) and
+ * return its constant-pool index.  Consumed by OP_KW_PREFIX + bind_keyword_arguments. */
+static int build_kw_names_const(Compiler *c, Expr *expr, int nargs) {
+    ObjList *names = new_list(nargs);
+    for (int i = 0; i < nargs; i++) {
+        const char *nm = expr->data.call.arg_names[i];
+        if (nm) list_add(names, make_obj((Object*)new_string(nm, (int)strlen(nm))));
+    }
+    return chunk_add_const(c->chunk, make_obj((Object*)names));
 }
 
 static int compile_function_value(Compiler *c, const char *name,
@@ -2014,21 +2064,17 @@ static int compile_function_value(Compiler *c, const char *name,
     }
     sub.temp_base = param_count;
 
-    /* Emit default value prologues */
-    for (int i = 0; i < param_count; i++) {
-        if (params[i].default_value) {
-            /* Emit OP_DEFAULT i, 0 (placeholder) */
-            int placeholder = chunk_emit_AsBx(sub.chunk, sub.line, OP_DEFAULT, (uint8_t)i, 0);
-            /* Compile default expression into register i */
-            compile_expr_into(&sub, params[i].default_value, i);
-            /* Patch placeholder with skip offset */
-            int skip = sub.chunk->count - placeholder - 1;
-            chunk_patch_sBx(sub.chunk, placeholder, skip);
-        }
+    /* Build default-value thunks (applied by bind_keyword_arguments at call
+       time).  Stored on the function after it is created below. */
+    Value *def_thunks = NULL;
+    if (param_count > 0) {
+        def_thunks = malloc(sizeof(Value) * param_count);
+        for (int i = 0; i < param_count; i++) def_thunks[i] = make_null();
     }
-    /* Emit kwargs remapping (populates params from kwargs dict) */
-    if (param_count > 0)
-        emit_ABC(&sub, OP_KWARGS, 0, 0, 0);
+    for (int i = 0; i < param_count; i++) {
+        if (params[i].default_value)
+            def_thunks[i] = compile_default_thunk(c, params[i].default_value);
+    }
 
     for (int i = 0; i < body_count; i++) {
         compile_stmt(&sub, body[i]);
@@ -2055,8 +2101,7 @@ static int compile_function_value(Compiler *c, const char *name,
         for (int i = 0; i < fn_chunk.count; i++) {
             OpCode op = DECODE_OP(fn_chunk.code[i]);
             if (op == OP_CALL || op == OP_INVOKE || op == OP_SUPER ||
-                op == OP_KCALL || op == OP_DEFAULT || op == OP_TRY ||
-                op == OP_TRYINIT || op == OP_CLOSURE) {
+                op == OP_TRY || op == OP_CLOSURE) {
                 is_leaf = false;
                 break;
             }
@@ -2078,6 +2123,8 @@ static int compile_function_value(Compiler *c, const char *name,
     }
     fn->upvalue_count = sub.upvalue_count;
     fn->is_leaf = is_leaf;
+    fn->defaults = def_thunks;
+    fn->default_count = param_count;
     if (sub.upvalue_count > 0) {
         fn->upvalue_descriptors = malloc(sizeof(UpvalueDesc) * sub.upvalue_count);
         for (int i = 0; i < sub.upvalue_count; i++) {
@@ -2103,7 +2150,7 @@ static void compile_function(Compiler *c, Decl *decl) {
 
     if (c->func_depth == 0) {
         emit_ABx(c, OP_CLOSURE, (uint8_t)r, (uint16_t)fn_const);
-        int k = chunk_add_string(c->chunk, name);
+        int k = chunk_add_string(c->vm, c->chunk, name);
         emit_ABx(c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
         free_reg(c);
     } else {
@@ -2193,16 +2240,14 @@ static void compile_class(Compiler *c, Decl *decl) {
             add_local(&sub, m->data.function.params[j].name, j + 1);
         }
         sub.temp_base = m->data.function.param_count + 1;
-        /* Emit default value prologues for method params (reg j+1 because self is reg 0) */
-        for (int j = 0; j < m->data.function.param_count; j++) {
-            if (m->data.function.params[j].default_value) {
-                int placeholder = chunk_emit_AsBx(sub.chunk, sub.line, OP_DEFAULT, (uint8_t)(j + 1), 0);
-                compile_expr_into(&sub, m->data.function.params[j].default_value, j + 1);
-                int skip = sub.chunk->count - placeholder - 1;
-                chunk_patch_sBx(sub.chunk, placeholder, skip);
-            }
+        /* Build default-value thunks for method params (index j+1; self is 0). */
+        int mparam = m->data.function.param_count;
+        Value *mdef = malloc(sizeof(Value) * (mparam + 1));
+        for (int j = 0; j <= mparam; j++) mdef[j] = make_null();
+        for (int j = 0; j < mparam; j++) {
+            if (m->data.function.params[j].default_value)
+                mdef[j + 1] = compile_default_thunk(c, m->data.function.params[j].default_value);
         }
-        emit_ABC(&sub, OP_KWARGS, 0, 0, 0);
 
         for (int j = 0; j < m->data.function.body_count; j++)
             compile_stmt(&sub, m->data.function.body[j]);
@@ -2220,8 +2265,7 @@ static void compile_class(Compiler *c, Decl *decl) {
             for (int i = 0; i < mchunk.count; i++) {
                 OpCode op = DECODE_OP(mchunk.code[i]);
                 if (op == OP_CALL || op == OP_INVOKE || op == OP_SUPER ||
-                    op == OP_KCALL || op == OP_DEFAULT || op == OP_TRY ||
-                    op == OP_TRYINIT || op == OP_CLOSURE) {
+                    op == OP_TRY || op == OP_CLOSURE) {
                     is_leaf = false;
                     break;
                 }
@@ -2234,6 +2278,8 @@ static void compile_class(Compiler *c, Decl *decl) {
         *mf->chunk      = mchunk;
         mf->is_leaf = is_leaf;
         mf->param_count = m->data.function.param_count + 1; /* +self */
+        mf->defaults = mdef;
+        mf->default_count = mparam + 1;
         mf->param_names = malloc(sizeof(char*) * mf->param_count);
         mf->param_name_objs = malloc(sizeof(ObjString*) * mf->param_count);
         mf->param_names[0] = strdup("self");
@@ -2312,7 +2358,7 @@ bool compile_program(Program *program, Chunk *chunk, VM *vm, bool is_repl, bool 
                 expr->kind != EXPR_MULTI_ASSIGN) {
                 int r = alloc_reg(&c);
                 compile_expr_into(&c, expr, r);
-                int k = chunk_add_string(c.chunk, "_");
+                int k = chunk_add_string(c.vm, c.chunk, "_");
                 emit_ABx(&c, OP_SETGLOBAL, (uint8_t)r, (uint16_t)k);
                 free_reg(&c);
                 continue;

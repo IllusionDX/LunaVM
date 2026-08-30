@@ -17,6 +17,7 @@
 #include <math.h>
 #include "vm.h"
 #include "value.h"
+#include "luna/object.h"
 #include "stdlib_noise.h"
 
 /* ============================================================ */

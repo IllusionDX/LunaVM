@@ -16,9 +16,7 @@ struct luna_State;
 #endif
 
 /* Forward declarations */
-typedef struct Object   Object;
-typedef struct ObjInt64 ObjInt64;
-typedef struct Type     Type;   /* MOP vtable (defined in luna/object.h) */
+typedef struct Type     Type;   /* MOP vtable — defined below (language-agnostic) */
 struct Chunk;
 struct VM;
 
@@ -41,6 +39,107 @@ struct VM;
  * ============================================================ */
 
 typedef uint64_t Value;
+
+/* ============================================================
+ * Heap object (core-owned, language-agnostic).
+ *
+ * Every heap value is just an `Object *` in the NaN space. The concrete
+ * meaning of an object (list, dict, instance, function, …) lives entirely in
+ * the frontend's `Type` (the MOP vtable) — the core only knows this uniform
+ * header. See docs/architecture.md §2–§3.
+ * ============================================================ */
+typedef struct Object {
+    Type          *type;   /* MOP vtable pointer (frontend-owned) */
+    uint8_t        gc_color;
+    size_t         size;
+    struct Object *next;
+    struct Object *prev;
+    struct Object *finalizer_next;
+    struct Object *finalizer_prev;
+} Object;
+
+/* ============================================================
+ * MOP: language-agnostic operation dispatch via vtable.
+ *
+ * The frontend (e.g. Luna) defines one `Type` instance per heap-object kind
+ * and fills its vtable. The VM core reaches operations through `Object.type`
+ * and never names a concrete frontend type. Immediate int/double are handled
+ * natively by the core.
+ * ============================================================ */
+typedef Value (*MOP_Bin)(struct VM *vm, Value a, Value b);
+typedef int   (*MOP_Cmp)(struct VM *vm, Value a, Value b);          /* -1 / 0 / +1 */
+typedef Value (*MOP_Un)(struct VM *vm, Value self);
+typedef Value (*MOP_Idx)(struct VM *vm, Value self, Value key);
+typedef void  (*MOP_IdxSet)(struct VM *vm, Value self, Value key, Value val);
+typedef Value (*MOP_Attr)(struct VM *vm, Value self, const char *name);
+typedef int   (*MOP_AttrSet)(struct VM *vm, Value self, const char *name, Value val);
+typedef Value (*MOP_Call)(struct VM *vm, Value self, Value *args, int argc);
+typedef uint32_t (*MOP_Hash)(Value self);
+typedef int   (*MOP_Len)(struct VM *vm, Value self);
+
+/* callable / closure protocol — how the core invokes & inspects a callable
+ * object through the vtable instead of switching on concrete frontend kinds. */
+typedef struct Chunk* (*MOP_Chunk)(Value self);     /* bytecode chunk; NULL for native callables */
+typedef Value    (*MOP_Self)(Value self);           /* self to bind before a bytecode frame (NIL if none) */
+typedef const char* (*MOP_Name)(Value self);        /* object display name (stack traces / module naming) */
+typedef Value    (*MOP_Upval)(struct VM *vm, Value closure, int i); /* read upvalue i (NIL if absent) */
+typedef void     (*MOP_UpvalSet)(struct VM *vm, Value closure, int i, Value v); /* write upvalue i */
+typedef Value    (*MOP_UpvalRef)(Value closure, int i); /* shared upvalue object (closure capture), NIL if absent */
+typedef int      (*MOP_ParamCount)(Value self);          /* number of declared parameters */
+typedef Value    (*MOP_ParamName)(Value self, int i);     /* parameter name i as a string Value (NIL if absent) */
+/* Remap keyword arguments into the callee's parameter registers and apply
+ * defaults.  `fn_val` is the callable, `fn_reg` its register, `nargs` the total
+ * argument count (positional + keyword), and `kw_names` a static tuple of the
+ * keyword names (a List of name strings).  Returns false on a binding error
+ * (the exception is already set in vm->last_exception).  Frontend-owned: the
+ * core OP_CALL just invokes it after reading the OP_KW_PREFIX state. */
+typedef bool     (*MOP_BindKw)(struct VM *vm, Value fn_val, uint8_t nargs, Value kw_names);
+typedef void     (*MOP_Free)(Object *obj);                /* free container's own memory (GC frees the Object) */
+typedef void     (*MOP_Mark)(struct VM *vm, Object *obj); /* mark referenced objects for GC */
+typedef bool     (*MOP_Eq)(Value a, Value b);             /* equality of this type with another Value */
+typedef char*    (*MOP_CStr)(Value self);                 /* string form (caller frees); NULL if unprintable */
+typedef const char* (*MOP_Msg)(struct VM *vm, Value self); /* raw exception message (NULL if none) */
+typedef const char* (*MOP_ClassName)(Value self);         /* display class name (NULL if none) */
+typedef const char* (*MOP_Chars)(Value self);             /* internal chars if a string object, else NULL */
+
+typedef struct Type {
+    const char *name;   /* human-readable type name (e.g. "list") */
+    int         kind;   /* frontend discriminator (core never switches on it) */
+    /* arithmetic / comparison */
+    MOP_Bin  add, sub, mul, div, mod;
+    MOP_Un   neg;
+    MOP_Cmp  cmp;
+    /* indexing */
+    MOP_Idx     getitem;
+    MOP_IdxSet  setitem;
+    /* attributes */
+    MOP_Attr    getattr;
+    MOP_AttrSet setattr;
+    /* call */
+    MOP_Call call;
+    /* misc */
+    MOP_Un   tostring;  /* returns a string Value */
+    MOP_Hash hash;
+    MOP_Len  len;
+    /* callable / closure protocol */
+    MOP_Chunk    get_chunk;
+    MOP_Self     get_self;
+    MOP_Name     name_of;
+    MOP_Upval    get_upvalue;
+    MOP_UpvalSet set_upvalue;
+    MOP_UpvalRef get_upvalue_ref;
+    MOP_ParamCount param_count;
+    MOP_ParamName  get_param_name;
+    MOP_BindKw     bind_keyword_arguments;
+    /* lifecycle / formatting */
+    MOP_Free      free;
+    MOP_Mark      mark;
+    MOP_Eq        eq;
+    MOP_CStr      to_cstr;
+    MOP_Msg       message;
+    MOP_ClassName class_name;
+    MOP_Chars     string_chars;
+} Type;
 
 /* Quiet NaN base: sign=0, exponent=all-1s, quiet-bit=1. Top 16 bits = 0x7FF8.
  * Objects carry no inline type bits; the type lives in the heap object.
@@ -72,7 +171,10 @@ typedef uint64_t Value;
 #define IS_INT(v)    (((v) & (QNAN_TAG | 7)) == (QNAN_TAG | TAG_INT))
 #define IS_EMPTY(v)  ((v) == (QNAN_TAG | TAG_EMPTY))
 #define IS_TOMB(v)   ((v) == (QNAN_TAG | TAG_TOMB))
-#define IS_NUMBER(v) (IS_DOUBLE(v) || IS_INT(v) || IS_INT64(v))
+/* Core universal numeric types only: the 32-bit tagged int and the double.
+ * int64 (and any other big-number type) is a frontend object handled by the
+ * numeric MOPs / binary-unary-compare hooks, never by core macros. */
+#define IS_NUMBER(v) (IS_DOUBLE(v) || IS_INT(v))
 
 #define IS_INF(v)    (((v) & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && ((v) & 0x000fffffffffffffULL) == 0)
 #define IS_POS_INF(v) ((v) == 0x7ff0000000000000ULL)
@@ -105,9 +207,6 @@ static inline double AS_DOUBLE(Value v) {
     memcpy(&d, &v, sizeof(d));
     return d;
 }
-
-static inline double as_double(Value v);
-static inline int64_t as_int64(Value v);
 
 #define RETURN_EXT_DOUBLE(d) make_double((double)(d))
 
@@ -156,12 +255,9 @@ extern Object *sweep_cursor;
 
 void free_object_container(Object *obj);
 
-/*
- * TEMPORARY shim: the core VM still references the Luna object model
- * (ObjType / Obj* / IS_X) directly until the MOP vtable dispatch lands.
- * Remove this include once vm.c dispatches operations via the frontend's
- * vtable instead of switching on inline object kinds. (See docs/architecture.md.)
- */
-#include "luna/object.h"
+/* The core VM is language-agnostic: it depends only on Value / Object / Type /
+ * Chunk / VM / CallFrame and the MOP vtable.  Luna-specific object kinds live in
+ * the frontend (src/luna/), which includes luna/object.h directly.  Operations
+ * reach Luna semantics through the MOP vtable and the VMFrontendHooks table. */
 
 #endif /* LUNA_VALUE_H */

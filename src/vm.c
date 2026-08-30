@@ -40,198 +40,202 @@
 #include "module.h"
 
 /* GC hook for embedder API stack — defined in luna.c */
-extern void luna_mark_roots(VM *vm);
-
-/* Declared in vm_builtins.c */
-void vm_register_builtins(VM *vm);
-void vm_register_canonical_classes(VM *vm);
 
 /* ============================================================ */
 /* Arithmetic helpers (inlined for dispatch loop)               */
 /* ============================================================ */
 
+void vm_set_frontend(VM *vm, const VMFrontendHooks *hooks) {
+    if (vm) vm->frontend = hooks;
+}
+
+bool vm_unary(VM *vm, VMOperation op, Value operand, Value *result) {
+    return vm && vm->frontend && vm->frontend->unary &&
+           vm->frontend->unary(vm, op, operand, result);
+}
+
+bool vm_binary(VM *vm, VMOperation op, Value left, Value right, Value *result) {
+    return vm && vm->frontend && vm->frontend->binary &&
+           vm->frontend->binary(vm, op, left, right, result);
+}
+
+bool vm_compare(VM *vm, VMOperation op, Value left, Value right, Value *result) {
+    return vm && vm->frontend && vm->frontend->compare &&
+           vm->frontend->compare(vm, op, left, right, result);
+}
+
+bool vm_getitem(VM *vm, Value object, Value key, bool safe, Value *result) {
+    return vm && vm->frontend && vm->frontend->getitem &&
+           vm->frontend->getitem(vm, object, key, safe, result);
+}
+
+bool vm_setitem(VM *vm, Value object, Value key, Value value) {
+    return vm && vm->frontend && vm->frontend->setitem &&
+           vm->frontend->setitem(vm, object, key, value);
+}
+
+bool vm_slice(VM *vm, Value object, Value start, Value stop, Value step,
+              bool safe, Value *result) {
+    return vm && vm->frontend && vm->frontend->slice &&
+           vm->frontend->slice(vm, object, start, stop, step, safe, result);
+}
+
+bool vm_iterate(VM *vm, Value object, Value *iter, Value *state) {
+    return vm && vm->frontend && vm->frontend->iterate &&
+           vm->frontend->iterate(vm, object, iter, state);
+}
+
+bool vm_iter_next(VM *vm, Value iter, Value *state, Value *elem) {
+    return vm && vm->frontend && vm->frontend->iter_next &&
+           vm->frontend->iter_next(vm, iter, state, elem);
+}
+
+bool vm_new_list(VM *vm, int capacity, Value *out) {
+    return vm && vm->frontend && vm->frontend->new_list &&
+           vm->frontend->new_list(vm, capacity, out);
+}
+
+bool vm_new_dict(VM *vm, Value *out) {
+    return vm && vm->frontend && vm->frontend->new_dict &&
+           vm->frontend->new_dict(vm, out);
+}
+
+bool vm_list_append(VM *vm, Value list, Value value) {
+    return vm && vm->frontend && vm->frontend->list_append &&
+           vm->frontend->list_append(vm, list, value);
+}
+
+bool vm_construct(VM *vm, Value class_name, Value *out) {
+    return vm && vm->frontend && vm->frontend->construct &&
+           vm->frontend->construct(vm, class_name, out);
+}
+
+bool vm_instance_of(VM *vm, Value obj, Value cls, bool *result) {
+    return vm && vm->frontend && vm->frontend->instance_of &&
+           vm->frontend->instance_of(vm, obj, cls, result);
+}
+
+bool vm_get_field_slot(VM *vm, Value obj, int slot, Value *out) {
+    return vm && vm->frontend && vm->frontend->get_field_slot &&
+           vm->frontend->get_field_slot(vm, obj, slot, out);
+}
+
+bool vm_set_field_slot(VM *vm, Value obj, int slot, Value value) {
+    return vm && vm->frontend && vm->frontend->set_field_slot &&
+           vm->frontend->set_field_slot(vm, obj, slot, value);
+}
+
+bool vm_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *callable) {
+    return vm && vm->frontend && vm->frontend->invoke &&
+           vm->frontend->invoke(vm, obj, name, self_arg, callable);
+}
+
+bool vm_super_fn(VM *vm, Value self, Value name, Value *self_arg, Value *callable) {
+    return vm && vm->frontend && vm->frontend->super_fn &&
+           vm->frontend->super_fn(vm, self, name, self_arg, callable);
+}
+
+bool vm_contains(VM *vm, Value needle, Value haystack, bool *found) {
+    return vm && vm->frontend && vm->frontend->contains &&
+           vm->frontend->contains(vm, needle, haystack, found);
+}
+
+bool vm_getattr(VM *vm, Value object, Value name, bool safe, Value *result) {
+    return vm && vm->frontend && vm->frontend->getattr &&
+           vm->frontend->getattr(vm, object, name, safe, result);
+}
+
+bool vm_setattr(VM *vm, Value object, Value name, Value value) {
+    return vm && vm->frontend && vm->frontend->setattr &&
+           vm->frontend->setattr(vm, object, name, value);
+}
+
+bool vm_import_module(VM *vm, Value name, const char *from_path, Value *result) {
+    return vm && vm->frontend && vm->frontend->import_module &&
+           vm->frontend->import_module(vm, name, from_path, result);
+}
+
+Value vm_make_exception(VM *vm, VMExceptionKind kind, const char *message) {
+    if (vm && vm->frontend && vm->frontend->make_exception)
+        return vm->frontend->make_exception(vm, kind, message);
+    return make_null();
+}
+
+int vm_register_slot(VM *vm, void *value) {
+    if (!vm) return -1;
+    if (vm->frontend_slot_count == vm->frontend_slot_capacity) {
+        size_t next = vm->frontend_slot_capacity ? vm->frontend_slot_capacity * 2 : 8;
+        void **slots = realloc(vm->frontend_slots, next * sizeof(*slots));
+        if (!slots) return -1;
+        vm->frontend_slots = slots;
+        vm->frontend_slot_capacity = next;
+    }
+    vm->frontend_slots[vm->frontend_slot_count] = value;
+    return (int)vm->frontend_slot_count++;
+}
+
+void *vm_get_slot(const VM *vm, int slot) {
+    if (!vm || slot < 0 || (size_t)slot >= vm->frontend_slot_count) return NULL;
+    return vm->frontend_slots[slot];
+}
+
 static inline double to_f64(Value v) {
     if (IS_INT(v)) return (double)AS_INT(v);
-    if (IS_INT64(v)) return (double)((int64_t)((ObjInt64*)AS_OBJ(v))->value);
     if (IS_DOUBLE(v)) return AS_DOUBLE(v);
     return 0.0;
 }
-static inline int64_t to_i64(Value v) {
-    if (IS_INT(v)) return (int64_t)AS_INT(v);
-    if (IS_INT64(v)) return (int64_t)((ObjInt64*)AS_OBJ(v))->value;
-    if (IS_DOUBLE(v)) return (int64_t)AS_DOUBLE(v);
-    return 0;
-}
 static inline bool is_num(Value v) {
     return IS_NUMBER(v);
-}
-static inline bool is_int_type(Value v) { return IS_INT(v) || IS_INT64(v); }
-
-static inline bool fits_int32(int64_t v) {
-    return v >= INT32_MIN && v <= INT32_MAX;
-}
-
-static inline Value make_int_result(int64_t v) {
-    return fits_int32(v) ? make_int((int32_t)v) : make_int64(v);
 }
 
 static const char *val_type_name(Value v) {
     if (IS_NIL(v)) return "null";
     if (IS_BOOL(v)) return "bool";
-    if (IS_INT(v) || IS_INT64(v)) return "int";
+    if (IS_INT(v)) return "int";
     if (IS_DOUBLE(v)) return "float";
-    if (IS_STRING(v)) return "str";
-    if (IS_LIST(v)) return "list";
-    if (IS_DICT(v)) return "dict";
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
-        switch (obj->type->kind) {
-            case OBJ_FUNCTION: return "function";
-            case OBJ_UPVALUE: return "upvalue";
-            case OBJ_CLOSURE: return "closure";
-            case OBJ_ENUM: return "enum";
-            case OBJ_CLASS: return "class";
-            case OBJ_BOUND_METHOD: return "method";
-            case OBJ_MODULE: return "module";
-            case OBJ_BUFFER: return "buffer";
-            case OBJ_USERDATA: return "userdata";
-            case OBJ_VECTOR: return "vector";
-            case OBJ_MATRIX: return "matrix";
-            case OBJ_INSTANCE: {
-                ObjInstance *inst = (ObjInstance*)obj;
-                return inst->class_name;
-            }
-            default: return "object";
-        }
+        if (obj->type->class_name) return obj->type->class_name(v);
+        if (obj->type->name) return obj->type->name;
     }
     return "unknown";
 }
 
 static inline Value do_arith(VM *vm, Value L, Value R, OpCode op) {
-    /* OP_NEG: unary negative — delegate to vtable if object, else native */
-    if (op == OP_NEG) {
-        if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type && AS_OBJ(L)->type->neg)
-            return AS_OBJ(L)->type->neg(vm, L);
-        if (is_int_type(L)) return make_int_result(-to_i64(L));
-        return make_double(-to_f64(L));
-    }
-    /* MOP vtable dispatch: if L is a heap object with a vtable operation */
-    if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type) {
-        Type *t = AS_OBJ(L)->type;
-        MOP_Bin fn = NULL;
-        switch (op) {
-            case OP_ADD: fn = t->add; break;
-            case OP_SUB: fn = t->sub; break;
-            case OP_MUL: fn = t->mul; break;
-            case OP_DIV: fn = t->div; break;
-            case OP_MOD: fn = t->mod; break;
-            default: break;
-        }
-        if (fn) return fn(vm, L, R);
-    }
-    /* Symmetric: for ADD/MUL, if R is the object (e.g. int + string), try R's vtable */
-    if ((op == OP_ADD || op == OP_MUL) && IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type) {
-        Type *t = AS_OBJ(R)->type;
-        MOP_Bin fn = NULL;
-        switch (op) {
-            case OP_ADD: fn = t->add; break;
-            case OP_MUL: fn = t->mul; break;
-            default: break;
-        }
-        if (fn) return fn(vm, R, L);  /* self = R, other = L */
-    }
-    /* Native arithmetic (int/float) — kept intact for correctness */
-    if (!is_num(L) || !is_num(R)) return make_null();
-    if (is_int_type(L) && is_int_type(R)) {
-        int64_t li = to_i64(L); int64_t ri = to_i64(R);
-        switch (op) {
-            case OP_ADD: return make_int_result(li + ri);
-            case OP_SUB: return make_int_result(li - ri);
-            case OP_MUL: return make_int_result(li * ri);
-            case OP_DIV: { if (!ri) return make_null(); return make_int_result(li / ri); }
-            case OP_MOD: { if (!ri) return make_null(); return make_int_result(li % ri); }
-            default: return make_null();
-        }
-    }
-    double l = to_f64(L); double r = to_f64(R);
+    vm->last_exception = make_null();
+    VMOperation operation;
     switch (op) {
-        case OP_ADD: return make_double(l + r);
-        case OP_SUB: return make_double(l - r);
-        case OP_MUL: return make_double(l * r);
-        case OP_DIV: {
-            if (r == 0.0) {
-                if (l == 0.0) return make_double(0.0/0.0);
-                else if (l > 0.0) return make_pos_inf();
-                else return make_neg_inf();
-            }
-            return make_double(l / r);
-        }
-        case OP_MOD: {
-            if (r == 0.0) return make_double(0.0/0.0);
-            return make_double(fmod(l, r));
-        }
+        case OP_ADD: operation = VM_OP_ADD; break;
+        case OP_SUB: operation = VM_OP_SUB; break;
+        case OP_MUL: operation = VM_OP_MUL; break;
+        case OP_DIV: operation = VM_OP_DIV; break;
+        case OP_MOD: operation = VM_OP_MOD; break;
+        case OP_BAND: operation = VM_OP_BAND; break;
+        case OP_BOR: operation = VM_OP_BOR; break;
+        case OP_BXOR: operation = VM_OP_BXOR; break;
+        case OP_BNOT: operation = VM_OP_BNOT; break;
+        case OP_SHL: operation = VM_OP_SHL; break;
+        case OP_SHR: operation = VM_OP_SHR; break;
         default: return make_null();
     }
+    Value result = make_null();
+    if (vm_binary(vm, operation, L, R, &result)) return result;
+    return make_null();
 }
 static inline Value do_cmp(VM *vm, Value L, Value R, OpCode op) {
-    /* Integer fast path: avoid float conversion for int vs int */
-    if (is_int_type(L) && is_int_type(R)) {
-        int64_t a = to_i64(L), b = to_i64(R);
-        switch (op) {
-            case OP_LT: return make_bool(a <  b);
-            case OP_LE: return make_bool(a <= b);
-            case OP_GT: return make_bool(a >  b);
-            case OP_GE: return make_bool(a >= b);
-            case OP_EQ: return make_bool(a == b);
-            case OP_NE: return make_bool(a != b);
-            default: break;
-        }
-    }
-    if (is_num(L) && is_num(R)) {
-        double a = to_f64(L), b = to_f64(R);
-        switch (op) { case OP_LT: return make_bool(a < b); case OP_LE: return make_bool(a <= b); case OP_GT: return make_bool(a > b); case OP_GE: return make_bool(a >= b); default: break; }
-    }
-    /* Fast path: interned string equality is pointer comparison */
-    if (IS_STRING(L) && IS_STRING(R)) {
-        bool same = AS_OBJ(L) == AS_OBJ(R);
-        switch (op) {
-            case OP_EQ: return make_bool(same);
-            case OP_NE: return make_bool(!same);
-            default: break;
-        }
-    }
-    /* MOP vtable dispatch for comparison (only for ordering ops, not EQ/NE) */
-    if (op != OP_EQ && op != OP_NE) {
-        if (IS_OBJ(L) && AS_OBJ(L) && AS_OBJ(L)->type && AS_OBJ(L)->type->cmp) {
-            int r = AS_OBJ(L)->type->cmp(vm, L, R);
-            if (r == 2) return make_null(); /* unsupported */
-            switch (op) {
-                case OP_LT: return make_bool(r < 0);
-                case OP_LE: return make_bool(r <= 0);
-                case OP_GT: return make_bool(r > 0);
-                case OP_GE: return make_bool(r >= 0);
-                default: break;
-            }
-        }
-        if (IS_OBJ(R) && AS_OBJ(R) && AS_OBJ(R)->type && AS_OBJ(R)->type->cmp) {
-            int r = AS_OBJ(R)->type->cmp(vm, R, L);
-            if (r == 2) return make_null();
-            switch (op) {
-                case OP_LT: return make_bool(r > 0);
-                case OP_LE: return make_bool(r >= 0);
-                case OP_GT: return make_bool(r < 0);
-                case OP_GE: return make_bool(r <= 0);
-                default: break;
-            }
-        }
-        return make_null();
-    }
-    /* EQ / NE: universal equality (includes pointer identity for objects) */
+    VMOperation operation;
     switch (op) {
-        case OP_EQ: return make_bool(values_equal(L, R));
-        case OP_NE: return make_bool(!values_equal(L, R));
+        case OP_EQ: operation = VM_OP_EQ; break;
+        case OP_NE: operation = VM_OP_NE; break;
+        case OP_LT: operation = VM_OP_LT; break;
+        case OP_LE: operation = VM_OP_LE; break;
+        case OP_GT: operation = VM_OP_GT; break;
+        case OP_GE: operation = VM_OP_GE; break;
         default: return make_null();
     }
+    Value result = make_null();
+    if (vm_compare(vm, operation, L, R, &result)) return result;
+    return make_null();
 }
 
 /* ============================================================ */
@@ -276,95 +280,12 @@ static void mark_object(Object *obj) {
 }
 
 /* Drain the gray stack iteratively — no C recursion. */
-static void mark_drain(void) {
+static void mark_drain(VM *vm) {
     while (gray_count > 0) {
         Object *obj = gray_stack[--gray_count];
         obj->gc_color = GC_COLOR_BLACK;
 
-        switch (obj->type->kind) {
-            case OBJ_LIST: {
-                ObjList *l = (ObjList *)obj;
-                if (l->items) {
-                    for (int i = 0; i < l->count; i++) mark_value(l->items[i]);
-                } else {
-                    for (int i = 0; i < l->count; i++) mark_value(l->inline_items[i]);
-                }
-                break;
-            }
-            case OBJ_DICT: {
-                ObjDict *d = (ObjDict *)obj;
-                if (d->entries == NULL) {
-                    for (int i = 0; i < d->entry_count; i++) {
-                        mark_value(d->inline_entries[i].key);
-                        mark_value(d->inline_entries[i].value);
-                    }
-                } else {
-                    for (int i = 0; i < d->capacity; i++) {
-                        if (d->entries[i].key != EMPTY_VAL && d->entries[i].key != TOMBSTONE_VAL) {
-                            mark_value(d->entries[i].key);
-                            mark_value(d->entries[i].value);
-                        }
-                    }
-                }
-                break;
-            }
-            case OBJ_INSTANCE: {
-                ObjInstance *inst = (ObjInstance *)obj;
-                for (int i = 0; i < inst->field_count; i++) {
-                    mark_value(inst->fields[i]);
-                }
-                mark_object((Object*)inst->klass);
-                break;
-            }
-            case OBJ_CLOSURE: {
-                ObjClosure *cl = (ObjClosure *)obj;
-                mark_object((Object*)cl->function);
-                for (int i = 0; i < cl->upvalue_count; i++) {
-                    mark_object((Object*)cl->upvalues[i]);
-                }
-                break;
-            }
-            case OBJ_ENUM: break;
-            case OBJ_FUNCTION: {
-                ObjFunction *f = (ObjFunction *)obj;
-                if (f->chunk) {
-                    for (int i = 0; i < f->chunk->const_count; i++) {
-                        mark_value(f->chunk->constants[i]);
-                    }
-                }
-                break;
-            }
-            case OBJ_UPVALUE: {
-                ObjUpvalue *uv = (ObjUpvalue *)obj;
-                mark_value(uv->closed);
-                break;
-            }
-            case OBJ_CLASS: {
-                ObjClass *cls = (ObjClass *)obj;
-                mark_object((Object*)cls->base);
-                mark_object((Object*)cls->prototype);
-                for (int i = 0; i < cls->method_count; i++) {
-                    mark_object((Object*)cls->methods[i]);
-                }
-                mark_object((Object*)cls->fields);
-                break;
-            }
-            case OBJ_BOUND_METHOD: {
-                ObjBoundMethod *bm = (ObjBoundMethod *)obj;
-                mark_value(bm->self);
-                mark_object((Object*)bm->fn);
-                break;
-            }
-            case OBJ_MODULE: {
-                ObjModule *mod = (ObjModule *)obj;
-                mark_object((Object*)mod->name);
-                mark_object((Object*)mod->exports);
-                break;
-            }
-            case OBJ_BUFFER: break;
-            case OBJ_INT64: break;
-            default: break;
-        }
+        if (obj->type->mark) obj->type->mark(vm, obj);
     }
     /* gray_stack persists across cycles for incremental GC */
 }
@@ -422,35 +343,8 @@ static void gc_step(VM *vm) {
                     mark_value(vm->frames[i].chunk->constants[j]);
                 }
             }
-            mark_value(vm->frames[i].kw_args);
-        }
-        ObjUpvalue *uv = vm->open_upvalues;
-        while (uv) {
-            mark_object((Object*)uv);
-            uv = uv->next;
         }
         mark_value(vm->last_exception);
-        if (vm->module_cache) mark_object((Object*)vm->module_cache);
-        if (vm->exception_class) mark_object((Object*)vm->exception_class);
-        if (vm->type_error_class) mark_object((Object*)vm->type_error_class);
-        if (vm->key_error_class) mark_object((Object*)vm->key_error_class);
-        if (vm->index_error_class) mark_object((Object*)vm->index_error_class);
-        if (vm->attribute_error_class) mark_object((Object*)vm->attribute_error_class);
-        if (vm->value_error_class) mark_object((Object*)vm->value_error_class);
-        if (vm->runtime_error_class) mark_object((Object*)vm->runtime_error_class);
-        if (vm->string_class) mark_object((Object*)vm->string_class);
-        if (vm->list_class) mark_object((Object*)vm->list_class);
-        if (vm->dict_class) mark_object((Object*)vm->dict_class);
-        if (vm->enum_class) mark_object((Object*)vm->enum_class);
-        if (vm->buffer_class) mark_object((Object*)vm->buffer_class);
-        if (vm->vector_class) mark_object((Object*)vm->vector_class);
-        if (vm->matrix_class) mark_object((Object*)vm->matrix_class);
-        if (vm->function_class) mark_object((Object*)vm->function_class);
-        if (vm->closure_class) mark_object((Object*)vm->closure_class);
-        if (vm->bound_method_class) mark_object((Object*)vm->bound_method_class);
-        if (vm->class_class) mark_object((Object*)vm->class_class);
-        if (vm->module_class) mark_object((Object*)vm->module_class);
-        if (vm->userdata_class) mark_object((Object*)vm->userdata_class);
         gc_state = GC_STATE_MARK;
     }
 
@@ -461,90 +355,7 @@ static void gc_step(VM *vm) {
             Object *obj = gray_stack[--gray_count];
             obj->gc_color = GC_COLOR_BLACK;
 
-            switch (obj->type->kind) {
-                case OBJ_LIST: {
-                    ObjList *l = (ObjList *)obj;
-                    if (l->items) {
-                        for (int i = 0; i < l->count; i++) mark_value(l->items[i]);
-                    } else {
-                        for (int i = 0; i < l->count; i++) mark_value(l->inline_items[i]);
-                    }
-                    break;
-                }
-                case OBJ_DICT: {
-                    ObjDict *d = (ObjDict *)obj;
-                    if (d->entries == NULL) {
-                        for (int i = 0; i < d->entry_count; i++) {
-                            mark_value(d->inline_entries[i].key);
-                            mark_value(d->inline_entries[i].value);
-                        }
-                    } else {
-                        for (int i = 0; i < d->capacity; i++) {
-                            if (d->entries[i].key != EMPTY_VAL && d->entries[i].key != TOMBSTONE_VAL) {
-                                mark_value(d->entries[i].key);
-                                mark_value(d->entries[i].value);
-                            }
-                        }
-                    }
-                    break;
-                }
-                case OBJ_INSTANCE: {
-                    ObjInstance *inst = (ObjInstance *)obj;
-                    for (int i = 0; i < inst->field_count; i++) {
-                        mark_value(inst->fields[i]);
-                    }
-                    mark_object((Object*)inst->klass);
-                    break;
-                }
-                case OBJ_CLOSURE: {
-                    ObjClosure *cl = (ObjClosure *)obj;
-                    mark_object((Object*)cl->function);
-                    for (int i = 0; i < cl->upvalue_count; i++) {
-                        mark_object((Object*)cl->upvalues[i]);
-                    }
-                    break;
-                }
-                case OBJ_ENUM: break;
-                case OBJ_FUNCTION: {
-                    ObjFunction *f = (ObjFunction *)obj;
-                    if (f->chunk) {
-                        for (int i = 0; i < f->chunk->const_count; i++) {
-                            mark_value(f->chunk->constants[i]);
-                        }
-                    }
-                    break;
-                }
-                case OBJ_UPVALUE: {
-                    ObjUpvalue *uv = (ObjUpvalue *)obj;
-                    mark_value(uv->closed);
-                    break;
-                }
-                case OBJ_CLASS: {
-                    ObjClass *cls = (ObjClass *)obj;
-                    mark_object((Object*)cls->base);
-                    mark_object((Object*)cls->prototype);
-                    for (int i = 0; i < cls->method_count; i++) {
-                        mark_object((Object*)cls->methods[i]);
-                    }
-                    mark_object((Object*)cls->fields);
-                    break;
-                }
-                case OBJ_BOUND_METHOD: {
-                    ObjBoundMethod *bm = (ObjBoundMethod *)obj;
-                    mark_value(bm->self);
-                    mark_object((Object*)bm->fn);
-                    break;
-                }
-                case OBJ_MODULE: {
-                    ObjModule *mod = (ObjModule *)obj;
-                    mark_object((Object*)mod->name);
-                    mark_object((Object*)mod->exports);
-                    break;
-                }
-                case OBJ_BUFFER: break;
-                case OBJ_INT64: break;
-                default: break;
-            }
+            if (obj->type->mark) obj->type->mark(vm, obj);
         }
         if (gray_count == 0) {
             // Invalidate inline caches
@@ -614,40 +425,14 @@ void mark_and_sweep(VM *vm) {
                 mark_value(vm->frames[i].chunk->constants[j]);
             }
         }
-        mark_value(vm->frames[i].kw_args);
-    }
-    ObjUpvalue *uv = vm->open_upvalues;
-    while (uv) {
-        mark_object((Object*)uv);
-        uv = uv->next;
     }
     mark_value(vm->last_exception);
     mark_value(vm->last_return_value);
-    if (vm->api_state) luna_mark_roots(vm);
-    if (vm->module_cache) mark_object((Object*)vm->module_cache);
-    if (vm->exception_class) mark_object((Object*)vm->exception_class);
-    if (vm->type_error_class) mark_object((Object*)vm->type_error_class);
-    if (vm->key_error_class) mark_object((Object*)vm->key_error_class);
-    if (vm->index_error_class) mark_object((Object*)vm->index_error_class);
-    if (vm->attribute_error_class) mark_object((Object*)vm->attribute_error_class);
-    if (vm->value_error_class) mark_object((Object*)vm->value_error_class);
-    if (vm->runtime_error_class) mark_object((Object*)vm->runtime_error_class);
-    if (vm->string_class) mark_object((Object*)vm->string_class);
-    if (vm->list_class) mark_object((Object*)vm->list_class);
-    if (vm->dict_class) mark_object((Object*)vm->dict_class);
-    if (vm->enum_class) mark_object((Object*)vm->enum_class);
-    if (vm->buffer_class) mark_object((Object*)vm->buffer_class);
-    if (vm->vector_class) mark_object((Object*)vm->vector_class);
-    if (vm->matrix_class) mark_object((Object*)vm->matrix_class);
-    if (vm->function_class) mark_object((Object*)vm->function_class);
-    if (vm->closure_class) mark_object((Object*)vm->closure_class);
-    if (vm->bound_method_class) mark_object((Object*)vm->bound_method_class);
-    if (vm->class_class) mark_object((Object*)vm->class_class);
-    if (vm->module_class) mark_object((Object*)vm->module_class);
-    if (vm->userdata_class) mark_object((Object*)vm->userdata_class);
+    if (vm->frontend && vm->frontend->mark_roots)
+        vm->frontend->mark_roots(vm);
 
     // Drain gray stack iteratively (no C recursion)
-    mark_drain();
+    mark_drain(vm);
 
     // Invalidate inline caches — any cached object may have been collected.
     memset(vm->global_ic, 0, sizeof(vm->global_ic));
@@ -699,57 +484,8 @@ void mark_and_sweep(VM *vm) {
 /* VM init / free                                                */
 /* ============================================================ */
 
-static ObjClass *vm_register_builtin_exception(VM *vm, const char *name, ObjClass *base) {
-    ObjClass *cls = new_class(name, NULL);
-    if (base) {
-        cls->base = base;
-        /* Copy prototype fields from base */
-        if (base->prototype) {
-            ObjInstance *bp = base->prototype;
-            cls->prototype = new_instance(cls, bp->field_capacity > 4 ? bp->field_capacity : 4);
-            for (int i = 0; i < bp->field_count; i++) {
-                instance_set_field(cls->prototype, bp->field_names[i], bp->fields[i]);
-            }
-        }
-    } else {
-        cls->prototype = new_instance(cls, 4);
-        instance_set_field(cls->prototype, "message", make_null());
-        instance_set_field(cls->prototype, "stack_trace", make_null());
-        instance_set_field(cls->prototype, "file", make_null());
-        instance_set_field(cls->prototype, "line", make_int(0));
-    }
-    Value cls_val = make_obj((Object*)cls);
-    vm_set_global(vm, name, cls_val, false);
-    return cls;
-}
-
 void vm_init(VM *vm) {
     memset(vm, 0, sizeof(VM));
-    vm->time_start_us = luna_time_monotonic_us();
-    vm_register_builtins(vm);
-    vm_register_canonical_classes(vm);
-
-    /* Register built-in Exception hierarchy */
-    vm->exception_class      = vm_register_builtin_exception(vm, "Exception", NULL);
-    vm->type_error_class     = vm_register_builtin_exception(vm, "TypeError", vm->exception_class);
-    vm->key_error_class      = vm_register_builtin_exception(vm, "KeyError", vm->exception_class);
-    vm->index_error_class    = vm_register_builtin_exception(vm, "IndexError", vm->exception_class);
-    vm->attribute_error_class = vm_register_builtin_exception(vm, "AttributeError", vm->exception_class);
-    vm->value_error_class    = vm_register_builtin_exception(vm, "ValueError", vm->exception_class);
-    vm->runtime_error_class  = vm_register_builtin_exception(vm, "RuntimeError", vm->exception_class);
-    vm->argument_error_class = vm_register_builtin_exception(vm, "ArgumentError", vm->exception_class);
-
-    vm->module_cache = new_dict();
-    vm_register_math_module(vm);
-    vm_register_random_module(vm);
-    vm_register_noise_module(vm);
-    vm_register_io_module(vm);
-    vm_register_time_module(vm);
-    vm_register_os_module(vm);
-    vm_register_buffer_module(vm);
-    vm_register_string_module(vm);
-    vm_register_net_module(vm);
-    vm_register_json_module(vm);
 }
 
 void vm_set_process_args(VM *vm, int argc, char **argv) {
@@ -768,6 +504,11 @@ static void vm_pop_try_frames(VM *vm, int min_depth) {
 }
 
 void vm_free(VM *vm) {
+    free(vm->frontend_slots);
+    vm->frontend_slots = NULL;
+    vm->frontend_slot_count = 0;
+    vm->frontend_slot_capacity = 0;
+
     free(gray_stack);
     gray_stack = NULL;
     gray_cap = 0;
@@ -821,14 +562,14 @@ void vm_free(VM *vm) {
     bytes_allocated = 0;
 }
 
-static GlobalEntry **vm_globals_save(VM *vm) {
+GlobalEntry **vm_globals_save(VM *vm) {
     GlobalEntry **saved = malloc(sizeof(GlobalEntry *) * VM_GLOBAL_BUCKETS);
     if (!saved) { fprintf(stderr, "OOM\n"); exit(1); }
     memcpy(saved, vm->globals, sizeof(GlobalEntry *) * VM_GLOBAL_BUCKETS);
     return saved;
 }
 
-static void vm_globals_restore(VM *vm, GlobalEntry **saved) {
+void vm_globals_restore(VM *vm, GlobalEntry **saved) {
     for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
         GlobalEntry *e = vm->globals[i];
         while (e) {
@@ -842,19 +583,20 @@ static void vm_globals_restore(VM *vm, GlobalEntry **saved) {
     free(saved);
 }
 
-static void vm_globals_fresh(VM *vm) {
+void vm_globals_fresh(VM *vm) {
     memset(vm->globals, 0, sizeof(GlobalEntry *) * VM_GLOBAL_BUCKETS);
 }
 
-static ObjDict *vm_globals_to_dict(VM *vm) {
-    ObjDict *d = new_dict();
+void *vm_globals_to_dict(VM *vm) {
+    Value d;
+    if (!vm_new_dict(vm, &d)) return NULL;
     for (int i = 0; i < VM_GLOBAL_BUCKETS; i++) {
         for (GlobalEntry *e = vm->globals[i]; e; e = e->next) {
-            ObjString *key = new_string(e->name, (int)strlen(e->name));
-            dict_set(d, make_obj((Object*)key), e->value);
+            Value key = vm->frontend->new_string(vm, e->name, (int)strlen(e->name));
+            vm_setitem(vm, d, key, e->value);
         }
     }
-    return d;
+    return AS_OBJ(d);
 }
 
 static void frame_set_refs(CallFrame *frame, Object *closure, Object *fn) {
@@ -908,8 +650,8 @@ static void path_dirname(const char *path, char *buf, size_t buf_size) {
 #define SET_FIELD(inst, idx, v) do { \
     (inst)->fields[idx] = (v); \
 } while (0)
-#define KSTR(n)     (((ObjString*)AS_OBJ(CONST(n)))->chars)
-#define KSTROBJ(n)  ((ObjString*)AS_OBJ(CONST(n)))
+#define KSTR(n)     (AS_OBJ(CONST(n))->type->string_chars(CONST(n)))
+#define KSTROBJ(n)  (CONST(n))
 
 /* ============================================================ */
 /* Matrix math helpers                                           */
@@ -1091,20 +833,16 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_try,           // 58 OP_TRY
         &&op_endtry,        // 59 OP_ENDTRY
         &&op_isinstance,    // 60 OP_ISINSTANCE
-        &&op_default,       // 61 OP_DEFAULT
-        &&op_kwargs,        // 62 OP_KWARGS
-        &&op_kcall,         // 63 OP_KCALL
-        &&op_coalesce,      // 64 OP_COALESCE
-        &&op_memberget_safe,// 65 OP_MEMBERGET_SAFE
-        &&op_indexget_safe, // 66 OP_INDEXGET_SAFE
-        &&op_slice_safe,    // 67 OP_SLICE_SAFE
-        &&op_import,        // 68 OP_IMPORT
-        &&op_tryinit,       // 69 OP_TRYINIT
-        &&op_halt,          // 70 OP_HALT
-        &&op_lt_jz,         // 71 OP_LT_JZ
-        &&op_le_jz,         // 72 OP_LE_JZ
-        &&op_gt_jz,         // 73 OP_GT_JZ
-        &&op_ge_jz,         // 74 OP_GE_JZ
+        &&op_kw_prefix,     // OP_KW_PREFIX
+        &&op_coalesce,      // OP_COALESCE
+        &&op_memberget_safe,// 69 OP_MEMBERGET_SAFE
+        &&op_indexget_safe, // 70 OP_INDEXGET_SAFE
+        &&op_import,        // 71 OP_IMPORT
+        &&op_halt,          // 72 OP_HALT
+        &&op_lt_jz,         // 73 OP_LT_JZ
+        &&op_le_jz,         // 74 OP_LE_JZ
+        &&op_gt_jz,         // 75 OP_GT_JZ
+        &&op_ge_jz,         // 76 OP_GE_JZ
         &&op_eq_jz,         // 75 OP_EQ_JZ
         &&op_ne_jz,         // 76 OP_NE_JZ
         &&op_lt_jz_imm,     // 77 OP_LT_JZ_IMM
@@ -1129,7 +867,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 #define PUSH_FRAME(fn, cl, base_reg, retreg, n, extra) do { \
     current_frame->ip = (int)(pc - current_chunk->code); \
     if (LUNA_UNLIKELY((vm)->frame_count >= MAX_FRAMES)) { \
-        _exc = make_exception_instance(vm, vm->exception_class, "call stack overflow"); \
+        _exc = vm_make_exception(vm, VM_EXCEPTION_RUNTIME, "call stack overflow"); \
         goto op_throw; \
     } \
     CallFrame *_c = &(vm)->frames[(vm)->frame_count]; \
@@ -1139,7 +877,6 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
     _c->base = (base_reg); \
     _c->ret_reg = (retreg); \
     _c->nargs = (n); \
-    _c->kw_args = make_null(); \
     _c->leaf_ret_ip = 0; \
     _c->leaf_ret_chunk = NULL; \
     _c->leaf_ret_base = 0; \
@@ -1183,7 +920,7 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
         mark_and_sweep(vm);
     }
     if (vm->frame_count >= MAX_FRAMES) {
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, "frame overflow");
+        vm->last_exception = vm_make_exception(vm, VM_EXCEPTION_RUNTIME, "frame overflow");
         return VM_EXCEPTION;
     }
     CallFrame *frame = &vm->frames[vm->frame_count++];
@@ -1192,7 +929,6 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
     frame->base = vm->stack_count;
     frame->ret_reg = 0;
     frame->nargs = 0;
-    frame->kw_args = make_null();
     frame->closure = NULL;
     frame->fn = NULL;
     frame->saved_globals = NULL;
@@ -1232,7 +968,7 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
     int saved_frame_count = vm->frame_count;
     Type *t = (IS_OBJ(fn_val) && AS_OBJ(fn_val)->type) ? AS_OBJ(fn_val)->type : NULL;
     if (!t || !t->call) {
-        vm->last_exception = make_exception_instance(vm, vm->exception_class,
+        vm->last_exception = vm_make_exception(vm, VM_EXCEPTION_GENERIC,
             "attempt to call a non-function value");
         return VM_EXCEPTION;
     }
@@ -1282,7 +1018,6 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         frame->base = callee_base;
         frame->ret_reg = 0;
         frame->nargs = arg_count;
-        frame->kw_args = make_null();
         frame->closure = callee;
         frame->fn = callee;
         frame->saved_globals = NULL;
@@ -1336,7 +1071,6 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         dummy->base = saved_stack_count;
         dummy->ret_reg = 0;
         dummy->nargs = 0;
-        dummy->kw_args = make_null();
         dummy->closure = NULL;
         dummy->fn = NULL;
         dummy->saved_globals = NULL;
@@ -1353,7 +1087,6 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         frame->base = callee_base;
         frame->ret_reg = 0;
         frame->nargs = arg_count;
-        frame->kw_args = make_null();
         frame->closure = callee;
         frame->fn = callee;
         frame->saved_globals = NULL;
@@ -1393,30 +1126,15 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
 /* Upvalue helpers                                              */
 /* ============================================================ */
 
-ObjUpvalue *capture_upvalue(VM *vm, int stack_idx) {
-    ObjUpvalue *prev = NULL;
-    ObjUpvalue *uv = vm->open_upvalues;
-    while (uv && uv->stack_index > stack_idx) {
-        prev = uv;
-        uv = uv->next;
-    }
-    if (uv && uv->is_open && uv->stack_index == stack_idx) return uv;
-    
-    ObjUpvalue *created = new_upvalue(stack_idx);
-    created->next = uv;
-    created->frame_depth = vm->frame_count;
-    if (prev) prev->next = created;
-    else vm->open_upvalues = created;
-    return created;
+Object *capture_upvalue(VM *vm, int stack_idx) {
+    if (vm && vm->frontend && vm->frontend->capture_upvalue)
+        return vm->frontend->capture_upvalue(vm, stack_idx);
+    return NULL;
 }
 
 static void close_upvalues(VM *vm, int frame_depth) {
-    while (vm->open_upvalues && vm->open_upvalues->frame_depth >= frame_depth) {
-        ObjUpvalue *uv = vm->open_upvalues;
-        uv->closed = vm->stack[uv->stack_index];
-        uv->is_open = false;
-        vm->open_upvalues = uv->next;
-    }
+    if (vm && vm->frontend && vm->frontend->close_upvalues)
+        vm->frontend->close_upvalues(vm, frame_depth);
 }
 
 /* ============================================================ */
@@ -1454,17 +1172,17 @@ int vm_throw(VM *vm, Value exception) {
         free(tf);
         return 1;
     }
-    /* Extract message from Exception instance if applicable */
-    if (IS_INSTANCE(exception) && vm->exception_class) {
-        ObjInstance *inst = (ObjInstance*)AS_OBJ(exception);
-        if (inst->klass == vm->exception_class) {
-            Value msg = instance_get_field(inst, "message");
-            if (IS_STRING(msg)) {
-                fprintf(stderr, "Uncaught exception: %s\n", ((ObjString*)AS_OBJ(msg))->chars);
-            } else {
-                fprintf(stderr, "Uncaught exception\n");
+    /* Extract message via the MOP message hook when the value is an object
+     * that exposes one (e.g. exception instances).  Falls back to a generic
+     * stringification otherwise. */
+    if (IS_OBJ(exception)) {
+        Object *o = AS_OBJ(exception);
+        if (o->type && o->type->message) {
+            const char *msg = o->type->message(vm, exception);
+            if (msg) {
+                fprintf(stderr, "Uncaught exception: %s\n", msg);
+                return 1;
             }
-            return 1;
         }
     }
     char *s = value_to_string(exception);
@@ -1476,16 +1194,19 @@ int vm_throw(VM *vm, Value exception) {
 /* Native exception throw — callable from C builtin functions.
  * Uses longjmp to safely return to the VM bytecode loop,
  * which then reuses the existing op_throw unwinding logic. */
-void luna_throw(VM *vm, ObjClass *error_class, const char *format, ...) {
+void luna_throw(VM *vm, void *error_class, const char *format, ...) {
     va_list ap;
     va_start(ap, format);
     char buf[256];
     vsnprintf(buf, sizeof(buf), format, ap);
     va_end(ap);
 
-    vm->last_exception = make_exception_instance(vm, error_class, buf);
+    if (vm && vm->frontend && vm->frontend->make_exception_for_class)
+        vm->last_exception = vm->frontend->make_exception_for_class(vm, error_class, buf);
+    else
+        vm->last_exception = make_null();
 
-    if (vm->native_jump) {
+    if (vm && vm->native_jump) {
         longjmp(vm->native_jump->env, 1);
     } else {
         fprintf(stderr, "Fatal uncaught exception (no active VM frame): %s\n", buf);
@@ -1493,7 +1214,7 @@ void luna_throw(VM *vm, ObjClass *error_class, const char *format, ...) {
     }
 }
 
-bool vm_call_native(VM *vm, NativeFn fn, Value *args, int arg_count, Value *out) {
+bool vm_call_native(VM *vm, VMNativeFn fn, Value *args, int arg_count, Value *out) {
     LunaJump jump;
     jump.prev = vm->native_jump;
     vm->native_jump = &jump;
@@ -1535,22 +1256,22 @@ void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error
             top_source = f->chunk->source_path ? f->chunk->source_path : fallback_source;
         }
     }
-    /* Get exception class name */
+    /* Get exception class name (via vtable — the core never names OBJ_INSTANCE) */
     const char *class_name = "Error";
     if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception)) {
         Object *obj = AS_OBJ(vm->last_exception);
-        if (obj->type->kind == OBJ_INSTANCE) {
-            ObjInstance *inst = (ObjInstance*)obj;
-            class_name = inst->class_name ? inst->class_name : "Error";
+        if (obj->type->class_name) {
+            const char *cn = obj->type->class_name(vm->last_exception);
+            if (cn) class_name = cn;
         }
     }
     /* Get the raw message from the exception instance (not value_to_string which wraps in <>) */
     const char *raw_msg = error_msg;
     if (IS_OBJ(vm->last_exception) && AS_OBJ(vm->last_exception)) {
         Object *obj = AS_OBJ(vm->last_exception);
-        if (obj->type->kind == OBJ_INSTANCE) {
-            Value msgv = instance_get_field((ObjInstance*)obj, "message");
-            if (IS_STRING(msgv)) raw_msg = ((ObjString*)AS_OBJ(msgv))->chars;
+        if (obj->type->message) {
+            const char *m = obj->type->message(vm, vm->last_exception);
+            if (m) raw_msg = m;
         }
     }
     /* file:line: ClassName: message */

@@ -152,23 +152,23 @@ typedef enum {
     /* ---- Type checking ---- */
     OP_ISINSTANCE,  /* ABC  : A = isinstance(B, C)  (C is a class object) */
 
-    /* ---- Default arguments & keyword calls ---- */
-    OP_DEFAULT,     /* AsBx : if arg[RA] provided OR in kw_args then PC += sBx else fall through */
-    OP_KWARGS,      /* ABC  : populate params from kwargs dict (A,B,C unused) */
-    OP_KCALL,       /* ABC  : A = kcall B(pos_args=C, kwargs at B+C+1) */
+    /* ---- Keyword-argument prefix ----
+     * OP_KW_PREFIX is emitted immediately before OP_CALL only when a call
+     * carries keyword arguments.  It carries the keyword count (A) and a
+     * 16-bit constant-pool index (Bx) to a static tuple of argument names.
+     * The plain positional OP_CALL never pays for this: it just reads the
+     * vm->next_call_kw_* fields (a register compare on the fast path). */
+    OP_KW_PREFIX,   /* ABx  : A = kw_count, Bx = kw_names const index       */
     OP_COALESCE,    /* AsBx : if A != null then PC += sBx (skip RHS)     */
 
     /* ---- Safe access (null on missing, no throw) ---- */
     OP_MEMBERGET_SAFE, /* ABC  : A = B?.field (field = constants[C]). null if obj null or missing */
     OP_INDEXGET_SAFE,  /* ABC  : A = B?.[C]. null if obj null or missing      */
-    OP_SLICE_SAFE,     /* ABC  : A = B?.[slice]. null if obj null            */
 
     /* ---- Module import ---- */
     OP_IMPORT,      /* ABx  : A = import(module=constants[Bx])              */
 
     /* ---- Safe constructor invocation ---- */
-    OP_TRYINIT,     /* ABC  : if obj has _init, call it with nargs=C (args at A+2..), else no-op if C==0 else error */
-
     OP_HALT,        /* ABC  : stop VM (A,B,C unused)                     */
 
     /* ---- Compare-and-branch (ABC: A=left, B=right, C=offset) ---- */

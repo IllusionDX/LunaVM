@@ -4,6 +4,7 @@
 #include <string.h>
 #include "stdlib_string.h"
 #include "value.h"
+#include "luna/object.h"
 
 static void module_add_const(ObjModule *mod, const char *name, const char *value) {
     dict_set(mod->exports,
