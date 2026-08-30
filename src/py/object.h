@@ -3,15 +3,17 @@
 
 #include "value.h"
 
-struct py_State; /* forward decl: the py frontend's API state (see luna.h) */
+struct py_State; /* forward decl: the py frontend's API state (see py.h) */
 
 /* ============================================================
- * Luna object model (frontend-specific).
+ * Python Implementation Object Model (frontend-specific).
  *
- * The VM core is language-agnostic; this file owns Luna's types, their
- * kind predicates, and the operations the VM currently dispatches to.
- * When the MOP vtable lands (docs/architecture.md), the per-kind switches
- * move into vtable implementations and the core stops switching on ObjType.
+ * The VM core is language-agnostic; this file owns the Python
+ * subset's types, their kind predicates, and the operations the
+ * VM currently dispatches to.
+ * When the MOP vtable lands (docs/architecture.md), the per-kind
+ * switches move into vtable implementations and the core stops
+ * switching on ObjType.
  * ============================================================ */
 
 typedef enum {

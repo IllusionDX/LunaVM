@@ -1,14 +1,14 @@
-/* luna.h — Embeddable C API for the Luna interpreter.
+/* py.h — Embeddable C API for the Python-subset interpreter.
  *
- * Provides a stack-based API for calling Luna functions,
+ * Provides a stack-based API for calling Python functions,
  * accessing globals, and binding native C functions.
  *
  * Stack index: 0-based, absolute from bottom.
  *   0 = first pushed value, top = last pushed value.
  */
 
-#ifndef LUNA_LUNA_H
-#define LUNA_LUNA_H
+#ifndef LUNA_PY_H
+#define LUNA_PY_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -138,4 +138,4 @@ void*       lunaL_checkuserdata(py_State *L, int arg, const char *tag);
 }
 #endif
 
-#endif /* LUNA_LUNA_H */
+#endif /* LUNA_PY_H */

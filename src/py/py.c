@@ -6,7 +6,7 @@
 #include <stdarg.h>
 #include <math.h>
 
-#include "luna.h"
+#include "py.h"
 #include "vm.h"
 #include "value.h"
 #include "py/object.h"

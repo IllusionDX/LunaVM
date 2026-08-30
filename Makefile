@@ -44,7 +44,7 @@ CORE_OBJECTS = src/value.o src/chunk.o src/vm.o
 
 # Python-subset frontend (src/py) — shares the core above
 PY_SOURCES = src/py/object.c \
-    src/py/main.c src/py/luna.c \
+    src/py/main.c src/py/py.c \
     src/py/lexer.c src/py/parser.c src/py/compiler.c \
     src/py/parse_expr.c src/py/parse_stmt.c src/py/parse_decl.c \
     src/py/fstring.c src/py/module.c src/py/ast_free.c \
