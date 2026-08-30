@@ -128,7 +128,7 @@ typedef enum {
     OP_LISTAPPEND,  /* ABC  : A.append(B)                                 */
     
     OP_GETITER,     /* ABC  : init iter state at A, from object B         */
-    OP_FORLOOP,     /* AsBx : next elem in A+2. If iter(A) has next, PC+=sBx */
+    OP_FORITER,     /* AsBx : generic iter: next elem in A+2. If iter(A) has next, PC+=sBx */
 
     OP_INDEXGET,    /* ABC  : A = B[C]                                     */
     OP_INDEXSET,    /* ABC  : A[B] = C                                     */
@@ -186,6 +186,12 @@ typedef enum {
     OP_GE_JZ_IMM,   /* ABC  : if !(A >= (int8_t)B) then IP += C         */
     OP_EQ_JZ_IMM,   /* ABC  : if !(A == (int8_t)B) then IP += C         */
     OP_NE_JZ_IMM,   /* ABC  : if !(A != (int8_t)B) then IP += C         */
+
+    OP_FORLOOP,     /* AsBx : numeric range loop. A=index, A+1=limit, A+2=step.
+                       A += step; if (step>=0 ? A<limit : A>limit) PC += sBx */
+    OP_FORPREP,     /* AsBx : numeric range prepare. A=index, A+1=limit, A+2=step.
+                       If the range is already exhausted (or step==0) PC += sBx
+                       to skip the loop; otherwise fall through into the body. */
 
     OP_COUNT        /* sentinel — total opcode count                       */
 } OpCode;

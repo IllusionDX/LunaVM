@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <math.h>
 
 #include "value.h"
 #include "luna/object.h"
@@ -627,16 +628,67 @@ static uint32_t luna_matrix_hash(Value self) { return (uint32_t)(uintptr_t)AS_OB
 static int luna_matrix_len(struct VM *vm, Value self) { (void)vm; return 16; }
 
 /* ============================================================
- * Int64 (no arithmetic vtable needed — core handles natively,
- * but we provide stubs so Object.type->add etc. is never NULL)
+ * Int64 numeric arithmetic.
+ * The core int (int32) path already promotes to int64 on overflow in
+ * luna_binary_operation(); these MOPs restore that behaviour for the
+ * int64 object itself (e.g. int64 + int32) and promote the result back
+ * to core int whenever it fits, keeping the value as int64 otherwise.
  * ============================================================ */
-static Value luna_int64_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_int64_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_int64_mul(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_int64_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_int64_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_int64_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
-static int luna_int64_cmp(struct VM *vm, Value a, Value b) { (void)vm; return (a == b) ? 0 : 1; }
+static Value luna_int64_promote(int64_t value) {
+    if (value >= -2147483647LL - 1LL && value <= 2147483647LL)
+        return make_int((int32_t)value);
+    return make_int64(value);
+}
+
+static Value luna_int64_add(struct VM *vm, Value a, Value b) {
+    (void)vm;
+    if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) + as_double(b));
+    return luna_int64_promote(as_int64(a) + as_int64(b));
+}
+static Value luna_int64_sub(struct VM *vm, Value a, Value b) {
+    (void)vm;
+    if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) - as_double(b));
+    return luna_int64_promote(as_int64(a) - as_int64(b));
+}
+static Value luna_int64_mul(struct VM *vm, Value a, Value b) {
+    (void)vm;
+    if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) * as_double(b));
+    return luna_int64_promote(as_int64(a) * as_int64(b));
+}
+static Value luna_int64_div(struct VM *vm, Value a, Value b) {
+    (void)vm;
+    if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
+        double da = as_double(a), db = as_double(b);
+        return make_double(db == 0.0 ? da / 0.0 : da / db);
+    }
+    int64_t ia = as_int64(a), ib = as_int64(b);
+    if (ib == 0) return make_null();
+    return luna_int64_promote(ia / ib);
+}
+static Value luna_int64_mod(struct VM *vm, Value a, Value b) {
+    (void)vm;
+    if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
+        double da = as_double(a), db = as_double(b);
+        return make_double(db == 0.0 ? da / 0.0 : fmod(da, db));
+    }
+    int64_t ia = as_int64(a), ib = as_int64(b);
+    if (ib == 0) return make_null();
+    return luna_int64_promote(ia % ib);
+}
+static Value luna_int64_neg(struct VM *vm, Value a) {
+    (void)vm;
+    if (IS_DOUBLE(a)) return make_double(-AS_DOUBLE(a));
+    return luna_int64_promote(-as_int64(a));
+}
+static int luna_int64_cmp(struct VM *vm, Value a, Value b) {
+    (void)vm;
+    if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
+        double da = as_double(a), db = as_double(b);
+        return (da < db) ? -1 : (da > db) ? 1 : 0;
+    }
+    int64_t ia = as_int64(a), ib = as_int64(b);
+    return (ia < ib) ? -1 : (ia > ib) ? 1 : 0;
+}
 static Value luna_int64_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
 static void luna_int64_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
 static Value luna_int64_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }

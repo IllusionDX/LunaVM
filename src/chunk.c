@@ -159,7 +159,7 @@ static const char *op_mnemonics[] = {
     "CLOSURE", "GETGLOBAL","SETGLOBAL",
     "GETUPVAL","SETUPVAL",
     "NEW",     "NEWDICT",  "NEWLIST",   "LISTAPPEND",
-    "GETITER", "FORLOOP",
+    "GETITER", "FORITER",
     "INDEXGET","INDEXSET", "SLICE",
     "MEMBERGET","MEMBERSET","GETFIELD",  "SETFIELD",
     "INVOKE",    "SUPER",
@@ -170,7 +170,9 @@ static const char *op_mnemonics[] = {
     "LT_JZ",   "LE_JZ",    "GT_JZ",     "GE_JZ",
     "EQ_JZ",   "NE_JZ",
     "LT_JZ_IMM","LE_JZ_IMM","GT_JZ_IMM","GE_JZ_IMM",
-    "EQ_JZ_IMM","NE_JZ_IMM"
+    "EQ_JZ_IMM","NE_JZ_IMM",
+    "FORLOOP",
+    "FORPREP"
 };
 
 static OpFormat op_formats[] = {
@@ -206,7 +208,7 @@ static OpFormat op_formats[] = {
     /* NEWLIST */  FMT_ABx,
     /* LISTAPPEND*/FMT_ABC,
     /* GETITER */  FMT_ABC,
-    /* FORLOOP */  FMT_AsBx,
+    /* FORITER */  FMT_AsBx,
     /* INDEXGET */ FMT_ABC,
     /* INDEXSET */ FMT_ABC,
     /* SLICE */    FMT_ABC,
@@ -237,7 +239,9 @@ static OpFormat op_formats[] = {
     /* GT_JZ_IMM */FMT_ABC,
     /* GE_JZ_IMM */FMT_ABC,
     /* EQ_JZ_IMM */FMT_ABC,
-    /* NE_JZ_IMM */FMT_ABC
+    /* NE_JZ_IMM */FMT_ABC,
+    /* FORLOOP */  FMT_AsBx,
+    /* FORPREP */  FMT_AsBx
 };
 
 void chunk_disassemble(Chunk *chunk) {

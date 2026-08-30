@@ -153,14 +153,20 @@ static Value bn_input(VM *vm, Value *args, int n) {
 
 static Value bn_range(VM *vm, Value *args, int n) {
     (void)vm;
-    int64_t start=0, end=0;
-    if (n==1 && IS_NUMBER(args[0])) end = as_int64(args[0]);
-    else if (n>=2) {
+    int64_t start = 0, end = 0, step = 1;
+    if (n == 1 && IS_NUMBER(args[0])) {
+        end = as_int64(args[0]);
+    } else if (n >= 2) {
         if (IS_NUMBER(args[0])) start = as_int64(args[0]);
         if (IS_NUMBER(args[1])) end   = as_int64(args[1]);
+        if (n >= 3 && IS_NUMBER(args[2])) step = as_int64(args[2]);
     }
-    ObjList *l = new_list((int)(end - start));
-    for (int64_t i=start; i<end; i++) list_add(l, make_int((int32_t)i));
+    ObjList *l = new_list(0);
+    if (step > 0) {
+        for (int64_t i = start; i < end; i += step) list_add(l, make_int((int32_t)i));
+    } else if (step < 0) {
+        for (int64_t i = start; i > end; i += step) list_add(l, make_int((int32_t)i));
+    }
     return make_obj((Object *)l);
 }
 

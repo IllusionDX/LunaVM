@@ -1745,8 +1745,81 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
     case STMT_FOR: {
         scope_enter(c);
 
+        Expr *iterable = stmt->data.for_stmt.iterable;
+        const char *var_name = stmt->data.for_stmt.variable;
+
+        /* Numeric range loop:  for i in range(a[, b[, step]])  -> OP_FORLOOP.
+         * Recognised only when the callee is the builtin `range` with 1..3
+         * positional arguments (no keyword arguments). The compiler extracts
+         * start/stop/step and emits a numeric loop instead of materialising a
+         * list via the iterator. */
+        if (iterable->kind == EXPR_CALL &&
+            iterable->data.call.callee->kind == EXPR_IDENTIFIER &&
+            strcmp(iterable->data.call.callee->data.identifier.name, "range") == 0) {
+
+            int nargs = iterable->data.call.arg_count;
+            char **anames = iterable->data.call.arg_names;
+            bool positional_only = true;
+            for (int i = 0; i < nargs; i++) {
+                if (anames && anames[i]) { positional_only = false; break; }
+            }
+
+            if (positional_only && nargs >= 1 && nargs <= 3) {
+            Expr **rargs = iterable->data.call.arguments;
+            Expr *start_expr = NULL, *stop_expr = NULL, *step_expr = NULL;
+            if (nargs >= 1) stop_expr = rargs[0];
+            if (nargs >= 2) { start_expr = rargs[0]; stop_expr = rargs[1]; }
+            if (nargs >= 3) step_expr = rargs[2];
+
+            int r_idx  = alloc_reg(c);   /* loop variable / current index */
+            int r_lim  = alloc_reg(c);   /* limit (exclusive)            */
+            int r_step = alloc_reg(c);   /* step                         */
+
+            if (stop_expr) compile_expr_into(c, stop_expr, r_lim);
+            else emit_AsBx(c, OP_LOADI, (uint8_t)r_lim, 0);
+
+            if (step_expr) compile_expr_into(c, step_expr, r_step);
+            else emit_AsBx(c, OP_LOADI, (uint8_t)r_step, 1);
+
+            if (start_expr) compile_expr_into(c, start_expr, r_idx);
+            else emit_AsBx(c, OP_LOADI, (uint8_t)r_idx, 0);
+
+            add_local(c, var_name, r_idx);
+
+            /* OP_FORPREP skips the loop when the range is already exhausted
+             * (or step == 0) and falls through into the body otherwise, so the
+             * first iteration runs with RA = start (no seed arithmetic, no entry
+             * JMP on the happy path). */
+            int forprep_ip = emit_jump(c, OP_FORPREP, (uint8_t)r_idx);
+
+            int loop_start = c->chunk->count;
+            loop_push(c, loop_start);
+
+            scope_enter(c);
+            for (int b = 0; b < stmt->data.for_stmt.body_count; b++)
+                compile_stmt(c, stmt->data.for_stmt.body[b]);
+            scope_exit(c);
+
+            int continue_ip = c->chunk->count;
+            c->loop->continue_ip = continue_ip;
+
+            int sbx = loop_start - (c->chunk->count + 1);
+            emit_AsBx(c, OP_FORLOOP, (uint8_t)r_idx, sbx);
+
+            /* OP_FORPREP jumps to here (just past OP_FORLOOP) when the range is empty. */
+            patch_jump(c, forprep_ip);
+
+            loop_patch_breaks(c);
+            loop_patch_continues(c);
+            loop_pop(c);
+            scope_exit(c);
+            break;
+            }
+        }
+
+        /* Generic iterator loop:  for x in iterable  -> OP_GETITER + OP_FORITER */
         int iter_expr = alloc_reg(c);
-        compile_expr_into(c, stmt->data.for_stmt.iterable, iter_expr);
+        compile_expr_into(c, iterable, iter_expr);
 
         int iter_base = alloc_reg(c);
         alloc_reg(c);
@@ -1754,7 +1827,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         
         emit_ABC(c, OP_GETITER, (uint8_t)iter_base, (uint8_t)iter_expr, 0);
         
-        add_local(c, stmt->data.for_stmt.variable, var);
+        add_local(c, var_name, var);
 
         int jmp_to_forloop = emit_jump(c, OP_JMP, 0);
 
@@ -1775,7 +1848,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
 
         /* jump back if has next */
         int sbx = loop_start - (c->chunk->count + 1);
-        emit_AsBx(c, OP_FORLOOP, (uint8_t)iter_base, sbx);
+        emit_AsBx(c, OP_FORITER, (uint8_t)iter_base, sbx);
 
         loop_patch_breaks(c);
         loop_patch_continues(c);

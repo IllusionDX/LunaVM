@@ -819,7 +819,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_newlist,       // 44 OP_NEWLIST
         &&op_listappend,    // 45 OP_LISTAPPEND
         &&op_getiter,       // 46 OP_GETITER
-        &&op_forloop,       // 47 OP_FORLOOP
+        &&op_foriter,       // OP_FORITER
         &&op_indexget,      // 48 OP_INDEXGET
         &&op_indexset,      // 49 OP_INDEXSET
         &&op_slice,         // 50 OP_SLICE
@@ -850,7 +850,9 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_gt_jz_imm,     // 79 OP_GT_JZ_IMM
         &&op_ge_jz_imm,     // 80 OP_GE_JZ_IMM
         &&op_eq_jz_imm,     // 81 OP_EQ_JZ_IMM
-        &&op_ne_jz_imm      // 82 OP_NE_JZ_IMM
+        &&op_ne_jz_imm,     // OP_NE_JZ_IMM
+        &&op_forloop,       // OP_FORLOOP
+        &&op_forprep        // OP_FORPREP
     };
 
     DECODE;

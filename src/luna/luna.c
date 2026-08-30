@@ -389,7 +389,9 @@ static bool luna_slice(VM *vm, Value object, Value start_val, Value stop_val,
     return true;
 }
 
-/* Iteration (6d.2): the core only issues neutral OP_GETITER/OP_FORLOOP. The
+/* Iteration (6d.2): the core only issues neutral OP_GETITER/OP_FORITER for
+ * generic iterables (lists/dicts/strings). Numeric `for i in range(...)` loops
+ * are compiled to the dedicated OP_FORLOOP. The
  * frontend builds an opaque iterator plus an int-index state, then yields
  * each element on demand. list/string iterate in place; a dict iterates over
  * a freshly built list of keys (insertion order, like the removed core path). */

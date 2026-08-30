@@ -766,8 +766,8 @@
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 46. OP_FORLOOP */
-    op_forloop: {
+    /* OP_FORITER : generic iterator (lists / dicts / strings / iterables) */
+    op_foriter: {
         Value _state = REG(RA + 1);
         Value _elem;
         if (vm_iter_next(vm, REG(RA), &_state, &_elem)) {
@@ -778,6 +778,128 @@
             _exc = vm->last_exception;
             goto op_throw;
         }
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* OP_FORLOOP : numeric range loop, e.g. for i in range(a, b, step).
+     *   RA   = current index (the loop variable)
+     *   RA+1 = limit (exclusive)
+     *   RA+2 = step
+     * The compiler emits OP_FORPREP so the first body run happens by fallthrough
+     * with RA = start; each OP_FORLOOP execution does RA += step and continues
+     * if (step >= 0 ? RA < limit : RA > limit). */
+    op_forloop: {
+        Value _vidx   = REG(RA);
+        Value _vlimit = REG(RA + 1);
+        Value _vstep  = REG(RA + 2);
+
+        /* Fast-path: native 32-bit integers (the common range() case). */
+        if (IS_INT(_vidx) && IS_INT(_vstep) && IS_INT(_vlimit)) {
+            int64_t step = (int64_t)AS_INT(_vstep);
+            if (step == 0) {
+                DECODE; goto *op_labels[OP(instr)];
+            }
+            int64_t idx   = (int64_t)AS_INT(_vidx) + step;
+            int64_t limit = (int64_t)AS_INT(_vlimit);
+            SET_REG(RA, make_int((int32_t)idx));
+            if (step > 0 ? (idx < limit) : (idx > limit)) pc += SBX;
+            DECODE; goto *op_labels[OP(instr)];
+        }
+
+        /* Fast-path: floating point or mixed int/double (safe conversion via to_f64). */
+        if (is_num(_vidx) && is_num(_vstep) && is_num(_vlimit)) {
+            double step  = to_f64(_vstep);
+            if (step == 0.0) {
+                DECODE; goto *op_labels[OP(instr)];
+            }
+            double idx   = to_f64(_vidx) + step;
+            double limit = to_f64(_vlimit);
+            SET_REG(RA, make_double(idx));
+            if (step > 0.0 ? (idx < limit) : (idx > limit)) pc += SBX;
+            DECODE; goto *op_labels[OP(instr)];
+        }
+
+        /* Generic fallback: heterogeneous / int64-object / overloaded types. */
+        double _ds = IS_NUMBER(_vstep) ? AS_DOUBLE(_vstep) : 0.0;
+        if (_ds == 0.0) {
+            DECODE; goto *op_labels[OP(instr)];
+        }
+        Value _new = do_arith(vm, _vidx, _vstep, OP_ADD);
+        if (!IS_NIL(vm->last_exception)) { _exc = vm->last_exception; goto op_throw; }
+        SET_REG(RA, _new);
+        OpCode _cmp = (_ds > 0.0) ? OP_LT : OP_GT;
+        Value _cont = do_cmp(vm, _new, _vlimit, _cmp);
+        if (!IS_NIL(vm->last_exception)) { _exc = vm->last_exception; goto op_throw; }
+        if (AS_BOOL(_cont)) pc += SBX;
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* OP_FORPREP : numeric range prepare (companion to OP_FORLOOP).
+     *   RA   = current index (the loop variable, already = start)
+     *   RA+1 = limit (exclusive)
+     *   RA+2 = step
+     * If the range is already exhausted up front (or step == 0), PC += sBx to
+     * skip the loop. Otherwise fall through into the body (happy path: no branch
+     * taken, no seed arithmetic). */
+    op_forprep: {
+        /* Direct base pointer: r[0..2] resolve as [reg + 0/8/16] indexed loads. */
+        Value *r      = REG_BASE + RA;
+        Value _vidx   = r[0];
+        Value _vlimit = r[1];
+        Value _vstep  = r[2];
+
+        /* Fast-path: native 32-bit integers (dominant range() case). */
+        if (LUNA_LIKELY(IS_INT(_vidx) && IS_INT(_vstep) && IS_INT(_vlimit))) {
+            int64_t step  = (int64_t)AS_INT(_vstep);
+            int64_t idx   = (int64_t)AS_INT(_vidx);
+            int64_t limit = (int64_t)AS_INT(_vlimit);
+
+            bool skip;
+            if (LUNA_LIKELY(step > 0)) {
+                skip = (idx >= limit);
+            } else if (LUNA_LIKELY(step < 0)) {
+                skip = (idx <= limit);
+            } else {
+                skip = true; /* Degenerate: step == 0 */
+            }
+
+            if (LUNA_UNLIKELY(skip)) {
+                pc += SBX;
+            }
+            DECODE; goto *op_labels[OP(instr)];
+        }
+
+        /* Fast-path: floating point or mixed int/double (safe conversion via to_f64). */
+        if (is_num(_vidx) && is_num(_vstep) && is_num(_vlimit)) {
+            double step  = to_f64(_vstep);
+            double idx   = to_f64(_vidx);
+            double limit = to_f64(_vlimit);
+
+            bool skip;
+            if (LUNA_LIKELY(step > 0.0)) {
+                skip = (idx >= limit);
+            } else if (LUNA_LIKELY(step < 0.0)) {
+                skip = (idx <= limit);
+            } else {
+                skip = true;
+            }
+
+            if (LUNA_UNLIKELY(skip)) {
+                pc += SBX;
+            }
+            DECODE; goto *op_labels[OP(instr)];
+        }
+
+        /* Generic fallback for dynamic / object types. */
+        double _ds = is_num(_vstep) ? to_f64(_vstep) : 0.0;
+        if (_ds == 0.0) {
+            pc += SBX;
+            DECODE; goto *op_labels[OP(instr)];
+        }
+        OpCode _cmp = (_ds > 0.0) ? OP_GE : OP_LE;
+        Value _empty = do_cmp(vm, _vidx, _vlimit, _cmp);
+        if (!IS_NIL(vm->last_exception)) { _exc = vm->last_exception; goto op_throw; }
+        if (AS_BOOL(_empty)) pc += SBX;
         DECODE; goto *op_labels[OP(instr)];
     }
 
