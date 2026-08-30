@@ -8,7 +8,7 @@
 #include <string.h>
 #include "stdlib_math.h"
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 
 /* ============================================================ */
 /* Validation helpers                                           */

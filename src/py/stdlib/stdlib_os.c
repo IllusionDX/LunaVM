@@ -15,7 +15,7 @@
 #include <errno.h>
 #include "stdlib_os.h"
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 
 #ifdef _WIN32
 #include <windows.h>

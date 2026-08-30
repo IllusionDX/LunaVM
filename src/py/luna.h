@@ -18,8 +18,8 @@
 extern "C" {
 #endif
 
-typedef struct luna_State luna_State;
-typedef int (*luna_CFunction)(luna_State *L);
+typedef struct py_State py_State;
+typedef int (*py_CFunction)(py_State *L);
 
 typedef enum {
     LUNA_TNIL         = 0,
@@ -36,7 +36,7 @@ typedef enum {
     LUNA_TCLASS       = 11,
     LUNA_TINSTANCE    = 12,
     LUNA_TCFUNCTION   = 13,
-} luna_Type;
+} py_Type;
 
 typedef enum {
     LUNA_OK        = 0,
@@ -44,95 +44,95 @@ typedef enum {
     LUNA_ERRSYNTAX = 2,
     LUNA_ERRMEM    = 3,
     LUNA_ERRERR    = 4,
-} luna_Status;
+} py_Status;
 
 /* State management */
-luna_State *luna_new_state(void);
-void        luna_close(luna_State *L);
+py_State *py_new_state(void);
+void        py_close(py_State *L);
 
 /* Stack manipulation */
-int  luna_get_top(luna_State *L);
-void luna_set_top(luna_State *L, int n);
-void luna_push_value(luna_State *L, int idx);
-void luna_remove(luna_State *L, int idx);
-void luna_insert(luna_State *L, int idx);
-void luna_replace(luna_State *L, int idx);
-int  luna_check_stack(luna_State *L, int n);
+int  py_get_top(py_State *L);
+void py_set_top(py_State *L, int n);
+void py_push_value(py_State *L, int idx);
+void py_remove(py_State *L, int idx);
+void py_insert(py_State *L, int idx);
+void py_replace(py_State *L, int idx);
+int  py_check_stack(py_State *L, int n);
 
-#define luna_pop(L, n) luna_set_top((L), -(n) - 1)
+#define py_pop(L, n) py_set_top((L), -(n) - 1)
 
 /* Type checking and access */
-int         luna_type(luna_State *L, int idx);
-bool        luna_is_nil(luna_State *L, int idx);
-bool        luna_is_boolean(luna_State *L, int idx);
-bool        luna_is_number(luna_State *L, int idx);
-bool        luna_is_integer(luna_State *L, int idx);
-bool        luna_is_string(luna_State *L, int idx);
-bool        luna_is_function(luna_State *L, int idx);
-bool        luna_is_cfunction(luna_State *L, int idx);
-bool        luna_is_userdata(luna_State *L, int idx);
+int         py_type(py_State *L, int idx);
+bool        py_is_nil(py_State *L, int idx);
+bool        py_is_boolean(py_State *L, int idx);
+bool        py_is_number(py_State *L, int idx);
+bool        py_is_integer(py_State *L, int idx);
+bool        py_is_string(py_State *L, int idx);
+bool        py_is_function(py_State *L, int idx);
+bool        py_is_cfunction(py_State *L, int idx);
+bool        py_is_userdata(py_State *L, int idx);
 
-bool        luna_to_boolean(luna_State *L, int idx);
-double      luna_to_number(luna_State *L, int idx);
-int64_t     luna_to_integer(luna_State *L, int idx);
-const char *luna_to_string(luna_State *L, int idx, size_t *len);
+bool        py_to_boolean(py_State *L, int idx);
+double      py_to_number(py_State *L, int idx);
+int64_t     py_to_integer(py_State *L, int idx);
+const char *py_to_string(py_State *L, int idx, size_t *len);
 
 /* Push values onto the stack */
-void luna_push_nil(luna_State *L);
-void luna_push_boolean(luna_State *L, bool b);
-void luna_push_number(luna_State *L, double n);
-void luna_push_integer(luna_State *L, int64_t n);
-void luna_push_string(luna_State *L, const char *s);
-void luna_push_lstring(luna_State *L, const char *s, size_t len);
-void luna_push_cfunction(luna_State *L, luna_CFunction fn);
+void py_push_nil(py_State *L);
+void py_push_boolean(py_State *L, bool b);
+void py_push_number(py_State *L, double n);
+void py_push_integer(py_State *L, int64_t n);
+void py_push_string(py_State *L, const char *s);
+void py_push_lstring(py_State *L, const char *s, size_t len);
+void py_push_cfunction(py_State *L, py_CFunction fn);
 
 /* Table (dict) operations */
-void luna_new_dict(luna_State *L);
-void luna_set_field(luna_State *L, int idx, const char *key);
-int  luna_get_field(luna_State *L, int idx, const char *key);
+void py_new_dict(py_State *L);
+void py_set_field(py_State *L, int idx, const char *key);
+int  py_get_field(py_State *L, int idx, const char *key);
 
 /* List (array) operations */
-void luna_new_list(luna_State *L);
-void luna_list_append(luna_State *L, int idx);
-void luna_get_index(luna_State *L, int idx, int n);
-void luna_set_index(luna_State *L, int idx, int n);
+void py_new_list(py_State *L);
+void py_list_append(py_State *L, int idx);
+void py_get_index(py_State *L, int idx, int n);
+void py_set_index(py_State *L, int idx, int n);
 
 /* Userdata */
-void    luna_new_userdata(luna_State *L, void *data, const char *tag, void (*finalizer)(void *));
-void   *luna_to_userdata(luna_State *L, int idx);
-bool    luna_is_userdata_tag(luna_State *L, int idx, const char *tag);
-const char *luna_get_userdata_tag(luna_State *L, int idx);
-void    luna_push_lightuserdata(luna_State *L, void *ptr);
-void   *luna_to_lightuserdata(luna_State *L, int idx);
+void    py_new_userdata(py_State *L, void *data, const char *tag, void (*finalizer)(void *));
+void   *py_to_userdata(py_State *L, int idx);
+bool    py_is_userdata_tag(py_State *L, int idx, const char *tag);
+const char *py_get_userdata_tag(py_State *L, int idx);
+void    py_push_lightuserdata(py_State *L, void *ptr);
+void   *py_to_lightuserdata(py_State *L, int idx);
 
 /* Global access */
-int  luna_get_global(luna_State *L, const char *name);
-void luna_set_global(luna_State *L, const char *name);
+int  py_get_global(py_State *L, const char *name);
+void py_set_global(py_State *L, const char *name);
 
 /* System globals — persist across modules, visible from all scripts without import */
-void luna_set_system_global(luna_State *L, const char *name);
-int  luna_get_system_global(luna_State *L, const char *name);
+void py_set_system_global(py_State *L, const char *name);
+int  py_get_system_global(py_State *L, const char *name);
 
 /* Call a function (args already on stack, function at bottom) */
-luna_Status luna_pcall(luna_State *L, int nargs, int nresults);
+py_Status py_pcall(py_State *L, int nargs, int nresults);
 
 /* Load and execute LunaScript */
-luna_Status lunaL_load_string(luna_State *L, const char *str);
-luna_Status lunaL_load_file(luna_State *L, const char *filename);
-luna_Status lunaL_dostring(luna_State *L, const char *str);
-luna_Status lunaL_dofile(luna_State *L, const char *filename);
+py_Status lunaL_load_string(py_State *L, const char *str);
+py_Status lunaL_load_file(py_State *L, const char *filename);
+py_Status lunaL_dostring(py_State *L, const char *str);
+py_Status lunaL_dofile(py_State *L, const char *filename);
 
 /* Garbage collection */
-int luna_gc(luna_State *L, int what);
+int py_gc(py_State *L, int what);
 
 /* Error handling */
-void luna_error(luna_State *L, const char *fmt, ...);
+void py_error(py_State *L, const char *fmt, ...);
 
 /* Argument checking */
-double      lunaL_checknumber(luna_State *L, int arg);
-int64_t     lunaL_checkinteger(luna_State *L, int arg);
-const char* lunaL_checkstring(luna_State *L, int arg);
-void*       lunaL_checkuserdata(luna_State *L, int arg, const char *tag);
+double      lunaL_checknumber(py_State *L, int arg);
+int64_t     lunaL_checkinteger(py_State *L, int arg);
+const char* lunaL_checkstring(py_State *L, int arg);
+void*       lunaL_checkuserdata(py_State *L, int arg, const char *tag);
 
 #ifdef __cplusplus
 }

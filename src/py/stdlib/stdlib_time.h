@@ -4,7 +4,7 @@
 
 #include "vm.h"
 
-uint64_t luna_time_monotonic_us(void);
+uint64_t py_time_monotonic_us(void);
 void vm_register_time_module(VM *vm);
 
 #endif /* LUNA_STDLIB_TIME_H */

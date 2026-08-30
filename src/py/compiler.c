@@ -8,7 +8,7 @@
 #include "compiler.h"
 #include "opcode.h"
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 
 /* ---- Scope / Locals ---- */
 
@@ -1324,7 +1324,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         /*
          * Always emit OP_INVOKE("__init__") — don't peek at runtime state.
          * OP_INVOKE already handles missing __init__ (returns nil, see
-         * luna_invoke "__init__" branch).
+         * py_invoke "__init__" branch).
          *
          * Register layout: r_target=instance, r_target+1="__init__",
          * r_target+2..=args, r_target+nargs+1=scratch (nil return lands here,

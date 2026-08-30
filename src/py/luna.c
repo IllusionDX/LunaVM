@@ -9,7 +9,7 @@
 #include "luna.h"
 #include "vm.h"
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 #include "chunk.h"
 #include "lexer.h"
 #include "parser.h"
@@ -23,7 +23,7 @@
 
 #define LUNA_API_STACK_INIT 64
 
-struct luna_State {
+struct py_State {
     VM    *vm;
     Value *stack;
     int    cap;
@@ -34,8 +34,8 @@ struct luna_State {
 /* GC hook — called by vm.c's mark_and_sweep                    */
 /* ============================================================ */
 
-void luna_mark_roots(VM *vm) {
-    luna_State *L = (luna_State *)vm->api_state;
+void py_mark_roots(VM *vm) {
+    py_State *L = (py_State *)vm->api_state;
     if (L) {
         for (int i = 0; i < L->top; i++) {
             vm_mark_value(vm, L->stack[i]);
@@ -64,26 +64,26 @@ void luna_mark_roots(VM *vm) {
     }
 }
 
-static double luna_to_f64(Value v) {
+static double py_to_f64(Value v) {
     if (IS_INT(v)) return (double)AS_INT(v);
     if (IS_INT64(v)) return (double)((ObjInt64 *)AS_OBJ(v))->value;
     return IS_DOUBLE(v) ? AS_DOUBLE(v) : 0.0;
 }
 
-static int64_t luna_to_i64(Value v) {
+static int64_t py_to_i64(Value v) {
     if (IS_INT(v)) return (int64_t)AS_INT(v);
     if (IS_INT64(v)) return ((ObjInt64 *)AS_OBJ(v))->value;
     return IS_DOUBLE(v) ? (int64_t)AS_DOUBLE(v) : 0;
 }
 
-static bool luna_value_is_integer(Value v) { return IS_INT(v) || IS_INT64(v); }
+static bool py_value_is_integer(Value v) { return IS_INT(v) || IS_INT64(v); }
 
-static Value luna_integer_result(int64_t value) {
+static Value py_integer_result(int64_t value) {
     return value >= INT32_MIN && value <= INT32_MAX
         ? make_int((int32_t)value) : make_int64(value);
 }
 
-static MOP_Bin luna_binary_method(Value self, VMOperation op) {
+static MOP_Bin py_binary_method(Value self, VMOperation op) {
     if (!IS_OBJ(self) || !AS_OBJ(self) || !AS_OBJ(self)->type) return NULL;
     Type *type = AS_OBJ(self)->type;
     switch (op) {
@@ -96,58 +96,58 @@ static MOP_Bin luna_binary_method(Value self, VMOperation op) {
     }
 }
 
-static bool luna_unary_operation(VM *vm, VMOperation op, Value operand, Value *out) {
+static bool py_unary_operation(VM *vm, VMOperation op, Value operand, Value *out) {
     if (op == VM_OP_NEG && IS_OBJ(operand) && AS_OBJ(operand)->type &&
         AS_OBJ(operand)->type->neg) {
         *out = AS_OBJ(operand)->type->neg(vm, operand);
         return true;
     }
-    if (op == VM_OP_NEG && luna_value_is_integer(operand)) {
-        *out = luna_integer_result(-luna_to_i64(operand));
+    if (op == VM_OP_NEG && py_value_is_integer(operand)) {
+        *out = py_integer_result(-py_to_i64(operand));
         return true;
     }
     if (op == VM_OP_NEG && IS_DOUBLE(operand)) {
         *out = make_double(-AS_DOUBLE(operand));
         return true;
     }
-    if (op == VM_OP_BNOT && luna_value_is_integer(operand)) {
-        *out = luna_integer_result(~luna_to_i64(operand));
+    if (op == VM_OP_BNOT && py_value_is_integer(operand)) {
+        *out = py_integer_result(~py_to_i64(operand));
         return true;
     }
     return false;
 }
 
-static bool luna_binary_operation(VM *vm, VMOperation op, Value left, Value right, Value *out) {
-    MOP_Bin method = luna_binary_method(left, op);
+static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right, Value *out) {
+    MOP_Bin method = py_binary_method(left, op);
     if (method) { *out = method(vm, left, right); return !IS_NIL(*out); }
-    if ((op == VM_OP_ADD || op == VM_OP_MUL) && (method = luna_binary_method(right, op))) {
+    if ((op == VM_OP_ADD || op == VM_OP_MUL) && (method = py_binary_method(right, op))) {
         *out = method(vm, right, left);
         return !IS_NIL(*out);
     }
     if (!IS_NUMBER(left) || !IS_NUMBER(right)) return false;
-    if (luna_value_is_integer(left) && luna_value_is_integer(right)) {
-        int64_t a = luna_to_i64(left), b = luna_to_i64(right);
+    if (py_value_is_integer(left) && py_value_is_integer(right)) {
+        int64_t a = py_to_i64(left), b = py_to_i64(right);
         switch (op) {
-            case VM_OP_ADD: *out = luna_integer_result(a + b); return true;
-            case VM_OP_SUB: *out = luna_integer_result(a - b); return true;
-            case VM_OP_MUL: *out = luna_integer_result(a * b); return true;
+            case VM_OP_ADD: *out = py_integer_result(a + b); return true;
+            case VM_OP_SUB: *out = py_integer_result(a - b); return true;
+            case VM_OP_MUL: *out = py_integer_result(a * b); return true;
             case VM_OP_DIV:
-                if (b) { *out = luna_integer_result(a / b); return true; }
+                if (b) { *out = py_integer_result(a / b); return true; }
                 vm->last_exception = make_exception_instance(vm, vm->runtime_error_class, "division by zero");
                 return false;
             case VM_OP_MOD:
-                if (b) { *out = luna_integer_result(a % b); return true; }
+                if (b) { *out = py_integer_result(a % b); return true; }
                 vm->last_exception = make_exception_instance(vm, vm->exception_class, "mod/0");
                 return false;
-            case VM_OP_BAND: *out = luna_integer_result(a & b); return true;
-            case VM_OP_BOR:  *out = luna_integer_result(a | b); return true;
-            case VM_OP_BXOR: *out = luna_integer_result(a ^ b); return true;
-            case VM_OP_SHL:  *out = luna_integer_result(a << b); return true;
-            case VM_OP_SHR:  *out = luna_integer_result(a >> b); return true;
+            case VM_OP_BAND: *out = py_integer_result(a & b); return true;
+            case VM_OP_BOR:  *out = py_integer_result(a | b); return true;
+            case VM_OP_BXOR: *out = py_integer_result(a ^ b); return true;
+            case VM_OP_SHL:  *out = py_integer_result(a << b); return true;
+            case VM_OP_SHR:  *out = py_integer_result(a >> b); return true;
             default: break;
         }
     }
-    double a = luna_to_f64(left), b = luna_to_f64(right);
+    double a = py_to_f64(left), b = py_to_f64(right);
     switch (op) {
         case VM_OP_ADD: *out = make_double(a + b); return true;
         case VM_OP_SUB: *out = make_double(a - b); return true;
@@ -159,10 +159,10 @@ static bool luna_binary_operation(VM *vm, VMOperation op, Value left, Value righ
     }
 }
 
-static bool luna_compare_operation(VM *vm, VMOperation op, Value left, Value right, Value *out) {
+static bool py_compare_operation(VM *vm, VMOperation op, Value left, Value right, Value *out) {
     (void)vm;
-    if (luna_value_is_integer(left) && luna_value_is_integer(right)) {
-        int64_t a = luna_to_i64(left), b = luna_to_i64(right);
+    if (py_value_is_integer(left) && py_value_is_integer(right)) {
+        int64_t a = py_to_i64(left), b = py_to_i64(right);
         switch (op) {
             case VM_OP_EQ: *out = make_bool(a == b); return true;
             case VM_OP_NE: *out = make_bool(a != b); return true;
@@ -174,7 +174,7 @@ static bool luna_compare_operation(VM *vm, VMOperation op, Value left, Value rig
         }
     }
     if (IS_NUMBER(left) && IS_NUMBER(right)) {
-        double a = luna_to_f64(left), b = luna_to_f64(right);
+        double a = py_to_f64(left), b = py_to_f64(right);
         switch (op) {
             case VM_OP_LT: *out = make_bool(a < b); return true;
             case VM_OP_LE: *out = make_bool(a <= b); return true;
@@ -198,7 +198,7 @@ static bool luna_compare_operation(VM *vm, VMOperation op, Value left, Value rig
     return false;
 }
 
-static bool luna_index_get(VM *vm, Value object, Value key, bool safe, Value *out) {
+static bool py_index_get(VM *vm, Value object, Value key, bool safe, Value *out) {
     if (!IS_OBJ(object) || !AS_OBJ(object)) {
         if (safe) { *out = make_null(); return true; }
         vm->last_exception = make_exception_instance(vm, vm->type_error_class, "cannot index null value");
@@ -248,7 +248,7 @@ static bool luna_index_get(VM *vm, Value object, Value key, bool safe, Value *ou
     return true;
 }
 
-static bool luna_index_set(VM *vm, Value object, Value key, Value value) {
+static bool py_index_set(VM *vm, Value object, Value key, Value value) {
     if (!IS_OBJ(object) || !AS_OBJ(object) || !AS_OBJ(object)->type ||
         !AS_OBJ(object)->type->setitem) {
         vm->last_exception = make_exception_instance(vm, vm->type_error_class, "invalid index assignment");
@@ -276,7 +276,7 @@ static bool luna_index_set(VM *vm, Value object, Value key, Value value) {
 /* Slicing semantics live in the frontend: the core only knows the neutral
  * OP_SLICE opcode. Non-indexable objects (including null)
  * yield null, matching the previous core behaviour. */
-static bool luna_slice(VM *vm, Value object, Value start_val, Value stop_val,
+static bool py_slice(VM *vm, Value object, Value start_val, Value stop_val,
                        Value step_val, bool safe, Value *out) {
     (void)vm; (void)safe;
     if (!IS_LIST(object) && !IS_STRING(object)) {
@@ -395,7 +395,7 @@ static bool luna_slice(VM *vm, Value object, Value start_val, Value stop_val,
  * frontend builds an opaque iterator plus an int-index state, then yields
  * each element on demand. list/string iterate in place; a dict iterates over
  * a freshly built list of keys (insertion order, like the removed core path). */
-static bool luna_iterate(VM *vm, Value object, Value *iter, Value *state) {
+static bool py_iterate(VM *vm, Value object, Value *iter, Value *state) {
     if (IS_DICT(object)) {
         ObjDict *dict = (ObjDict *)AS_OBJ(object);
         ObjList *keys = new_list(dict->entry_count);
@@ -423,7 +423,7 @@ static bool luna_iterate(VM *vm, Value object, Value *iter, Value *state) {
     return true;
 }
 
-static bool luna_iter_next(VM *vm, Value iter, Value *state, Value *elem) {
+static bool py_iter_next(VM *vm, Value iter, Value *state, Value *elem) {
     vm->last_exception = make_null();
     if (!IS_INT(*state)) return false;
     int idx = AS_INT(*state);
@@ -445,13 +445,13 @@ static bool luna_iter_next(VM *vm, Value iter, Value *state, Value *elem) {
     return false;
 }
 
-static bool luna_new_list_op(VM *vm, int capacity, Value *out) {
+static bool py_new_list_op(VM *vm, int capacity, Value *out) {
     (void)vm;
     *out = make_obj((Object *)new_list(capacity));
     return true;
 }
 
-static bool luna_new_dict_op(VM *vm, Value *out) {
+static bool py_new_dict_op(VM *vm, Value *out) {
     (void)vm;
     *out = make_obj((Object *)new_dict());
     return true;
@@ -459,7 +459,7 @@ static bool luna_new_dict_op(VM *vm, Value *out) {
 
 /* The GC write barrier stays in the core (op_listappend calls it after this
  * hook), so this only performs the language-level append + type check. */
-static bool luna_list_append_op(VM *vm, Value list, Value value) {
+static bool py_list_append_op(VM *vm, Value list, Value value) {
     if (!IS_LIST(list)) {
         vm->last_exception = make_exception_instance(vm, vm->exception_class, "listappend on non-list");
         return false;
@@ -470,7 +470,7 @@ static bool luna_list_append_op(VM *vm, Value list, Value value) {
 
 /* Resolve a class name (optionally module.Class) and allocate an instance.
  * Mirrors the removed core OP_NEW class resolution + new_instance. */
-static bool luna_construct(VM *vm, Value class_name_value, Value *out) {
+static bool py_construct(VM *vm, Value class_name_value, Value *out) {
     ObjString *cls_str = (ObjString *)AS_OBJ(class_name_value);
     const char *cls_name = cls_str->chars;
     Value cls_val;
@@ -510,7 +510,7 @@ static bool luna_construct(VM *vm, Value class_name_value, Value *out) {
     return true;
 }
 
-static bool luna_instance_of(VM *vm, Value obj, Value cls, bool *result) {
+static bool py_instance_of(VM *vm, Value obj, Value cls, bool *result) {
     (void)vm;
     *result = false;
     if (IS_OBJ(obj) && AS_OBJ(obj) && AS_OBJ(obj)->type->kind == OBJ_INSTANCE) {
@@ -526,7 +526,7 @@ static bool luna_instance_of(VM *vm, Value obj, Value cls, bool *result) {
     return true;
 }
 
-static bool luna_get_field_slot(VM *vm, Value obj, int slot, Value *out) {
+static bool py_get_field_slot(VM *vm, Value obj, int slot, Value *out) {
     (void)vm;
     if (IS_INSTANCE(obj)) {
         ObjInstance *inst = (ObjInstance *)AS_OBJ(obj);
@@ -536,7 +536,7 @@ static bool luna_get_field_slot(VM *vm, Value obj, int slot, Value *out) {
     return true;
 }
 
-static bool luna_set_field_slot(VM *vm, Value obj, int slot, Value value) {
+static bool py_set_field_slot(VM *vm, Value obj, int slot, Value value) {
     (void)vm;
     if (IS_INSTANCE(obj)) {
         ObjInstance *inst = (ObjInstance *)AS_OBJ(obj);
@@ -562,7 +562,7 @@ static bool luna_set_field_slot(VM *vm, Value obj, int slot, Value value) {
 /* 6d.5: resolve an invoke callable + self-binding layout. Returns
  * *self_arg = receiver when the callable is a bound method, else null for a
  * static/module function. *callable = null signals an optional-__init__ no-op. */
-static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *callable) {
+static bool py_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *callable) {
     *callable = make_null();
     if (!IS_OBJ(obj) || !AS_OBJ(obj) || !IS_STRING(name)) {
         vm->last_exception = make_exception_instance(vm, vm->exception_class, "unknown method");
@@ -634,7 +634,7 @@ static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *c
 }
 
 /* 6d.5: resolve a super-call over the direct base class (always method layout). */
-static bool luna_super(VM *vm, Value self, Value name, Value *self_arg, Value *callable) {
+static bool py_super(VM *vm, Value self, Value name, Value *self_arg, Value *callable) {
     *self_arg = self;
     *callable = make_null();
     if (!IS_STRING(name) || !IS_INSTANCE(self)) return true; /* no-op, like legacy */
@@ -656,7 +656,7 @@ static bool luna_super(VM *vm, Value self, Value name, Value *self_arg, Value *c
     return false;
 }
 
-static bool luna_contains(VM *vm, Value needle, Value haystack, bool *found) {
+static bool py_contains(VM *vm, Value needle, Value haystack, bool *found) {
     (void)vm;
     if (IS_LIST(haystack)) *found = list_contains((ObjList *)AS_OBJ(haystack), needle);
     else if (IS_DICT(haystack)) *found = dict_has((ObjDict *)AS_OBJ(haystack), needle);
@@ -675,7 +675,7 @@ static bool member_miss(VM *vm, bool safe, void *err_class, const char *msg, Val
 
 /* 6d.5: authoritative member lookup. The core op_memberget/op_memberget_safe
  * delegate entirely here; the legacy switch previously lived in the opcode. */
-static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *out) {
+static bool py_member_get(VM *vm, Value object, Value name, bool safe, Value *out) {
     if (!IS_OBJ(object) || !AS_OBJ(object) || !IS_STRING(name)) {
         if (safe) { *out = make_null(); return true; }
         vm->last_exception = make_exception_instance(vm, vm->attribute_error_class, "cannot access member of null value");
@@ -799,7 +799,7 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
 }
 
 /* 6d.5: authoritative member set. Mirrors the legacy OP_MEMBERSET switch. */
-static bool luna_member_set(VM *vm, Value object, Value name, Value value) {
+static bool py_member_set(VM *vm, Value object, Value name, Value value) {
     if (!IS_STRING(name)) return false;
     const char *chars = ((ObjString *)AS_OBJ(name))->chars;
     if (IS_INSTANCE(object)) {
@@ -839,7 +839,7 @@ static bool luna_member_set(VM *vm, Value object, Value name, Value value) {
     return false;
 }
 
-static bool luna_import_module(VM *vm, Value module_name, const char *from_path, Value *out) {
+static bool py_import_module(VM *vm, Value module_name, const char *from_path, Value *out) {
     if (!IS_STRING(module_name)) {
         vm->last_exception = make_exception_instance(vm, vm->exception_class,
             "import: module name must be a string");
@@ -899,7 +899,7 @@ static bool luna_import_module(VM *vm, Value module_name, const char *from_path,
     return true;
 }
 
-static Value luna_make_exception(VM *vm, VMExceptionKind kind, const char *message) {
+static Value py_make_exception(VM *vm, VMExceptionKind kind, const char *message) {
     void *klass = vm->exception_class;
     switch (kind) {
         case VM_EXCEPTION_TYPE: klass = vm->type_error_class; break;
@@ -916,19 +916,19 @@ static Value luna_make_exception(VM *vm, VMExceptionKind kind, const char *messa
 
 /* Build an exception from an explicit frontend class object (used by
  * luna_throw, which native functions call with the class they were given). */
-static Value luna_make_exception_for_class(VM *vm, void *cls, const char *message) {
+static Value py_make_exception_for_class(VM *vm, void *cls, const char *message) {
     return make_exception_instance(vm, cls, message);
 }
 
 /* Build a string constant object for the chunk constant pool. */
-static Value luna_new_string(VM *vm, const char *chars, int length) {
+static Value py_new_string(VM *vm, const char *chars, int length) {
     (void)vm;
     return make_obj((Object *)new_string(chars, length));
 }
 
 /* Open-upvalue list management (the core owns the void* head, we own the
  * ObjUpvalue objects and their linkage). */
-static Object *luna_capture_upvalue(VM *vm, int stack_idx) {
+static Object *py_capture_upvalue(VM *vm, int stack_idx) {
     ObjUpvalue *prev = NULL;
     ObjUpvalue *uv = (ObjUpvalue*)vm->open_upvalues;
     while (uv && uv->stack_index > stack_idx) {
@@ -945,7 +945,7 @@ static Object *luna_capture_upvalue(VM *vm, int stack_idx) {
     return (Object*)created;
 }
 
-static void luna_close_upvalues(VM *vm, int frame_depth) {
+static void py_close_upvalues(VM *vm, int frame_depth) {
     while (vm->open_upvalues && ((ObjUpvalue*)vm->open_upvalues)->frame_depth >= frame_depth) {
         ObjUpvalue *uv = (ObjUpvalue*)vm->open_upvalues;
         uv->closed = vm->stack[uv->stack_index];
@@ -958,12 +958,12 @@ static void luna_close_upvalues(VM *vm, int frame_depth) {
  * The core must not switch on inline object kinds, so it asks the frontend
  * whether a value is a string / instance through these hooks. */
 
-static bool luna_fe_is_string(VM *vm, Value v) {
+static bool py_fe_is_string(VM *vm, Value v) {
     (void)vm;
     return IS_STRING(v);
 }
 
-static bool luna_fe_is_instance(VM *vm, Value v) {
+static bool py_fe_is_instance(VM *vm, Value v) {
     (void)vm;
     return IS_INSTANCE(v);
 }
@@ -971,7 +971,7 @@ static bool luna_fe_is_instance(VM *vm, Value v) {
 /* OP_CLOSURE delegates the whole closure construction here.  The frontend owns
  * the closure layout and upvalue capture; the core only supplies the function
  * constant and the current frame.  Mirrors the old inline OP_CLOSURE body. */
-static Object *luna_fe_new_closure(VM *vm, Value fn_val) {
+static Object *py_fe_new_closure(VM *vm, Value fn_val) {
     if (!IS_FUNCTION(fn_val)) {
         vm->last_exception = vm_make_exception(vm, VM_EXCEPTION_GENERIC,
                                               "CLOSURE needs function constant");
@@ -997,37 +997,37 @@ static Object *luna_fe_new_closure(VM *vm, Value fn_val) {
     return (Object *)cl;
 }
 
-static const VMFrontendHooks luna_frontend_hooks = {
-    .mark_roots = luna_mark_roots,
-    .capture_upvalue = luna_capture_upvalue,
-    .close_upvalues = luna_close_upvalues,
-    .unary = luna_unary_operation,
-    .binary = luna_binary_operation,
-    .compare = luna_compare_operation,
-    .getitem = luna_index_get,
-    .setitem = luna_index_set,
-    .getattr = luna_member_get,
-    .setattr = luna_member_set,
-    .slice = luna_slice,
-    .iterate = luna_iterate,
-    .iter_next = luna_iter_next,
-    .new_list = luna_new_list_op,
-    .new_dict = luna_new_dict_op,
-    .new_string = luna_new_string,
-    .list_append = luna_list_append_op,
-    .construct = luna_construct,
-    .instance_of = luna_instance_of,
-    .get_field_slot = luna_get_field_slot,
-    .set_field_slot = luna_set_field_slot,
-    .invoke = luna_invoke,
-    .super_fn = luna_super,
-    .contains = luna_contains,
-    .import_module = luna_import_module,
-    .make_exception = luna_make_exception,
-    .make_exception_for_class = luna_make_exception_for_class,
-    .is_string = luna_fe_is_string,
-    .is_instance = luna_fe_is_instance,
-    .new_closure = luna_fe_new_closure
+static const VMFrontendHooks py_frontend_hooks = {
+    .mark_roots = py_mark_roots,
+    .capture_upvalue = py_capture_upvalue,
+    .close_upvalues = py_close_upvalues,
+    .unary = py_unary_operation,
+    .binary = py_binary_operation,
+    .compare = py_compare_operation,
+    .getitem = py_index_get,
+    .setitem = py_index_set,
+    .getattr = py_member_get,
+    .setattr = py_member_set,
+    .slice = py_slice,
+    .iterate = py_iterate,
+    .iter_next = py_iter_next,
+    .new_list = py_new_list_op,
+    .new_dict = py_new_dict_op,
+    .new_string = py_new_string,
+    .list_append = py_list_append_op,
+    .construct = py_construct,
+    .instance_of = py_instance_of,
+    .get_field_slot = py_get_field_slot,
+    .set_field_slot = py_set_field_slot,
+    .invoke = py_invoke,
+    .super_fn = py_super,
+    .contains = py_contains,
+    .import_module = py_import_module,
+    .make_exception = py_make_exception,
+    .make_exception_for_class = py_make_exception_for_class,
+    .is_string = py_fe_is_string,
+    .is_instance = py_fe_is_instance,
+    .new_closure = py_fe_new_closure
 };
 
 /* Luna's language runtime bootstrap lives in the frontend, not in vm.c. */
@@ -1043,9 +1043,9 @@ extern void vm_register_buffer_module(VM *vm);
 extern void vm_register_string_module(VM *vm);
 extern void vm_register_net_module(VM *vm);
 extern void vm_register_json_module(VM *vm);
-extern uint64_t luna_time_monotonic_us(void);
+extern uint64_t py_time_monotonic_us(void);
 
-static ObjClass *luna_register_exception(VM *vm, const char *name, ObjClass *base) {
+static ObjClass *py_register_exception(VM *vm, const char *name, ObjClass *base) {
     ObjClass *cls = new_class(name, NULL);
     if (base) {
         cls->base = base;
@@ -1077,19 +1077,19 @@ static Value py_exc_init(VM *vm, Value *args, int n) {
     return make_null();
 }
 
-void luna_init_vm(VM *vm) {
-    vm->time_start_us = luna_time_monotonic_us();
+void py_init_vm(VM *vm) {
+    vm->time_start_us = py_time_monotonic_us();
     vm_register_builtins(vm);
     vm_register_canonical_classes(vm);
 
-    vm->exception_class = luna_register_exception(vm, "Exception", NULL);
-    vm->type_error_class = luna_register_exception(vm, "TypeError", vm->exception_class);
-    vm->key_error_class = luna_register_exception(vm, "KeyError", vm->exception_class);
-    vm->index_error_class = luna_register_exception(vm, "IndexError", vm->exception_class);
-    vm->attribute_error_class = luna_register_exception(vm, "AttributeError", vm->exception_class);
-    vm->value_error_class = luna_register_exception(vm, "ValueError", vm->exception_class);
-    vm->runtime_error_class = luna_register_exception(vm, "RuntimeError", vm->exception_class);
-    vm->argument_error_class = luna_register_exception(vm, "ArgumentError", vm->exception_class);
+    vm->exception_class = py_register_exception(vm, "Exception", NULL);
+    vm->type_error_class = py_register_exception(vm, "TypeError", vm->exception_class);
+    vm->key_error_class = py_register_exception(vm, "KeyError", vm->exception_class);
+    vm->index_error_class = py_register_exception(vm, "IndexError", vm->exception_class);
+    vm->attribute_error_class = py_register_exception(vm, "AttributeError", vm->exception_class);
+    vm->value_error_class = py_register_exception(vm, "ValueError", vm->exception_class);
+    vm->runtime_error_class = py_register_exception(vm, "RuntimeError", vm->exception_class);
+    vm->argument_error_class = py_register_exception(vm, "ArgumentError", vm->exception_class);
 
     {
         ObjClass *exc_classes[] = {
@@ -1113,24 +1113,24 @@ void luna_init_vm(VM *vm) {
     vm_register_string_module(vm);
     vm_register_net_module(vm);
     vm_register_json_module(vm);
-    vm_set_frontend(vm, &luna_frontend_hooks);
+    vm_set_frontend(vm, &py_frontend_hooks);
 }
 
 /* ============================================================ */
 /* State management                                              */
 /* ============================================================ */
 
-luna_State *luna_new_state(void) {
-    luna_State *L = calloc(1, sizeof(luna_State));
+py_State *py_new_state(void) {
+    py_State *L = calloc(1, sizeof(py_State));
     if (!L) return NULL;
 
     L->vm = calloc(1, sizeof(VM));
     if (!L->vm) { free(L); return NULL; }
 
     vm_init(L->vm);
-    luna_init_vm(L->vm);
-    luna_wire_lifecycle();
-    vm_set_frontend(L->vm, &luna_frontend_hooks);
+    py_init_vm(L->vm);
+    py_wire_lifecycle();
+    vm_set_frontend(L->vm, &py_frontend_hooks);
     L->vm->api_state = L;
 
     L->cap = LUNA_API_STACK_INIT;
@@ -1146,7 +1146,7 @@ luna_State *luna_new_state(void) {
     return L;
 }
 
-void luna_close(luna_State *L) {
+void py_close(py_State *L) {
     if (!L) return;
     VM *vm = L->vm;
     vm->api_state = NULL;
@@ -1160,13 +1160,13 @@ void luna_close(luna_State *L) {
 /* Stack manipulation helpers                                    */
 /* ============================================================ */
 
-static Value *luna_stack_ptr(luna_State *L, int idx) {
+static Value *py_stack_ptr(py_State *L, int idx) {
     if (idx < 0) idx = L->top + idx;
     if (idx < 0 || idx >= L->top) return NULL;
     return &L->stack[idx];
 }
 
-static bool luna_grow_stack(luna_State *L, int min) {
+static bool py_grow_stack(py_State *L, int min) {
     if (min <= L->cap) return true;
     int new_cap = L->cap * 2;
     while (new_cap < min) new_cap *= 2;
@@ -1183,59 +1183,59 @@ static bool luna_grow_stack(luna_State *L, int min) {
 /* Stack manipulation API                                        */
 /* ============================================================ */
 
-int luna_get_top(luna_State *L) {
+int py_get_top(py_State *L) {
     return L->top;
 }
 
-void luna_set_top(luna_State *L, int n) {
+void py_set_top(py_State *L, int n) {
     if (n < 0) n = L->top + n + 1;
     if (n < 0) n = 0;
     if (n > L->top) {
-        if (!luna_grow_stack(L, n)) return;
+        if (!py_grow_stack(L, n)) return;
         for (int i = L->top; i < n; i++) L->stack[i] = make_null();
     }
     L->top = n;
 }
 
-void luna_push_value(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+void py_push_value(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v) return;
-    if (!luna_grow_stack(L, L->top + 1)) return;
+    if (!py_grow_stack(L, L->top + 1)) return;
     L->stack[L->top++] = *v;
 }
 
-void luna_remove(luna_State *L, int idx) {
+void py_remove(py_State *L, int idx) {
     if (idx < 0 || idx >= L->top) return;
     for (int i = idx; i < L->top - 1; i++)
         L->stack[i] = L->stack[i + 1];
     L->top--;
 }
 
-void luna_insert(luna_State *L, int idx) {
+void py_insert(py_State *L, int idx) {
     if (idx < 0 || idx > L->top) return;
-    if (!luna_grow_stack(L, L->top + 1)) return;
+    if (!py_grow_stack(L, L->top + 1)) return;
     for (int i = L->top; i > idx; i--)
         L->stack[i] = L->stack[i - 1];
     L->stack[idx] = make_null();
     L->top++;
 }
 
-void luna_replace(luna_State *L, int idx) {
+void py_replace(py_State *L, int idx) {
     if (idx < 0 || idx >= L->top) return;
     L->stack[idx] = L->stack[L->top - 1];
     L->top--;
 }
 
-int luna_check_stack(luna_State *L, int n) {
-    return luna_grow_stack(L, L->top + n) ? 1 : 0;
+int py_check_stack(py_State *L, int n) {
+    return py_grow_stack(L, L->top + n) ? 1 : 0;
 }
 
 /* ============================================================ */
 /* Type checking                                                 */
 /* ============================================================ */
 
-int luna_type(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+int py_type(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v) return LUNA_TNIL;
     Value val = *v;
 
@@ -1267,49 +1267,49 @@ int luna_type(luna_State *L, int idx) {
     return LUNA_TNIL;
 }
 
-bool luna_is_nil(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_nil(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     return v && IS_NIL(*v);
 }
 
-bool luna_is_boolean(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_boolean(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     return v && IS_BOOL(*v);
 }
 
-bool luna_is_number(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_number(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     return v && (IS_DOUBLE(*v) || IS_INT(*v) || IS_INT64(*v));
 }
 
-bool luna_is_integer(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_integer(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     return v && (IS_INT(*v) || IS_INT64(*v));
 }
 
-bool luna_is_string(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_string(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     return v && IS_STRING(*v);
 }
 
-bool luna_is_function(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_function(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v) return false;
     if (!IS_OBJ(*v)) return false;
     Object *obj = AS_OBJ(*v);
     return obj->type->kind == OBJ_FUNCTION || obj->type->kind == OBJ_CLOSURE;
 }
 
-bool luna_is_cfunction(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_cfunction(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v || !IS_OBJ(*v)) return false;
     Object *obj = AS_OBJ(*v);
     if (obj->type->kind != OBJ_FUNCTION) return false;
     return ((ObjFunction *)obj)->cfunc != NULL;
 }
 
-bool luna_is_userdata(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_userdata(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     return v && IS_USERDATA(*v);
 }
 
@@ -1317,15 +1317,15 @@ bool luna_is_userdata(luna_State *L, int idx) {
 /* Access functions                                              */
 /* ============================================================ */
 
-bool luna_to_boolean(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_to_boolean(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v) return false;
     if (IS_BOOL(*v)) return AS_BOOL(*v);
     return is_truthy(*v);
 }
 
-double luna_to_number(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+double py_to_number(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v) return 0.0;
     if (IS_DOUBLE(*v))  return AS_DOUBLE(*v);
     if (IS_INT(*v))     return (double)AS_INT(*v);
@@ -1333,8 +1333,8 @@ double luna_to_number(luna_State *L, int idx) {
     return 0.0;
 }
 
-int64_t luna_to_integer(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+int64_t py_to_integer(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v) return 0;
     if (IS_INT(*v))     return AS_INT(*v);
     if (IS_INT64(*v))   return ((ObjInt64 *)AS_OBJ(*v))->value;
@@ -1342,8 +1342,8 @@ int64_t luna_to_integer(luna_State *L, int idx) {
     return 0;
 }
 
-const char *luna_to_string(luna_State *L, int idx, size_t *len) {
-    Value *v = luna_stack_ptr(L, idx);
+const char *py_to_string(py_State *L, int idx, size_t *len) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v || !IS_STRING(*v)) {
         if (len) *len = 0;
         return NULL;
@@ -1357,43 +1357,43 @@ const char *luna_to_string(luna_State *L, int idx, size_t *len) {
 /* Push functions                                                */
 /* ============================================================ */
 
-void luna_push_nil(luna_State *L) {
-    if (luna_grow_stack(L, L->top + 1))
+void py_push_nil(py_State *L) {
+    if (py_grow_stack(L, L->top + 1))
         L->stack[L->top++] = make_null();
 }
 
-void luna_push_boolean(luna_State *L, bool b) {
-    if (luna_grow_stack(L, L->top + 1))
+void py_push_boolean(py_State *L, bool b) {
+    if (py_grow_stack(L, L->top + 1))
         L->stack[L->top++] = make_bool(b);
 }
 
-void luna_push_number(luna_State *L, double n) {
-    if (luna_grow_stack(L, L->top + 1))
+void py_push_number(py_State *L, double n) {
+    if (py_grow_stack(L, L->top + 1))
         L->stack[L->top++] = make_double(n);
 }
 
-void luna_push_integer(luna_State *L, int64_t n) {
-    if (!luna_grow_stack(L, L->top + 1)) return;
+void py_push_integer(py_State *L, int64_t n) {
+    if (!py_grow_stack(L, L->top + 1)) return;
     if (n >= INT32_MIN && n <= INT32_MAX)
         L->stack[L->top++] = make_int((int32_t)n);
     else
         L->stack[L->top++] = make_int64(n);
 }
 
-void luna_push_string(luna_State *L, const char *s) {
-    if (!luna_grow_stack(L, L->top + 1)) return;
+void py_push_string(py_State *L, const char *s) {
+    if (!py_grow_stack(L, L->top + 1)) return;
     L->stack[L->top++] = make_obj((Object *)new_string(s, (int)strlen(s)));
 }
 
-void luna_push_lstring(luna_State *L, const char *s, size_t len) {
-    if (!luna_grow_stack(L, L->top + 1)) return;
+void py_push_lstring(py_State *L, const char *s, size_t len) {
+    if (!py_grow_stack(L, L->top + 1)) return;
     L->stack[L->top++] = make_obj((Object *)new_string(s, (int)len));
 }
 
-void luna_push_cfunction(luna_State *L, luna_CFunction fn) {
-    if (!luna_grow_stack(L, L->top + 1)) return;
+void py_push_cfunction(py_State *L, py_CFunction fn) {
+    if (!py_grow_stack(L, L->top + 1)) return;
     ObjFunction *f = new_native_function("<cfunc>", NULL);
-    f->cfunc = (int (*)(struct luna_State *L))fn;
+    f->cfunc = (int (*)(struct py_State *L))fn;
     L->stack[L->top++] = make_obj((Object *)f);
 }
 
@@ -1401,39 +1401,39 @@ void luna_push_cfunction(luna_State *L, luna_CFunction fn) {
 /* Table (dict) operations                                       */
 /* ============================================================ */
 
-void luna_new_dict(luna_State *L) {
-    if (!luna_grow_stack(L, L->top + 1)) return;
+void py_new_dict(py_State *L) {
+    if (!py_grow_stack(L, L->top + 1)) return;
     L->stack[L->top++] = make_obj((Object *)new_dict());
 }
 
-void luna_set_field(luna_State *L, int idx, const char *key) {
-    Value *dv = luna_stack_ptr(L, idx);
+void py_set_field(py_State *L, int idx, const char *key) {
+    Value *dv = py_stack_ptr(L, idx);
     if (!dv || L->top < 1) return;
     if (!IS_OBJ(*dv) || !AS_OBJ(*dv)->type || !AS_OBJ(*dv)->type->setattr) return;
     AS_OBJ(*dv)->type->setattr(L->vm, *dv, key, L->stack[L->top - 1]);
     L->top--;
 }
 
-int luna_get_field(luna_State *L, int idx, const char *key) {
-    Value *dv = luna_stack_ptr(L, idx);
+int py_get_field(py_State *L, int idx, const char *key) {
+    Value *dv = py_stack_ptr(L, idx);
     if (!dv || !IS_OBJ(*dv) || !AS_OBJ(*dv)->type || !AS_OBJ(*dv)->type->getattr) return LUNA_TNIL;
     Value val = AS_OBJ(*dv)->type->getattr(L->vm, *dv, key);
-    if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
+    if (!py_grow_stack(L, L->top + 1)) return LUNA_TNIL;
     L->stack[L->top++] = val;
-    return luna_type(L, L->top - 1);
+    return py_type(L, L->top - 1);
 }
 
 /* ============================================================ */
 /* List (array) operations                                       */
 /* ============================================================ */
 
-void luna_new_list(luna_State *L) {
-    if (!luna_grow_stack(L, L->top + 1)) return;
+void py_new_list(py_State *L) {
+    if (!py_grow_stack(L, L->top + 1)) return;
     L->stack[L->top++] = make_obj((Object *)new_list(0));
 }
 
-void luna_list_append(luna_State *L, int idx) {
-    Value *lv = luna_stack_ptr(L, idx);
+void py_list_append(py_State *L, int idx) {
+    Value *lv = py_stack_ptr(L, idx);
     if (!lv || L->top < 1) return;
     if (!IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type->kind != OBJ_LIST) return;
     ObjList *lst = (ObjList *)AS_OBJ(*lv);
@@ -1442,24 +1442,24 @@ void luna_list_append(luna_State *L, int idx) {
     L->top--;
 }
 
-void luna_get_index(luna_State *L, int idx, int n) {
-    Value *lv = luna_stack_ptr(L, idx);
+void py_get_index(py_State *L, int idx, int n) {
+    Value *lv = py_stack_ptr(L, idx);
     if (!lv || !IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type->kind != OBJ_LIST) {
-        luna_push_nil(L);
+        py_push_nil(L);
         return;
     }
     ObjList *lst = (ObjList *)AS_OBJ(*lv);
     int len = list_length(lst);
     if (n < 0 || n >= len) {
-        luna_push_nil(L);
+        py_push_nil(L);
     } else {
         Value val = lst->items ? lst->items[n] : lst->inline_items[n];
-        if (luna_grow_stack(L, L->top + 1)) L->stack[L->top++] = val;
+        if (py_grow_stack(L, L->top + 1)) L->stack[L->top++] = val;
     }
 }
 
-void luna_set_index(luna_State *L, int idx, int n) {
-    Value *lv = luna_stack_ptr(L, idx);
+void py_set_index(py_State *L, int idx, int n) {
+    Value *lv = py_stack_ptr(L, idx);
     if (!lv || L->top < 1 || !IS_OBJ(*lv) || ((Object *)AS_OBJ(*lv))->type->kind != OBJ_LIST) return;
     ObjList *lst = (ObjList *)AS_OBJ(*lv);
     Value val = L->stack[L->top - 1];
@@ -1471,39 +1471,39 @@ void luna_set_index(luna_State *L, int idx, int n) {
 /* Userdata                                                      */
 /* ============================================================ */
 
-void luna_new_userdata(luna_State *L, void *data, const char *tag, void (*finalizer)(void *)) {
-    if (!luna_grow_stack(L, L->top + 1)) return;
+void py_new_userdata(py_State *L, void *data, const char *tag, void (*finalizer)(void *)) {
+    if (!py_grow_stack(L, L->top + 1)) return;
     ObjUserdata *ud = new_userdata_tagged(tag, data, finalizer);
     L->stack[L->top++] = make_obj((Object *)ud);
 }
 
-void *luna_to_userdata(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+void *py_to_userdata(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v || !IS_USERDATA(*v)) return NULL;
     return ((ObjUserdata *)AS_OBJ(*v))->data;
 }
 
-bool luna_is_userdata_tag(luna_State *L, int idx, const char *tag) {
-    Value *v = luna_stack_ptr(L, idx);
+bool py_is_userdata_tag(py_State *L, int idx, const char *tag) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v || !IS_USERDATA(*v)) return false;
     ObjUserdata *ud = (ObjUserdata *)AS_OBJ(*v);
     return ud->tag && tag && strcmp(ud->tag, tag) == 0;
 }
 
-const char *luna_get_userdata_tag(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+const char *py_get_userdata_tag(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v || !IS_USERDATA(*v)) return NULL;
     return ((ObjUserdata *)AS_OBJ(*v))->tag;
 }
 
-void luna_push_lightuserdata(luna_State *L, void *ptr) {
-    if (!luna_grow_stack(L, L->top + 1)) return;
+void py_push_lightuserdata(py_State *L, void *ptr) {
+    if (!py_grow_stack(L, L->top + 1)) return;
     ObjUserdata *ud = new_userdata_tagged("lightuserdata", ptr, NULL);
     L->stack[L->top++] = make_obj((Object *)ud);
 }
 
-void *luna_to_lightuserdata(luna_State *L, int idx) {
-    Value *v = luna_stack_ptr(L, idx);
+void *py_to_lightuserdata(py_State *L, int idx) {
+    Value *v = py_stack_ptr(L, idx);
     if (!v || !IS_USERDATA(*v)) return NULL;
     ObjUserdata *ud = (ObjUserdata *)AS_OBJ(*v);
     return ud->data;
@@ -1513,18 +1513,18 @@ void *luna_to_lightuserdata(luna_State *L, int idx) {
 /* Global access                                                 */
 /* ============================================================ */
 
-int luna_get_global(luna_State *L, const char *name) {
+int py_get_global(py_State *L, const char *name) {
     Value val;
     if (!vm_get_global(L->vm, name, &val)) {
-        luna_push_nil(L);
+        py_push_nil(L);
         return LUNA_TNIL;
     }
-    if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
+    if (!py_grow_stack(L, L->top + 1)) return LUNA_TNIL;
     L->stack[L->top++] = val;
-    return luna_type(L, L->top - 1);
+    return py_type(L, L->top - 1);
 }
 
-void luna_set_global(luna_State *L, const char *name) {
+void py_set_global(py_State *L, const char *name) {
     if (L->top < 1) return;
     Value val = L->stack[L->top - 1];
     vm_set_global(L->vm, name, val, false);
@@ -1535,34 +1535,34 @@ void luna_set_global(luna_State *L, const char *name) {
 /* System globals (persist across modules)                       */
 /* ============================================================ */
 
-void luna_set_system_global(luna_State *L, const char *name) {
+void py_set_system_global(py_State *L, const char *name) {
     if (L->top < 1) return;
     Value val = L->stack[L->top - 1];
     vm_set_system_global(L->vm, name, val);
     L->top--;
 }
 
-int luna_get_system_global(luna_State *L, const char *name) {
+int py_get_system_global(py_State *L, const char *name) {
     Value val;
     if (!vm_get_global(L->vm, name, &val)) {
-        luna_push_nil(L);
+        py_push_nil(L);
         return LUNA_TNIL;
     }
-    if (!luna_grow_stack(L, L->top + 1)) return LUNA_TNIL;
+    if (!py_grow_stack(L, L->top + 1)) return LUNA_TNIL;
     L->stack[L->top++] = val;
-    return luna_type(L, L->top - 1);
+    return py_type(L, L->top - 1);
 }
 
 /* ============================================================ */
 /* C function dispatch — called from vm_opcodes.inc              */
 /* ============================================================ */
 
-Value luna_cfunc_dispatch(VM *vm, ObjFunction *fn, Value *args, int arg_count) {
-    luna_State *L = (luna_State *)vm->api_state;
+Value py_cfunc_dispatch(VM *vm, ObjFunction *fn, Value *args, int arg_count) {
+    py_State *L = (py_State *)vm->api_state;
     if (!L || !fn->cfunc) return make_null();
 
     /* Ensure API stack has room */
-    luna_grow_stack(L, L->top + arg_count);
+    py_grow_stack(L, L->top + arg_count);
 
     /* Push args onto the API stack */
     for (int i = 0; i < arg_count; i++) {
@@ -1592,7 +1592,7 @@ Value luna_cfunc_dispatch(VM *vm, ObjFunction *fn, Value *args, int arg_count) {
 /* pcall                                                         */
 /* ============================================================ */
 
-luna_Status luna_pcall(luna_State *L, int nargs, int nresults) {
+py_Status py_pcall(py_State *L, int nargs, int nresults) {
     VM *vm = L->vm;
     int func_idx = L->top - nargs - 1;
 
@@ -1614,17 +1614,17 @@ luna_Status luna_pcall(luna_State *L, int nargs, int nresults) {
         /* Push error message */
         char *msg = value_to_string(vm->last_exception);
         if (msg) {
-            luna_push_string(L, msg);
+            py_push_string(L, msg);
             free(msg);
         } else {
-            luna_push_string(L, "unknown error");
+            py_push_string(L, "unknown error");
         }
         return LUNA_ERRRUN;
     }
 
     /* Push results */
     if (nresults != 0) {
-        luna_grow_stack(L, L->top + 1);
+        py_grow_stack(L, L->top + 1);
         L->stack[L->top++] = result;
     }
 
@@ -1635,7 +1635,7 @@ luna_Status luna_pcall(luna_State *L, int nargs, int nresults) {
 /* Load and run LunaScript                                       */
 /* ============================================================ */
 
-luna_Status lunaL_load_string(luna_State *L, const char *str) {
+py_Status lunaL_load_string(py_State *L, const char *str) {
     VM *vm = L->vm;
 
     /* Lex */
@@ -1652,7 +1652,7 @@ luna_Status lunaL_load_string(luna_State *L, const char *str) {
     Token *t = tokens->head;
     while (t) {
         if (t->type == TOK_ERROR) {
-            luna_push_string(L, t->value ? t->value : "lexer error");
+            py_push_string(L, t->value ? t->value : "lexer error");
             token_list_free(tokens);
             lexer_free(lexer);
             return LUNA_ERRSYNTAX;
@@ -1670,7 +1670,7 @@ luna_Status lunaL_load_string(luna_State *L, const char *str) {
 
     Program *program = parser_parse(parser);
     if (!program) {
-        luna_push_string(L, "parse error");
+        py_push_string(L, "parse error");
         parser_free(parser);
         token_list_free(tokens);
         lexer_free(lexer);
@@ -1680,7 +1680,7 @@ luna_Status lunaL_load_string(luna_State *L, const char *str) {
     /* Compile */
     Chunk *chunk = malloc(sizeof(Chunk));
     if (!chunk) {
-        luna_push_string(L, "compile error");
+        py_push_string(L, "compile error");
         free_program(program);
         parser_free(parser);
         token_list_free(tokens);
@@ -1689,7 +1689,7 @@ luna_Status lunaL_load_string(luna_State *L, const char *str) {
     }
     memset(chunk, 0, sizeof(Chunk));
     if (!compile_program(program, chunk, vm, false, false)) {
-        luna_push_string(L, "compile error");
+        py_push_string(L, "compile error");
         chunk_free(chunk);
         free(chunk);
         free_program(program);
@@ -1707,7 +1707,7 @@ luna_Status lunaL_load_string(luna_State *L, const char *str) {
 
     /* Push as a closure */
     ObjClosure *cl = new_closure(fn);
-    luna_grow_stack(L, L->top + 1);
+    py_grow_stack(L, L->top + 1);
     L->stack[L->top++] = make_obj((Object *)cl);
 
     /* The chunk is owned by the function now; don't free it */
@@ -1719,10 +1719,10 @@ luna_Status lunaL_load_string(luna_State *L, const char *str) {
     return LUNA_OK;
 }
 
-luna_Status lunaL_load_file(luna_State *L, const char *filename) {
+py_Status lunaL_load_file(py_State *L, const char *filename) {
     FILE *f = fopen(filename, "rb");
     if (!f) {
-        luna_push_string(L, "cannot open file");
+        py_push_string(L, "cannot open file");
         return LUNA_ERRRUN;
     }
 
@@ -1732,7 +1732,7 @@ luna_Status lunaL_load_file(luna_State *L, const char *filename) {
 
     if (len < 0) {
         fclose(f);
-        luna_push_string(L, "cannot read file");
+        py_push_string(L, "cannot read file");
         return LUNA_ERRRUN;
     }
 
@@ -1746,12 +1746,12 @@ luna_Status lunaL_load_file(luna_State *L, const char *filename) {
     fclose(f);
     buf[read] = '\0';
 
-    luna_Status status = lunaL_load_string(L, buf);
+    py_Status status = lunaL_load_string(L, buf);
     free(buf);
 
     /* Replace chunk source path with the actual filename */
     if (status == LUNA_OK && L->top > 0) {
-        Value *v = luna_stack_ptr(L, L->top - 1);
+        Value *v = py_stack_ptr(L, L->top - 1);
         if (v && IS_OBJ(*v)) {
             ObjClosure *cl = (ObjClosure *)AS_OBJ(*v);
             if (cl && cl->function && cl->function->chunk) {
@@ -1764,24 +1764,24 @@ luna_Status lunaL_load_file(luna_State *L, const char *filename) {
     return status;
 }
 
-luna_Status lunaL_dostring(luna_State *L, const char *str) {
-    luna_Status s = lunaL_load_string(L, str);
+py_Status lunaL_dostring(py_State *L, const char *str) {
+    py_Status s = lunaL_load_string(L, str);
     if (s != LUNA_OK) return s;
     /* The function is on the stack; call with 0 args */
-    return luna_pcall(L, 0, 1);
+    return py_pcall(L, 0, 1);
 }
 
-luna_Status lunaL_dofile(luna_State *L, const char *filename) {
-    luna_Status s = lunaL_load_file(L, filename);
+py_Status lunaL_dofile(py_State *L, const char *filename) {
+    py_Status s = lunaL_load_file(L, filename);
     if (s != LUNA_OK) return s;
-    return luna_pcall(L, 0, 1);
+    return py_pcall(L, 0, 1);
 }
 
 /* ============================================================ */
 /* GC                                                           */
 /* ============================================================ */
 
-int luna_gc(luna_State *L, int what) {
+int py_gc(py_State *L, int what) {
     (void)what;
     /* Trigger full GC */
     mark_and_sweep(L->vm);
@@ -1792,7 +1792,7 @@ int luna_gc(luna_State *L, int what) {
 /* Error handling and Arg checking                              */
 /* ============================================================ */
 
-void luna_error(luna_State *L, const char *fmt, ...) {
+void py_error(py_State *L, const char *fmt, ...) {
     char buf[512];
     va_list args;
     va_start(args, fmt);
@@ -1805,31 +1805,31 @@ void luna_error(luna_State *L, const char *fmt, ...) {
     }
 }
 
-double lunaL_checknumber(luna_State *L, int arg) {
-    if (!luna_is_number(L, arg)) {
-        luna_error(L, "bad argument #%d (number expected)", arg + (arg < 0 ? L->top + 1 : 1));
+double lunaL_checknumber(py_State *L, int arg) {
+    if (!py_is_number(L, arg)) {
+        py_error(L, "bad argument #%d (number expected)", arg + (arg < 0 ? L->top + 1 : 1));
     }
-    return luna_to_number(L, arg);
+    return py_to_number(L, arg);
 }
 
-int64_t lunaL_checkinteger(luna_State *L, int arg) {
-    if (!luna_is_integer(L, arg)) {
-        luna_error(L, "bad argument #%d (integer expected)", arg + (arg < 0 ? L->top + 1 : 1));
+int64_t lunaL_checkinteger(py_State *L, int arg) {
+    if (!py_is_integer(L, arg)) {
+        py_error(L, "bad argument #%d (integer expected)", arg + (arg < 0 ? L->top + 1 : 1));
     }
-    return luna_to_integer(L, arg);
+    return py_to_integer(L, arg);
 }
 
-const char* lunaL_checkstring(luna_State *L, int arg) {
-    if (!luna_is_string(L, arg)) {
-        luna_error(L, "bad argument #%d (string expected)", arg + (arg < 0 ? L->top + 1 : 1));
+const char* lunaL_checkstring(py_State *L, int arg) {
+    if (!py_is_string(L, arg)) {
+        py_error(L, "bad argument #%d (string expected)", arg + (arg < 0 ? L->top + 1 : 1));
     }
-    return luna_to_string(L, arg, NULL);
+    return py_to_string(L, arg, NULL);
 }
 
-void* lunaL_checkuserdata(luna_State *L, int arg, const char *tag) {
-    if (!luna_is_userdata_tag(L, arg, tag)) {
-        luna_error(L, "bad argument #%d (%s expected)", arg + (arg < 0 ? L->top + 1 : 1), tag);
+void* lunaL_checkuserdata(py_State *L, int arg, const char *tag) {
+    if (!py_is_userdata_tag(L, arg, tag)) {
+        py_error(L, "bad argument #%d (%s expected)", arg + (arg < 0 ? L->top + 1 : 1), tag);
     }
-    return luna_to_userdata(L, arg);
+    return py_to_userdata(L, arg);
 }
 

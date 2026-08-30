@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include "stdlib_io.h"
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 
 typedef struct PipeData {
     char *buf;

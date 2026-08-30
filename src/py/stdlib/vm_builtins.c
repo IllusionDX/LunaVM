@@ -12,7 +12,7 @@
 #include <time.h>
 #include "vm.h"
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 #include "chunk.h"
 
 /* Extern declarations for static mat4 helpers in vm.c */

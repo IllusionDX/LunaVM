@@ -1,6 +1,6 @@
 /* luna/object.c — Luna MOP Type instances + vtable implementations.
  *
- * Part 1: Type definitions + luna_types[] table.
+ * Part 1: Type definitions + py_types[] table.
  * Part 2 (this file): arithmetic / comparison / index vtables wired.
  * The core reaches these through Object.type (Type*) so vm.c never
  * names a concrete Luna kind in dispatch.
@@ -14,7 +14,7 @@
 #include <math.h>
 
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 #include "chunk.h"
 #include "vm.h"
 
@@ -24,12 +24,12 @@ static void intern_remove(ObjString *s);
 static void userdata_run_finalizer(ObjUserdata *ud);
 
 /* ---- helpers available to vtable functions ---- */
-static inline bool is_int64_type(Value v) { return IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == luna_types[OBJ_INT64]; }
+static inline bool is_int64_type(Value v) { return IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == py_types[OBJ_INT64]; }
 
 /* ============================================================
  * String operations (vtable)
  * ============================================================ */
-static Value luna_string_add(struct VM *vm, Value a, Value b) {
+static Value py_string_add(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (!IS_STRING(a) || !IS_OBJ(b)) { /* string concat with anything -> convert b */
         /* This replicates the current do_arith behavior: L is string,
@@ -57,7 +57,7 @@ static Value luna_string_add(struct VM *vm, Value a, Value b) {
     return make_obj((Object*)s);
 }
 
-static Value luna_string_mul(struct VM *vm, Value a, Value b) {
+static Value py_string_mul(struct VM *vm, Value a, Value b) {
     (void)vm;
     /* Replication: string * int OR int * string */
     if (IS_STRING(a) && IS_INT(b)) {
@@ -75,12 +75,12 @@ static Value luna_string_mul(struct VM *vm, Value a, Value b) {
         return make_obj((Object*)res);
     }
     if (IS_STRING(b) && IS_INT(a)) {
-        return luna_string_mul(vm, b, a);
+        return py_string_mul(vm, b, a);
     }
     return make_null();
 }
 
-static int luna_string_cmp(struct VM *vm, Value a, Value b) {
+static int py_string_cmp(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (!IS_STRING(a) || !IS_STRING(b)) return 2; /* unsupported -> do_cmp returns null */
     ObjString *as = (ObjString*)AS_OBJ(a);
@@ -91,12 +91,12 @@ static int luna_string_cmp(struct VM *vm, Value a, Value b) {
     return (cmp < 0) ? -1 : (cmp > 0) ? 1 : 0;
 }
 
-static Value luna_string_neg(struct VM *vm, Value a) { (void)vm; return make_null(); }
-static Value luna_string_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_string_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_string_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_string_neg(struct VM *vm, Value a) { (void)vm; return make_null(); }
+static Value py_string_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_string_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_string_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
 
-static Value luna_string_getitem(struct VM *vm, Value self, Value key) {
+static Value py_string_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
     if (!IS_STRING(self) || !IS_INT(key)) return make_null();
     ObjString *s = (ObjString*)AS_OBJ(self);
@@ -106,13 +106,13 @@ static Value luna_string_getitem(struct VM *vm, Value self, Value key) {
     return make_obj((Object*)new_string(&s->chars[idx], 1));
 }
 
-static void luna_string_setitem(struct VM *vm, Value self, Value key, Value val) {
+static void py_string_setitem(struct VM *vm, Value self, Value key, Value val) {
     (void)vm; (void)self; (void)key; (void)val; /* unsupported */
 }
 
-static Value luna_string_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int luna_string_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_string_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_string_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
+static int py_string_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
+static Value py_string_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
 
 /* ---- MOP call vtables (Part 5) ----
  * Bytecode callables (function/closure/bound_method) run synchronously through
@@ -121,7 +121,7 @@ static Value luna_string_call(struct VM *vm, Value self, Value *args, int argc) 
  * `!= VM_OK`, not `!`. On failure the exception is already in vm->last_exception;
  * we re-propagate via longjmp exactly like op_throw (goto op_throw), preserving
  * Luna's frame-based exception unwinding instead of swallowing it as null. */
-static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_function_call(struct VM *vm, Value self, Value *args, int argc) {
     if (!IS_FUNCTION(self)) return make_null();
     ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
     if (fn->is_native) {
@@ -129,7 +129,7 @@ static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc
         for (int i = 0; i < argc; i++) scratch[i] = args[i];
         Value result;
         if (fn->cfunc) {
-            result = luna_cfunc_dispatch(vm, fn, scratch, argc);
+            result = py_cfunc_dispatch(vm, fn, scratch, argc);
         } else {
             if (!vm_call_native(vm, fn->native_fn, scratch, argc, &result)) {
                 if (vm->native_jump) longjmp(vm->native_jump->env, 1);
@@ -146,18 +146,18 @@ static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc
     return out;
 }
 
-static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_closure_call(struct VM *vm, Value self, Value *args, int argc) {
     if (!IS_CLOSURE(self)) return make_null();
     ObjClosure *cl = (ObjClosure *)AS_OBJ(self);
     if (cl->function->is_native) {
-        /* Native closure: dispatch like luna_function_call.  This mirrors the
+        /* Native closure: dispatch like py_function_call.  This mirrors the
          * old inline OP_INVOKE native path (which inspected fn->is_native) and
          * avoids an infinite loop when the core routes a native closure through
          * t->call (get_chunk returns NULL, so vm_call_value would re-enter). */
         Value scratch[256];
         for (int i = 0; i < argc; i++) scratch[i] = args[i];
         Value result;
-        if (cl->function->cfunc) return luna_cfunc_dispatch(vm, cl->function, scratch, argc);
+        if (cl->function->cfunc) return py_cfunc_dispatch(vm, cl->function, scratch, argc);
         if (!vm_call_native(vm, cl->function->native_fn, scratch, argc, &result)) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
@@ -172,7 +172,7 @@ static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc)
     return out;
 }
 
-static Value luna_bound_method_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_bound_method_call(struct VM *vm, Value self, Value *args, int argc) {
     if (!IS_BOUND_METHOD(self)) return make_null();
     ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(self);
     Value scratch[256];
@@ -195,61 +195,61 @@ static Value luna_bound_method_call(struct VM *vm, Value self, Value *args, int 
  * ObjBoundMethod / ObjInstance. Native callables return NULL from get_chunk and
  * are dispatched synchronously via `call`.
  * ============================================================ */
-static Chunk* luna_function_get_chunk(Value self) {
+static Chunk* py_function_get_chunk(Value self) {
     ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
     return fn->is_native ? NULL : fn->chunk;
 }
-static Value luna_function_get_self(Value self) { (void)self; return make_null(); }
-static const char* luna_function_name_of(Value self) { return ((ObjFunction*)AS_OBJ(self))->name; }
-static int luna_function_param_count(Value self) { return ((ObjFunction*)AS_OBJ(self))->param_count; }
-static Value luna_function_get_param_name(Value self, int i) {
+static Value py_function_get_self(Value self) { (void)self; return make_null(); }
+static const char* py_function_name_of(Value self) { return ((ObjFunction*)AS_OBJ(self))->name; }
+static int py_function_param_count(Value self) { return ((ObjFunction*)AS_OBJ(self))->param_count; }
+static Value py_function_get_param_name(Value self, int i) {
     ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
     if (i < 0 || i >= fn->param_count) return make_null();
     return make_obj((Object*)fn->param_name_objs[i]);
 }
-static int luna_closure_param_count(Value self) { return ((ObjClosure*)AS_OBJ(self))->function->param_count; }
-static Value luna_closure_get_param_name(Value self, int i) {
+static int py_closure_param_count(Value self) { return ((ObjClosure*)AS_OBJ(self))->function->param_count; }
+static Value py_closure_get_param_name(Value self, int i) {
     ObjFunction *fn = ((ObjClosure*)AS_OBJ(self))->function;
     if (i < 0 || i >= fn->param_count) return make_null();
     return make_obj((Object*)fn->param_name_objs[i]);
 }
 
-static Chunk* luna_closure_get_chunk(Value self) {
+static Chunk* py_closure_get_chunk(Value self) {
     ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
     ObjFunction *fn = cl->function;
     return fn->is_native ? NULL : fn->chunk;
 }
-static Value luna_closure_get_self(Value self) { (void)self; return make_null(); }
-static const char* luna_closure_name_of(Value self) { return ((ObjClosure*)AS_OBJ(self))->function->name; }
-static Value luna_closure_get_upvalue(struct VM *vm, Value self, int i) {
+static Value py_closure_get_self(Value self) { (void)self; return make_null(); }
+static const char* py_closure_name_of(Value self) { return ((ObjClosure*)AS_OBJ(self))->function->name; }
+static Value py_closure_get_upvalue(struct VM *vm, Value self, int i) {
     ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
     if (i < 0 || i >= cl->upvalue_count) return make_null();
     ObjUpvalue *uv = cl->upvalues[i];
     if (!uv) return make_null();
     return uv->is_open ? vm->stack[uv->stack_index] : uv->closed;
 }
-static void luna_closure_set_upvalue(struct VM *vm, Value self, int i, Value v) {
+static void py_closure_set_upvalue(struct VM *vm, Value self, int i, Value v) {
     ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
     if (i < 0 || i >= cl->upvalue_count) return;
     ObjUpvalue *uv = cl->upvalues[i];
     if (!uv) return;
     if (uv->is_open) vm->stack[uv->stack_index] = v; else uv->closed = v;
 }
-static Value luna_closure_get_upvalue_ref(Value self, int i) {
+static Value py_closure_get_upvalue_ref(Value self, int i) {
     ObjClosure *cl = (ObjClosure*)AS_OBJ(self);
     if (i < 0 || i >= cl->upvalue_count) return make_null();
     ObjUpvalue *uv = cl->upvalues[i];
     return uv ? make_obj((Object*)uv) : make_null();
 }
 
-static Chunk* luna_bound_method_get_chunk(Value self) {
+static Chunk* py_bound_method_get_chunk(Value self) {
     ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(self);
     return bm->fn->is_native ? NULL : bm->fn->chunk;
 }
-static Value luna_bound_method_get_self(Value self) { return ((ObjBoundMethod*)AS_OBJ(self))->self; }
-static const char* luna_bound_method_name_of(Value self) { return ((ObjBoundMethod*)AS_OBJ(self))->fn->name; }
+static Value py_bound_method_get_self(Value self) { return ((ObjBoundMethod*)AS_OBJ(self))->self; }
+static const char* py_bound_method_name_of(Value self) { return ((ObjBoundMethod*)AS_OBJ(self))->fn->name; }
 
-static Chunk* luna_instance_get_chunk(Value self) {
+static Chunk* py_instance_get_chunk(Value self) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     if (!inst->klass) return NULL;
     for (int i = 0; i < inst->klass->method_count; i++)
@@ -259,13 +259,13 @@ static Chunk* luna_instance_get_chunk(Value self) {
         }
     return NULL;
 }
-static Value luna_instance_get_self(Value self) { return self; }
-static const char* luna_instance_name_of(Value self) {
+static Value py_instance_get_self(Value self) { return self; }
+static const char* py_instance_name_of(Value self) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     return inst->klass ? inst->klass->name : "instance";
 }
 
-static bool luna_bind_keyword_arguments(struct VM *vm, Value fn_val, uint8_t nargs,
+static bool py_bind_keyword_arguments(struct VM *vm, Value fn_val, uint8_t nargs,
                                          Value kw_names) {
     ObjFunction *fn = NULL;
     int self_skip = 0;
@@ -337,14 +337,14 @@ static bool luna_bind_keyword_arguments(struct VM *vm, Value fn_val, uint8_t nar
     return true;
 }
 
-static Value luna_string_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t luna_string_hash(Value self) { return ((ObjString*)AS_OBJ(self))->hash; }
-static int luna_string_len(struct VM *vm, Value self) { (void)vm; return utf8_code_point_count(((ObjString*)AS_OBJ(self))->chars, ((ObjString*)AS_OBJ(self))->length); }
+static Value py_string_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+static uint32_t py_string_hash(Value self) { return ((ObjString*)AS_OBJ(self))->hash; }
+static int py_string_len(struct VM *vm, Value self) { (void)vm; return utf8_code_point_count(((ObjString*)AS_OBJ(self))->chars, ((ObjString*)AS_OBJ(self))->length); }
 
 /* ============================================================
  * List operations (vtable)
  * ============================================================ */
-static Value luna_list_add(struct VM *vm, Value a, Value b) {
+static Value py_list_add(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (!IS_LIST(a) || !IS_LIST(b)) return make_null();
     ObjList *ls = (ObjList*)AS_OBJ(a);
@@ -355,7 +355,7 @@ static Value luna_list_add(struct VM *vm, Value a, Value b) {
     return make_obj((Object*)res);
 }
 
-static Value luna_list_mul(struct VM *vm, Value a, Value b) {
+static Value py_list_mul(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_LIST(a) && IS_INT(b)) {
         ObjList *lst = (ObjList*)AS_OBJ(a);
@@ -368,12 +368,12 @@ static Value luna_list_mul(struct VM *vm, Value a, Value b) {
         return make_obj((Object*)res);
     }
     if (IS_LIST(b) && IS_INT(a)) {
-        return luna_list_mul(vm, b, a);
+        return py_list_mul(vm, b, a);
     }
     return make_null();
 }
 
-static int luna_list_cmp(struct VM *vm, Value a, Value b) {
+static int py_list_cmp(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (!IS_LIST(a) || !IS_LIST(b)) return 2; /* unsupported */
     /* Only exact equality is supported for list comparison (pointer-based in current code) */
@@ -382,12 +382,12 @@ static int luna_list_cmp(struct VM *vm, Value a, Value b) {
     /* This is handled by the caller (do_cmp) for EQ/NE; cmp vtable only called when needed. */
 }
 
-static Value luna_list_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_list_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_list_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_list_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
+static Value py_list_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_list_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_list_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_list_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
 
-static Value luna_list_getitem(struct VM *vm, Value self, Value key) {
+static Value py_list_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
     if (!IS_LIST(self) || !IS_INT(key)) return make_null();
     ObjList *lst = (ObjList*)AS_OBJ(self);
@@ -398,7 +398,7 @@ static Value luna_list_getitem(struct VM *vm, Value self, Value key) {
     return lst->items ? lst->items[idx] : lst->inline_items[idx];
 }
 
-static void luna_list_setitem(struct VM *vm, Value self, Value key, Value val) {
+static void py_list_setitem(struct VM *vm, Value self, Value key, Value val) {
     (void)vm;
     if (!IS_LIST(self) || !IS_INT(key)) return;
     ObjList *lst = (ObjList*)AS_OBJ(self);
@@ -409,89 +409,89 @@ static void luna_list_setitem(struct VM *vm, Value self, Value key, Value val) {
     if (lst->items) lst->items[idx] = val; else lst->inline_items[idx] = val;
 }
 
-static Value luna_list_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int luna_list_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_list_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value luna_list_tostring(struct VM *vm, Value self) { (void)vm; return self; }  /* approximate */
-static uint32_t luna_list_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int luna_list_len(struct VM *vm, Value self) { (void)vm; return ((ObjList*)AS_OBJ(self))->count; }
+static Value py_list_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
+static int py_list_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
+static Value py_list_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_list_tostring(struct VM *vm, Value self) { (void)vm; return self; }  /* approximate */
+static uint32_t py_list_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
+static int py_list_len(struct VM *vm, Value self) { (void)vm; return ((ObjList*)AS_OBJ(self))->count; }
 
 /* ============================================================
  * Dict operations (vtable)
  * ============================================================ */
-static Value luna_dict_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_dict_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_dict_mul(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_dict_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_dict_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_dict_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
-static int luna_dict_cmp(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return 2; }
+static Value py_dict_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_dict_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_dict_mul(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_dict_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_dict_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_dict_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
+static int py_dict_cmp(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return 2; }
 
-static Value luna_dict_getitem(struct VM *vm, Value self, Value key) {
+static Value py_dict_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
     if (!IS_DICT(self)) return make_null();
     return dict_get((ObjDict*)AS_OBJ(self), key);
 }
 
-static void luna_dict_setitem(struct VM *vm, Value self, Value key, Value val) {
+static void py_dict_setitem(struct VM *vm, Value self, Value key, Value val) {
     (void)vm;
     if (!IS_DICT(self)) return;
     dict_set((ObjDict*)AS_OBJ(self), key, val);
 }
 
-static Value luna_dict_getattr(struct VM *vm, Value self, const char *name) {
+static Value py_dict_getattr(struct VM *vm, Value self, const char *name) {
     (void)vm;
     if (!IS_DICT(self)) return make_null();
     return dict_get((ObjDict*)AS_OBJ(self), make_obj((Object*)new_string(name, (int)strlen(name))));
 }
-static int luna_dict_setattr(struct VM *vm, Value self, const char *name, Value val) {
+static int py_dict_setattr(struct VM *vm, Value self, const char *name, Value val) {
     (void)vm;
     if (!IS_DICT(self)) return 0;
     dict_set((ObjDict*)AS_OBJ(self), make_obj((Object*)new_string(name, (int)strlen(name))), val);
     return 1;
 }
-static Value luna_dict_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value luna_dict_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t luna_dict_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int luna_dict_len(struct VM *vm, Value self) { (void)vm; return ((ObjDict*)AS_OBJ(self))->entry_count; }
+static Value py_dict_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_dict_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+static uint32_t py_dict_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
+static int py_dict_len(struct VM *vm, Value self) { (void)vm; return ((ObjDict*)AS_OBJ(self))->entry_count; }
 
 /* ============================================================
  * Instance operations (vtable)
  * ============================================================ */
-static Value luna_instance_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_instance_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_instance_mul(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_instance_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_instance_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_instance_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
-static int luna_instance_cmp(struct VM *vm, Value a, Value b) { (void)vm; if (!IS_INSTANCE(a) || !IS_INSTANCE(b)) return 2; return (a == b) ? 0 : 1; }
+static Value py_instance_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_instance_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_instance_mul(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_instance_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_instance_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_instance_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
+static int py_instance_cmp(struct VM *vm, Value a, Value b) { (void)vm; if (!IS_INSTANCE(a) || !IS_INSTANCE(b)) return 2; return (a == b) ? 0 : 1; }
 
-static Value luna_instance_getitem(struct VM *vm, Value self, Value key) {
+static Value py_instance_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
     if (!IS_INSTANCE(self) || !IS_STRING(key)) return make_null();
     return instance_get_field((ObjInstance*)AS_OBJ(self), ((ObjString*)AS_OBJ(key))->chars);
 }
 
-static void luna_instance_setitem(struct VM *vm, Value self, Value key, Value val) {
+static void py_instance_setitem(struct VM *vm, Value self, Value key, Value val) {
     (void)vm;
     if (!IS_INSTANCE(self) || !IS_STRING(key)) return;
     instance_set_field((ObjInstance*)AS_OBJ(self), ((ObjString*)AS_OBJ(key))->chars, val);
 }
 
-static Value luna_instance_getattr(struct VM *vm, Value self, const char *name) {
+static Value py_instance_getattr(struct VM *vm, Value self, const char *name) {
     (void)vm;
     if (!IS_INSTANCE(self)) return make_null();
     return instance_get_field((ObjInstance*)AS_OBJ(self), name);
 }
 
-static int luna_instance_setattr(struct VM *vm, Value self, const char *name, Value val) {
+static int py_instance_setattr(struct VM *vm, Value self, const char *name, Value val) {
     (void)vm;
     if (!IS_INSTANCE(self)) return 0;
     instance_set_field((ObjInstance*)AS_OBJ(self), name, val);
     return 1;
 }
 
-static Value luna_instance_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_instance_call(struct VM *vm, Value self, Value *args, int argc) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     if (!inst->klass) return make_null();
     ObjFunction *fn = NULL;
@@ -504,7 +504,7 @@ static Value luna_instance_call(struct VM *vm, Value self, Value *args, int argc
     for (int i = 0; i < argc; i++) scratch[i + 1] = args[i];
     Value out;
     if (fn->is_native) {
-        if (fn->cfunc) return luna_cfunc_dispatch(vm, fn, scratch, argc + 1);
+        if (fn->cfunc) return py_cfunc_dispatch(vm, fn, scratch, argc + 1);
         if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
@@ -517,9 +517,9 @@ static Value luna_instance_call(struct VM *vm, Value self, Value *args, int argc
     }
     return out;
 }
-static Value luna_instance_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t luna_instance_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int luna_instance_len(struct VM *vm, Value self) { (void)vm; (void)self; return 0; }
+static Value py_instance_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+static uint32_t py_instance_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
+static int py_instance_len(struct VM *vm, Value self) { (void)vm; (void)self; return 0; }
 
 /* Python-style class instantiation: `Foo(args...)` allocates an instance and
  * runs its `__init__` method (inherited methods included) with self bound as
@@ -540,7 +540,7 @@ static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
         for (int i = 0; i < argc && i < 255; i++) scratch[i + 1] = args[i];
         Value out;
         if (fn->is_native) {
-            if (fn->cfunc) return luna_cfunc_dispatch(vm, fn, scratch, argc + 1);
+            if (fn->cfunc) return py_cfunc_dispatch(vm, fn, scratch, argc + 1);
             if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
                 if (vm->native_jump) longjmp(vm->native_jump->env, 1);
                 return make_null();
@@ -556,19 +556,19 @@ static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
 /* ============================================================
  * Vector operations (vtable)
  * ============================================================ */
-static Value luna_vector_add(struct VM *vm, Value a, Value b) {
+static Value py_vector_add(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (!IS_VECTOR(a) || !IS_VECTOR(b)) return make_null();
     ObjVector *av = (ObjVector*)AS_OBJ(a), *bv = (ObjVector*)AS_OBJ(b);
     return make_obj((Object*)new_vector(av->data[0]+bv->data[0], av->data[1]+bv->data[1], av->data[2]+bv->data[2], av->data[3]+bv->data[3]));
 }
-static Value luna_vector_sub(struct VM *vm, Value a, Value b) {
+static Value py_vector_sub(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (!IS_VECTOR(a) || !IS_VECTOR(b)) return make_null();
     ObjVector *av = (ObjVector*)AS_OBJ(a), *bv = (ObjVector*)AS_OBJ(b);
     return make_obj((Object*)new_vector(av->data[0]-bv->data[0], av->data[1]-bv->data[1], av->data[2]-bv->data[2], av->data[3]-bv->data[3]));
 }
-static Value luna_vector_mul(struct VM *vm, Value a, Value b) {
+static Value py_vector_mul(struct VM *vm, Value a, Value b) {
     (void)vm;
     /* Component-wise or scalar mul (current behavior in do_arith) */
     if (IS_VECTOR(a) && IS_VECTOR(b)) {
@@ -581,11 +581,11 @@ static Value luna_vector_mul(struct VM *vm, Value a, Value b) {
         return make_obj((Object*)new_vector(av->data[0]*s, av->data[1]*s, av->data[2]*s, av->data[3]*s));
     }
     if (IS_NUMBER(a) && IS_VECTOR(b)) {
-        return luna_vector_mul(vm, b, a);
+        return py_vector_mul(vm, b, a);
     }
     return make_null();
 }
-static Value luna_vector_div(struct VM *vm, Value a, Value b) {
+static Value py_vector_div(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_VECTOR(a) && IS_NUMBER(b)) {
         ObjVector *av = (ObjVector*)AS_OBJ(a);
@@ -594,34 +594,34 @@ static Value luna_vector_div(struct VM *vm, Value a, Value b) {
     }
     return make_null();
 }
-static Value luna_vector_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_vector_neg(struct VM *vm, Value a) {
+static Value py_vector_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_vector_neg(struct VM *vm, Value a) {
     (void)vm;
     if (!IS_VECTOR(a)) return make_null();
     ObjVector *v = (ObjVector*)AS_OBJ(a);
     return make_obj((Object*)new_vector(-v->data[0], -v->data[1], -v->data[2], -v->data[3]));
 }
-static int luna_vector_cmp(struct VM *vm, Value a, Value b) {
+static int py_vector_cmp(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (!IS_VECTOR(a) || !IS_VECTOR(b)) return 2;
     return a == b ? 0 : 1;
 }
 
-static Value luna_vector_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
-static void luna_vector_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
-static Value luna_vector_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int luna_vector_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_vector_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value luna_vector_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t luna_vector_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int luna_vector_len(struct VM *vm, Value self) { (void)vm; return 4; }
+static Value py_vector_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
+static void py_vector_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
+static Value py_vector_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
+static int py_vector_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
+static Value py_vector_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_vector_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+static uint32_t py_vector_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
+static int py_vector_len(struct VM *vm, Value self) { (void)vm; return 4; }
 
 /* ============================================================
  * Matrix operations (vtable)
  * ============================================================ */
-static Value luna_matrix_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_matrix_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_matrix_mul(struct VM *vm, Value a, Value b) {
+static Value py_matrix_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_matrix_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_matrix_mul(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_MATRIX(a) && IS_MATRIX(b)) {
         ObjMatrix *ma = (ObjMatrix*)AS_OBJ(a), *mb = (ObjMatrix*)AS_OBJ(b);
@@ -645,49 +645,49 @@ static Value luna_matrix_mul(struct VM *vm, Value a, Value b) {
     }
     return make_null();
 }
-static Value luna_matrix_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_matrix_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_matrix_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
-static int luna_matrix_cmp(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return 2; }
+static Value py_matrix_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_matrix_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_matrix_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
+static int py_matrix_cmp(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return 2; }
 
-static Value luna_matrix_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
-static void luna_matrix_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
-static Value luna_matrix_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int luna_matrix_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_matrix_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value luna_matrix_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t luna_matrix_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int luna_matrix_len(struct VM *vm, Value self) { (void)vm; return 16; }
+static Value py_matrix_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
+static void py_matrix_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
+static Value py_matrix_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
+static int py_matrix_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
+static Value py_matrix_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_matrix_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+static uint32_t py_matrix_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
+static int py_matrix_len(struct VM *vm, Value self) { (void)vm; return 16; }
 
 /* ============================================================
  * Int64 numeric arithmetic.
  * The core int (int32) path already promotes to int64 on overflow in
- * luna_binary_operation(); these MOPs restore that behaviour for the
+ * py_binary_operation(); these MOPs restore that behaviour for the
  * int64 object itself (e.g. int64 + int32) and promote the result back
  * to core int whenever it fits, keeping the value as int64 otherwise.
  * ============================================================ */
-static Value luna_int64_promote(int64_t value) {
+static Value py_int64_promote(int64_t value) {
     if (value >= -2147483647LL - 1LL && value <= 2147483647LL)
         return make_int((int32_t)value);
     return make_int64(value);
 }
 
-static Value luna_int64_add(struct VM *vm, Value a, Value b) {
+static Value py_int64_add(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) + as_double(b));
-    return luna_int64_promote(as_int64(a) + as_int64(b));
+    return py_int64_promote(as_int64(a) + as_int64(b));
 }
-static Value luna_int64_sub(struct VM *vm, Value a, Value b) {
+static Value py_int64_sub(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) - as_double(b));
-    return luna_int64_promote(as_int64(a) - as_int64(b));
+    return py_int64_promote(as_int64(a) - as_int64(b));
 }
-static Value luna_int64_mul(struct VM *vm, Value a, Value b) {
+static Value py_int64_mul(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) * as_double(b));
-    return luna_int64_promote(as_int64(a) * as_int64(b));
+    return py_int64_promote(as_int64(a) * as_int64(b));
 }
-static Value luna_int64_div(struct VM *vm, Value a, Value b) {
+static Value py_int64_div(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
         double da = as_double(a), db = as_double(b);
@@ -695,9 +695,9 @@ static Value luna_int64_div(struct VM *vm, Value a, Value b) {
     }
     int64_t ia = as_int64(a), ib = as_int64(b);
     if (ib == 0) return make_null();
-    return luna_int64_promote(ia / ib);
+    return py_int64_promote(ia / ib);
 }
-static Value luna_int64_mod(struct VM *vm, Value a, Value b) {
+static Value py_int64_mod(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
         double da = as_double(a), db = as_double(b);
@@ -705,14 +705,14 @@ static Value luna_int64_mod(struct VM *vm, Value a, Value b) {
     }
     int64_t ia = as_int64(a), ib = as_int64(b);
     if (ib == 0) return make_null();
-    return luna_int64_promote(ia % ib);
+    return py_int64_promote(ia % ib);
 }
-static Value luna_int64_neg(struct VM *vm, Value a) {
+static Value py_int64_neg(struct VM *vm, Value a) {
     (void)vm;
     if (IS_DOUBLE(a)) return make_double(-AS_DOUBLE(a));
-    return luna_int64_promote(-as_int64(a));
+    return py_int64_promote(-as_int64(a));
 }
-static int luna_int64_cmp(struct VM *vm, Value a, Value b) {
+static int py_int64_cmp(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
         double da = as_double(a), db = as_double(b);
@@ -721,210 +721,210 @@ static int luna_int64_cmp(struct VM *vm, Value a, Value b) {
     int64_t ia = as_int64(a), ib = as_int64(b);
     return (ia < ib) ? -1 : (ia > ib) ? 1 : 0;
 }
-static Value luna_int64_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
-static void luna_int64_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
-static Value luna_int64_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int luna_int64_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_int64_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value luna_int64_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t luna_int64_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int luna_int64_len(struct VM *vm, Value self) { (void)vm; return 1; }
+static Value py_int64_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
+static void py_int64_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
+static Value py_int64_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
+static int py_int64_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
+static Value py_int64_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_int64_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+static uint32_t py_int64_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
+static int py_int64_len(struct VM *vm, Value self) { (void)vm; return 1; }
 
 /* ============================================================
  * Default stubs for kinds without special arithmetic/index rules
  * ============================================================ */
 #define DEFAULT_BIN  (struct VM *vm, Value a, Value b) -> return make_null()
-static Value luna_default_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_default_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_default_mul(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_default_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_default_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value luna_default_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
-static int luna_default_cmp(struct VM *vm, Value a, Value b) { (void)vm; return (a == b) ? 0 : 1; }
-static Value luna_default_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
-static void luna_default_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
-static Value luna_default_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int luna_default_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_default_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value luna_default_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t luna_default_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int luna_default_len(struct VM *vm, Value self) { (void)vm; return 0; }
+static Value py_default_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_default_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_default_mul(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_default_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_default_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_default_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
+static int py_default_cmp(struct VM *vm, Value a, Value b) { (void)vm; return (a == b) ? 0 : 1; }
+static Value py_default_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
+static void py_default_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
+static Value py_default_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
+static int py_default_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
+static Value py_default_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_default_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+static uint32_t py_default_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
+static int py_default_len(struct VM *vm, Value self) { (void)vm; return 0; }
 
 /* ============================================================
  * Type instance definitions (vtable filled)
  * ============================================================ */
-Type luna_string_type  = {
+Type py_string_type  = {
     .name = "str", .kind = OBJ_STRING,
-    .add = luna_string_add, .sub = luna_string_sub, .mul = luna_string_mul, .div = luna_string_div, .mod = luna_string_mod,
-    .neg = luna_string_neg, .cmp = luna_string_cmp,
-    .getitem = luna_string_getitem, .setitem = luna_string_setitem,
-    .getattr = luna_string_getattr, .setattr = luna_string_setattr,
-    .call = luna_string_call, .tostring = luna_string_tostring, .hash = luna_string_hash, .len = luna_string_len
+    .add = py_string_add, .sub = py_string_sub, .mul = py_string_mul, .div = py_string_div, .mod = py_string_mod,
+    .neg = py_string_neg, .cmp = py_string_cmp,
+    .getitem = py_string_getitem, .setitem = py_string_setitem,
+    .getattr = py_string_getattr, .setattr = py_string_setattr,
+    .call = py_string_call, .tostring = py_string_tostring, .hash = py_string_hash, .len = py_string_len
 };
 
-Type luna_list_type = {
+Type py_list_type = {
     .name = "list", .kind = OBJ_LIST,
-    .add = luna_list_add, .sub = luna_list_sub, .mul = luna_list_mul, .div = luna_list_div, .mod = luna_list_mod,
-    .neg = luna_list_neg, .cmp = luna_list_cmp,
-    .getitem = luna_list_getitem, .setitem = luna_list_setitem,
-    .getattr = luna_list_getattr, .setattr = luna_list_setattr,
-    .call = luna_list_call, .tostring = luna_list_tostring, .hash = luna_list_hash, .len = luna_list_len
+    .add = py_list_add, .sub = py_list_sub, .mul = py_list_mul, .div = py_list_div, .mod = py_list_mod,
+    .neg = py_list_neg, .cmp = py_list_cmp,
+    .getitem = py_list_getitem, .setitem = py_list_setitem,
+    .getattr = py_list_getattr, .setattr = py_list_setattr,
+    .call = py_list_call, .tostring = py_list_tostring, .hash = py_list_hash, .len = py_list_len
 };
 
-Type luna_dict_type = {
+Type py_dict_type = {
     .name = "dict", .kind = OBJ_DICT,
-    .add = luna_dict_add, .sub = luna_dict_sub, .mul = luna_dict_mul, .div = luna_dict_div, .mod = luna_dict_mod,
-    .neg = luna_dict_neg, .cmp = luna_dict_cmp,
-    .getitem = luna_dict_getitem, .setitem = luna_dict_setitem,
-    .getattr = luna_dict_getattr, .setattr = luna_dict_setattr,
-    .call = luna_dict_call, .tostring = luna_dict_tostring, .hash = luna_dict_hash, .len = luna_dict_len
+    .add = py_dict_add, .sub = py_dict_sub, .mul = py_dict_mul, .div = py_dict_div, .mod = py_dict_mod,
+    .neg = py_dict_neg, .cmp = py_dict_cmp,
+    .getitem = py_dict_getitem, .setitem = py_dict_setitem,
+    .getattr = py_dict_getattr, .setattr = py_dict_setattr,
+    .call = py_dict_call, .tostring = py_dict_tostring, .hash = py_dict_hash, .len = py_dict_len
 };
 
-Type luna_instance_type = {
+Type py_instance_type = {
     .name = "instance", .kind = OBJ_INSTANCE,
-    .add = luna_instance_add, .sub = luna_instance_sub, .mul = luna_instance_mul, .div = luna_instance_div, .mod = luna_instance_mod,
-    .neg = luna_instance_neg, .cmp = luna_instance_cmp,
-    .getitem = luna_instance_getitem, .setitem = luna_instance_setitem,
-    .getattr = luna_instance_getattr, .setattr = luna_instance_setattr,
-    .call = luna_instance_call, .tostring = luna_instance_tostring, .hash = luna_instance_hash, .len = luna_instance_len,
-    .get_chunk = luna_instance_get_chunk, .get_self = luna_instance_get_self, .name_of = luna_instance_name_of
+    .add = py_instance_add, .sub = py_instance_sub, .mul = py_instance_mul, .div = py_instance_div, .mod = py_instance_mod,
+    .neg = py_instance_neg, .cmp = py_instance_cmp,
+    .getitem = py_instance_getitem, .setitem = py_instance_setitem,
+    .getattr = py_instance_getattr, .setattr = py_instance_setattr,
+    .call = py_instance_call, .tostring = py_instance_tostring, .hash = py_instance_hash, .len = py_instance_len,
+    .get_chunk = py_instance_get_chunk, .get_self = py_instance_get_self, .name_of = py_instance_name_of
 };
 
-Type luna_function_type = {
+Type py_function_type = {
     .name = "function", .kind = OBJ_FUNCTION,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_function_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
-    .get_chunk = luna_function_get_chunk, .get_self = luna_function_get_self, .name_of = luna_function_name_of,
-    .param_count = luna_function_param_count, .get_param_name = luna_function_get_param_name,
-    .bind_keyword_arguments = luna_bind_keyword_arguments
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_function_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len,
+    .get_chunk = py_function_get_chunk, .get_self = py_function_get_self, .name_of = py_function_name_of,
+    .param_count = py_function_param_count, .get_param_name = py_function_get_param_name,
+    .bind_keyword_arguments = py_bind_keyword_arguments
 };
 
-Type luna_closure_type = {
+Type py_closure_type = {
     .name = "closure", .kind = OBJ_CLOSURE,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_closure_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
-    .get_chunk = luna_closure_get_chunk, .get_self = luna_closure_get_self, .name_of = luna_closure_name_of,
-    .get_upvalue = luna_closure_get_upvalue, .set_upvalue = luna_closure_set_upvalue, .get_upvalue_ref = luna_closure_get_upvalue_ref,
-    .param_count = luna_closure_param_count, .get_param_name = luna_closure_get_param_name,
-    .bind_keyword_arguments = luna_bind_keyword_arguments
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_closure_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len,
+    .get_chunk = py_closure_get_chunk, .get_self = py_closure_get_self, .name_of = py_closure_name_of,
+    .get_upvalue = py_closure_get_upvalue, .set_upvalue = py_closure_set_upvalue, .get_upvalue_ref = py_closure_get_upvalue_ref,
+    .param_count = py_closure_param_count, .get_param_name = py_closure_get_param_name,
+    .bind_keyword_arguments = py_bind_keyword_arguments
 };
 
-Type luna_upvalue_type = {
+Type py_upvalue_type = {
     .name = "upvalue", .kind = OBJ_UPVALUE,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type luna_enum_type = {
+Type py_enum_type = {
     .name = "enum", .kind = OBJ_ENUM,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type luna_class_type = {
+Type py_class_type = {
     .name = "class", .kind = OBJ_CLASS,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = py_class_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_class_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type luna_bound_method_type = {
+Type py_bound_method_type = {
     .name = "bound_method", .kind = OBJ_BOUND_METHOD,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_bound_method_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len,
-    .get_chunk = luna_bound_method_get_chunk, .get_self = luna_bound_method_get_self, .name_of = luna_bound_method_name_of,
-    .bind_keyword_arguments = luna_bind_keyword_arguments
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_bound_method_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len,
+    .get_chunk = py_bound_method_get_chunk, .get_self = py_bound_method_get_self, .name_of = py_bound_method_name_of,
+    .bind_keyword_arguments = py_bind_keyword_arguments
 };
 
-Type luna_module_type = {
+Type py_module_type = {
     .name = "module", .kind = OBJ_MODULE,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type luna_buffer_type = {
+Type py_buffer_type = {
     .name = "buffer", .kind = OBJ_BUFFER,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type luna_int64_type = {
+Type py_int64_type = {
     .name = "int64", .kind = OBJ_INT64,
-    .add = luna_int64_add, .sub = luna_int64_sub, .mul = luna_int64_mul, .div = luna_int64_div, .mod = luna_int64_mod,
-    .neg = luna_int64_neg, .cmp = luna_int64_cmp,
-    .getitem = luna_int64_getitem, .setitem = luna_int64_setitem,
-    .getattr = luna_int64_getattr, .setattr = luna_int64_setattr,
-    .call = luna_int64_call, .tostring = luna_int64_tostring, .hash = luna_int64_hash, .len = luna_int64_len
+    .add = py_int64_add, .sub = py_int64_sub, .mul = py_int64_mul, .div = py_int64_div, .mod = py_int64_mod,
+    .neg = py_int64_neg, .cmp = py_int64_cmp,
+    .getitem = py_int64_getitem, .setitem = py_int64_setitem,
+    .getattr = py_int64_getattr, .setattr = py_int64_setattr,
+    .call = py_int64_call, .tostring = py_int64_tostring, .hash = py_int64_hash, .len = py_int64_len
 };
 
-Type luna_userdata_type = {
+Type py_userdata_type = {
     .name = "userdata", .kind = OBJ_USERDATA,
-    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
-    .neg = luna_default_neg, .cmp = luna_default_cmp,
-    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
-    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
-    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type luna_vector_type = {
+Type py_vector_type = {
     .name = "vector", .kind = OBJ_VECTOR,
-    .add = luna_vector_add, .sub = luna_vector_sub, .mul = luna_vector_mul, .div = luna_vector_div, .mod = luna_vector_mod,
-    .neg = luna_vector_neg, .cmp = luna_vector_cmp,
-    .getitem = luna_vector_getitem, .setitem = luna_vector_setitem,
-    .getattr = luna_vector_getattr, .setattr = luna_vector_setattr,
-    .call = luna_vector_call, .tostring = luna_vector_tostring, .hash = luna_vector_hash, .len = luna_vector_len
+    .add = py_vector_add, .sub = py_vector_sub, .mul = py_vector_mul, .div = py_vector_div, .mod = py_vector_mod,
+    .neg = py_vector_neg, .cmp = py_vector_cmp,
+    .getitem = py_vector_getitem, .setitem = py_vector_setitem,
+    .getattr = py_vector_getattr, .setattr = py_vector_setattr,
+    .call = py_vector_call, .tostring = py_vector_tostring, .hash = py_vector_hash, .len = py_vector_len
 };
 
-Type luna_matrix_type = {
+Type py_matrix_type = {
     .name = "matrix", .kind = OBJ_MATRIX,
-    .add = luna_matrix_add, .sub = luna_matrix_sub, .mul = luna_matrix_mul, .div = luna_matrix_div, .mod = luna_matrix_mod,
-    .neg = luna_matrix_neg, .cmp = luna_matrix_cmp,
-    .getitem = luna_matrix_getitem, .setitem = luna_matrix_setitem,
-    .getattr = luna_matrix_getattr, .setattr = luna_matrix_setattr,
-    .call = luna_matrix_call, .tostring = luna_matrix_tostring, .hash = luna_matrix_hash, .len = luna_matrix_len
+    .add = py_matrix_add, .sub = py_matrix_sub, .mul = py_matrix_mul, .div = py_matrix_div, .mod = py_matrix_mod,
+    .neg = py_matrix_neg, .cmp = py_matrix_cmp,
+    .getitem = py_matrix_getitem, .setitem = py_matrix_setitem,
+    .getattr = py_matrix_getattr, .setattr = py_matrix_setattr,
+    .call = py_matrix_call, .tostring = py_matrix_tostring, .hash = py_matrix_hash, .len = py_matrix_len
 };
 
 /* Indexed by ObjType. */
-Type *luna_types[] = {
-    [OBJ_STRING]       = &luna_string_type,
-    [OBJ_LIST]         = &luna_list_type,
-    [OBJ_DICT]         = &luna_dict_type,
-    [OBJ_INSTANCE]     = &luna_instance_type,
-    [OBJ_FUNCTION]     = &luna_function_type,
-    [OBJ_UPVALUE]      = &luna_upvalue_type,
-    [OBJ_CLOSURE]      = &luna_closure_type,
-    [OBJ_ENUM]         = &luna_enum_type,
-    [OBJ_CLASS]        = &luna_class_type,
-    [OBJ_BOUND_METHOD] = &luna_bound_method_type,
-    [OBJ_MODULE]       = &luna_module_type,
-    [OBJ_BUFFER]       = &luna_buffer_type,
-    [OBJ_INT64]        = &luna_int64_type,
-    [OBJ_USERDATA]     = &luna_userdata_type,
-    [OBJ_VECTOR]       = &luna_vector_type,
-    [OBJ_MATRIX]       = &luna_matrix_type,
+Type *py_types[] = {
+    [OBJ_STRING]       = &py_string_type,
+    [OBJ_LIST]         = &py_list_type,
+    [OBJ_DICT]         = &py_dict_type,
+    [OBJ_INSTANCE]     = &py_instance_type,
+    [OBJ_FUNCTION]     = &py_function_type,
+    [OBJ_UPVALUE]      = &py_upvalue_type,
+    [OBJ_CLOSURE]      = &py_closure_type,
+    [OBJ_ENUM]         = &py_enum_type,
+    [OBJ_CLASS]        = &py_class_type,
+    [OBJ_BOUND_METHOD] = &py_bound_method_type,
+    [OBJ_MODULE]       = &py_module_type,
+    [OBJ_BUFFER]       = &py_buffer_type,
+    [OBJ_INT64]        = &py_int64_type,
+    [OBJ_USERDATA]     = &py_userdata_type,
+    [OBJ_VECTOR]       = &py_vector_type,
+    [OBJ_MATRIX]       = &py_matrix_type,
 };
 
 /* ============================================================
@@ -932,14 +932,14 @@ Type *luna_types[] = {
  *
  * The core reaches GC mark, free, equality, and string formatting through
  * these vtable methods instead of switching on ObjType. The frontend owns
- * the kind switch here (luna_wire_lifecycle), keeping the core generic.
+ * the kind switch here (py_wire_lifecycle), keeping the core generic.
  * ============================================================ */
 
 /* defaults — shared by types with no extra resources and no child references */
-static void luna_default_free(Object *obj) { free(obj); }
-static void luna_default_mark(struct VM *vm, Object *obj) { (void)vm; (void)obj; }
-static bool luna_default_eq(Value a, Value b) { return a == b; }
-static char* luna_generic_to_cstr(Value self) {
+static void py_default_free(Object *obj) { free(obj); }
+static void py_default_mark(struct VM *vm, Object *obj) { (void)vm; (void)obj; }
+static bool py_default_eq(Value a, Value b) { return a == b; }
+static char* py_generic_to_cstr(Value self) {
     Object *o = AS_OBJ(self);
     char buf[32];
     snprintf(buf, sizeof(buf), "<%s>", o->type->name);
@@ -947,26 +947,26 @@ static char* luna_generic_to_cstr(Value self) {
 }
 
 /* string */
-static void luna_string_free(Object *obj) {
+static void py_string_free(Object *obj) {
     ObjString *s = (ObjString*)obj;
     intern_remove(s);
     free(s->chars);
     free(s);
 }
-static char* luna_string_to_cstr(Value self) {
+static char* py_string_to_cstr(Value self) {
     return strdup(((ObjString*)AS_OBJ(self))->chars);
 }
-static const char* luna_string_chars(Value self) {
+static const char* py_string_chars(Value self) {
     return ((ObjString*)AS_OBJ(self))->chars;
 }
 
 /* list */
-static void luna_list_free(Object *obj) {
+static void py_list_free(Object *obj) {
     ObjList *l = (ObjList*)obj;
     if (l->items) free(l->items);
     free(l);
 }
-static void luna_list_mark(struct VM *vm, Object *obj) {
+static void py_list_mark(struct VM *vm, Object *obj) {
     ObjList *l = (ObjList*)obj;
     if (l->items) {
         for (int i = 0; i < l->count; i++) vm_mark_value(vm, l->items[i]);
@@ -974,7 +974,7 @@ static void luna_list_mark(struct VM *vm, Object *obj) {
         for (int i = 0; i < l->count; i++) vm_mark_value(vm, l->inline_items[i]);
     }
 }
-static char* luna_list_to_cstr(Value self) {
+static char* py_list_to_cstr(Value self) {
     ObjList *l = (ObjList*)AS_OBJ(self);
     int cap = 32; char *out = malloc(cap); int pos = 0;
     out[pos++] = '[';
@@ -996,12 +996,12 @@ static char* luna_list_to_cstr(Value self) {
 }
 
 /* dict */
-static void luna_dict_free(Object *obj) {
+static void py_dict_free(Object *obj) {
     ObjDict *d = (ObjDict*)obj;
     if (d->entries) { free(d->entries); free(d->order); }
     free(d);
 }
-static void luna_dict_mark(struct VM *vm, Object *obj) {
+static void py_dict_mark(struct VM *vm, Object *obj) {
     ObjDict *d = (ObjDict*)obj;
     if (d->entries == NULL) {
         for (int i = 0; i < d->entry_count; i++) {
@@ -1017,7 +1017,7 @@ static void luna_dict_mark(struct VM *vm, Object *obj) {
         }
     }
 }
-static char* luna_dict_to_cstr(Value self) {
+static char* py_dict_to_cstr(Value self) {
     ObjDict *d = (ObjDict*)AS_OBJ(self);
     int cap = 32; char *out = malloc(cap); int pos = 0; bool first = true;
     out[pos++] = '{';
@@ -1066,7 +1066,7 @@ static char* luna_dict_to_cstr(Value self) {
 }
 
 /* instance */
-static void luna_instance_free(Object *obj) {
+static void py_instance_free(Object *obj) {
     ObjInstance *inst = (ObjInstance*)obj;
     if (inst->class_name) free(inst->class_name);
     for (int i = 0; i < inst->field_count; i++) {
@@ -1074,12 +1074,12 @@ static void luna_instance_free(Object *obj) {
     }
     free(inst->field_names); free(inst->fields); free(inst);
 }
-static void luna_instance_mark(struct VM *vm, Object *obj) {
+static void py_instance_mark(struct VM *vm, Object *obj) {
     ObjInstance *inst = (ObjInstance*)obj;
     for (int i = 0; i < inst->field_count; i++) vm_mark_value(vm, inst->fields[i]);
     if (inst->klass) vm_mark_value(vm, make_obj((Object*)inst->klass));
 }
-static char* luna_instance_to_cstr(Value self) {
+static char* py_instance_to_cstr(Value self) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     Value msgv = instance_get_field(inst, "message");
     char buf[64];
@@ -1090,20 +1090,20 @@ static char* luna_instance_to_cstr(Value self) {
         return strdup(buf);
     }
 }
-static const char* luna_instance_message(struct VM *vm, Value self) {
+static const char* py_instance_message(struct VM *vm, Value self) {
     (void)vm;
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     Value msgv = instance_get_field(inst, "message");
     if (IS_STRING(msgv)) return ((ObjString*)AS_OBJ(msgv))->chars;
     return NULL;
 }
-static const char* luna_instance_class_name(Value self) {
+static const char* py_instance_class_name(Value self) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     return inst->class_name ? inst->class_name : "Error";
 }
 
 /* function */
-static void luna_function_free(Object *obj) {
+static void py_function_free(Object *obj) {
     ObjFunction *f = (ObjFunction*)obj;
     free(f->name);
     if (f->param_names) {
@@ -1118,7 +1118,7 @@ static void luna_function_free(Object *obj) {
     free(f->defaults);
     free(f);
 }
-static void luna_function_mark(struct VM *vm, Object *obj) {
+static void py_function_mark(struct VM *vm, Object *obj) {
     ObjFunction *f = (ObjFunction*)obj;
     if (f->chunk) {
         for (int i = 0; i < f->chunk->const_count; i++) vm_mark_value(vm, f->chunk->constants[i]);
@@ -1127,7 +1127,7 @@ static void luna_function_mark(struct VM *vm, Object *obj) {
         for (int i = 0; i < f->default_count; i++) vm_mark_value(vm, f->defaults[i]);
     }
 }
-static char* luna_function_to_cstr(Value self) {
+static char* py_function_to_cstr(Value self) {
     ObjFunction *f = (ObjFunction*)AS_OBJ(self);
     char buf[64];
     snprintf(buf, sizeof(buf), "<%s %s>", f->is_native ? "native fn" : "fn", f->name ? f->name : "?");
@@ -1135,18 +1135,18 @@ static char* luna_function_to_cstr(Value self) {
 }
 
 /* upvalue */
-static void luna_upvalue_mark(struct VM *vm, Object *obj) {
+static void py_upvalue_mark(struct VM *vm, Object *obj) {
     ObjUpvalue *uv = (ObjUpvalue*)obj;
     vm_mark_value(vm, uv->closed);
 }
 
 /* closure */
-static void luna_closure_free(Object *obj) {
+static void py_closure_free(Object *obj) {
     ObjClosure *cl = (ObjClosure*)obj;
     free(cl->upvalues);
     free(cl);
 }
-static void luna_closure_mark(struct VM *vm, Object *obj) {
+static void py_closure_mark(struct VM *vm, Object *obj) {
     ObjClosure *cl = (ObjClosure*)obj;
     if (cl->function) vm_mark_value(vm, make_obj((Object*)cl->function));
     for (int i = 0; i < cl->upvalue_count; i++) {
@@ -1155,7 +1155,7 @@ static void luna_closure_mark(struct VM *vm, Object *obj) {
 }
 
 /* enum */
-static void luna_enum_free(Object *obj) {
+static void py_enum_free(Object *obj) {
     ObjEnum *e = (ObjEnum*)obj;
     free(e->name);
     for (int i = 0; i < e->count; i++) free(e->names[i]);
@@ -1163,7 +1163,7 @@ static void luna_enum_free(Object *obj) {
     free(e->values);
     free(e);
 }
-static char* luna_enum_to_cstr(Value self) {
+static char* py_enum_to_cstr(Value self) {
     ObjEnum *e = (ObjEnum*)AS_OBJ(self);
     char *out = malloc(64);
     int n = snprintf(out, 64, "<enum %s (%d variants)>", e->name, e->count);
@@ -1172,7 +1172,7 @@ static char* luna_enum_to_cstr(Value self) {
 }
 
 /* class */
-static void luna_class_free(Object *obj) {
+static void py_class_free(Object *obj) {
     ObjClass *cls = (ObjClass*)obj;
     free(cls->name);
     if (cls->method_names) {
@@ -1183,7 +1183,7 @@ static void luna_class_free(Object *obj) {
     free(cls->methods);
     free(cls);
 }
-static void luna_class_mark(struct VM *vm, Object *obj) {
+static void py_class_mark(struct VM *vm, Object *obj) {
     ObjClass *cls = (ObjClass*)obj;
     if (cls->base) vm_mark_value(vm, make_obj((Object*)cls->base));
     if (cls->prototype) vm_mark_value(vm, make_obj((Object*)cls->prototype));
@@ -1194,12 +1194,12 @@ static void luna_class_mark(struct VM *vm, Object *obj) {
 }
 
 /* bound_method */
-static void luna_bound_method_mark(struct VM *vm, Object *obj) {
+static void py_bound_method_mark(struct VM *vm, Object *obj) {
     ObjBoundMethod *bm = (ObjBoundMethod*)obj;
     vm_mark_value(vm, bm->self);
     if (bm->fn) vm_mark_value(vm, make_obj((Object*)bm->fn));
 }
-static char* luna_bound_method_to_cstr(Value self) {
+static char* py_bound_method_to_cstr(Value self) {
     ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(self);
     ObjFunction *f = bm->fn;
     char buf[64];
@@ -1208,12 +1208,12 @@ static char* luna_bound_method_to_cstr(Value self) {
 }
 
 /* module */
-static void luna_module_mark(struct VM *vm, Object *obj) {
+static void py_module_mark(struct VM *vm, Object *obj) {
     ObjModule *mod = (ObjModule*)obj;
     if (mod->name) vm_mark_value(vm, make_obj((Object*)mod->name));
     if (mod->exports) vm_mark_value(vm, make_obj((Object*)mod->exports));
 }
-static char* luna_module_to_cstr(Value self) {
+static char* py_module_to_cstr(Value self) {
     ObjModule *mod = (ObjModule*)AS_OBJ(self);
     char buf[64];
     snprintf(buf, sizeof(buf), "<module %s>", mod->name ? mod->name->chars : "?");
@@ -1221,12 +1221,12 @@ static char* luna_module_to_cstr(Value self) {
 }
 
 /* buffer */
-static void luna_buffer_free(Object *obj) {
+static void py_buffer_free(Object *obj) {
     ObjBuffer *bufv = (ObjBuffer*)obj;
     free(bufv->data);
     free(bufv);
 }
-static char* luna_buffer_to_cstr(Value self) {
+static char* py_buffer_to_cstr(Value self) {
     ObjBuffer *bufv = (ObjBuffer*)AS_OBJ(self);
     char out[64];
     snprintf(out, sizeof(out), "<buffer %zu bytes>", bufv->size);
@@ -1234,7 +1234,7 @@ static char* luna_buffer_to_cstr(Value self) {
 }
 
 /* userdata */
-static void luna_userdata_free(Object *obj) {
+static void py_userdata_free(Object *obj) {
     ObjUserdata *ud = (ObjUserdata*)obj;
     userdata_run_finalizer(ud);
     free(ud->tag);
@@ -1242,45 +1242,45 @@ static void luna_userdata_free(Object *obj) {
 }
 
 /* One-time wiring: the frontend owns this kind switch; the core stays generic. */
-void luna_wire_lifecycle(void) {
+void py_wire_lifecycle(void) {
     for (int k = 0; k <= OBJ_MATRIX; k++) {
-        Type *t = luna_types[k];
+        Type *t = py_types[k];
         /* ObjType intentionally has reserved values; there is no Type for
-         * those slots in luna_types[]. */
+         * those slots in py_types[]. */
         if (!t) continue;
-        if (!t->free) t->free = luna_default_free;
-        if (!t->mark) t->mark = luna_default_mark;
-        if (!t->eq) t->eq = luna_default_eq;
-        if (!t->to_cstr) t->to_cstr = luna_generic_to_cstr;
+        if (!t->free) t->free = py_default_free;
+        if (!t->mark) t->mark = py_default_mark;
+        if (!t->eq) t->eq = py_default_eq;
+        if (!t->to_cstr) t->to_cstr = py_generic_to_cstr;
         switch (k) {
             case OBJ_STRING:
-                t->free = luna_string_free; t->to_cstr = luna_string_to_cstr;
-                t->string_chars = luna_string_chars; break;
+                t->free = py_string_free; t->to_cstr = py_string_to_cstr;
+                t->string_chars = py_string_chars; break;
             case OBJ_LIST:
-                t->free = luna_list_free; t->mark = luna_list_mark; t->to_cstr = luna_list_to_cstr; break;
+                t->free = py_list_free; t->mark = py_list_mark; t->to_cstr = py_list_to_cstr; break;
             case OBJ_DICT:
-                t->free = luna_dict_free; t->mark = luna_dict_mark; t->to_cstr = luna_dict_to_cstr; break;
+                t->free = py_dict_free; t->mark = py_dict_mark; t->to_cstr = py_dict_to_cstr; break;
             case OBJ_INSTANCE:
-                t->free = luna_instance_free; t->mark = luna_instance_mark; t->to_cstr = luna_instance_to_cstr;
-                t->message = luna_instance_message; t->class_name = luna_instance_class_name; break;
+                t->free = py_instance_free; t->mark = py_instance_mark; t->to_cstr = py_instance_to_cstr;
+                t->message = py_instance_message; t->class_name = py_instance_class_name; break;
             case OBJ_FUNCTION:
-                t->free = luna_function_free; t->mark = luna_function_mark; t->to_cstr = luna_function_to_cstr; break;
+                t->free = py_function_free; t->mark = py_function_mark; t->to_cstr = py_function_to_cstr; break;
             case OBJ_UPVALUE:
-                t->mark = luna_upvalue_mark; break;
+                t->mark = py_upvalue_mark; break;
             case OBJ_CLOSURE:
-                t->free = luna_closure_free; t->mark = luna_closure_mark; break;
+                t->free = py_closure_free; t->mark = py_closure_mark; break;
             case OBJ_ENUM:
-                t->free = luna_enum_free; t->to_cstr = luna_enum_to_cstr; break;
+                t->free = py_enum_free; t->to_cstr = py_enum_to_cstr; break;
             case OBJ_CLASS:
-                t->free = luna_class_free; t->mark = luna_class_mark; break;
+                t->free = py_class_free; t->mark = py_class_mark; break;
             case OBJ_BOUND_METHOD:
-                t->mark = luna_bound_method_mark; t->to_cstr = luna_bound_method_to_cstr; break;
+                t->mark = py_bound_method_mark; t->to_cstr = py_bound_method_to_cstr; break;
             case OBJ_MODULE:
-                t->mark = luna_module_mark; t->to_cstr = luna_module_to_cstr; break;
+                t->mark = py_module_mark; t->to_cstr = py_module_to_cstr; break;
             case OBJ_BUFFER:
-                t->free = luna_buffer_free; t->to_cstr = luna_buffer_to_cstr; break;
+                t->free = py_buffer_free; t->to_cstr = py_buffer_to_cstr; break;
             case OBJ_USERDATA:
-                t->free = luna_userdata_free; break;
+                t->free = py_userdata_free; break;
             default: break;
         }
     }
@@ -1436,7 +1436,7 @@ void value_free_intern_table(void) {
 
 
 static void init_object(Object *obj, ObjType type, size_t size) {
-    obj->type = luna_types[type];
+    obj->type = py_types[type];
     obj->gc_color = GC_COLOR_WHITE;
     obj->size = size;
     bytes_allocated += size;

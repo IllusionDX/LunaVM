@@ -14,7 +14,7 @@
 #include <string.h>
 #include "stdlib_time.h"
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -28,7 +28,7 @@ static double unix_time_seconds(void) {
     return ((double)uli.QuadPart / 10000000.0) - 11644473600.0;
 }
 
-uint64_t luna_time_monotonic_us(void) {
+uint64_t py_time_monotonic_us(void) {
     static LARGE_INTEGER freq = {0};
     LARGE_INTEGER counter;
 
@@ -55,7 +55,7 @@ static double unix_time_seconds(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
 }
 
-uint64_t luna_time_monotonic_us(void) {
+uint64_t py_time_monotonic_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)(ts.tv_nsec / 1000ULL);
@@ -91,7 +91,7 @@ static Value time_now(VM *vm, Value *args, int n) {
 }
 
 static uint64_t time_elapsed_us(VM *vm) {
-    uint64_t now_us = luna_time_monotonic_us();
+    uint64_t now_us = py_time_monotonic_us();
     return (now_us >= vm->time_start_us) ? (now_us - vm->time_start_us) : 0;
 }
 

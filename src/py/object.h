@@ -3,6 +3,8 @@
 
 #include "value.h"
 
+struct py_State; /* forward decl: the py frontend's API state (see luna.h) */
+
 /* ============================================================
  * Luna object model (frontend-specific).
  *
@@ -37,7 +39,7 @@ typedef enum {
 
 /* Heap object kind checks: compare the object's Type* against the table entry
  * for kind `t`. No inline type tag; the type lives in the heap object. */
-#define IS_OBJ_KIND(v, t) (IS_OBJ(v) && AS_OBJ(v)->type == luna_types[(t)])
+#define IS_OBJ_KIND(v, t) (IS_OBJ(v) && AS_OBJ(v)->type == py_types[(t)])
 #define IS_STRING(v)   IS_OBJ_KIND(v, OBJ_STRING)
 #define IS_LIST(v)     IS_OBJ_KIND(v, OBJ_LIST)
 #define IS_DICT(v)     IS_OBJ_KIND(v, OBJ_DICT)
@@ -59,11 +61,11 @@ typedef enum {
 
 /* Indexed by ObjType so the core can map a kind to its Type* (used by the
  * IS_X predicates and by constructors). Defined in luna/object.c. */
-extern Type *luna_types[];
+extern Type *py_types[];
 
 /* One-time wiring of the Part 6c lifecycle/formatting vtable methods. Called
- * from the frontend's state init (luna_new_state) after vm_init. */
-void luna_wire_lifecycle(void);
+ * from the frontend's state init (py_new_state) after vm_init. */
+void py_wire_lifecycle(void);
 
 struct VM;
 struct ObjClass;
@@ -191,7 +193,7 @@ typedef struct ObjFunction {
     bool is_native;
     bool is_leaf;
     NativeFn native_fn;
-    int (*cfunc)(struct luna_State *L);
+    int (*cfunc)(struct py_State *L);
     int upvalue_count;
     UpvalueDesc *upvalue_descriptors;
     struct FunctionParam *params;
@@ -244,7 +246,7 @@ Value make_exception_instance(struct VM *vm, void *cls, const char *message);
 /* C-function dispatch — invoked by the Luna `call` MOP when a function's
  * `cfunc` field is set.  Declared here (frontend header), not in vm.h, because
  * it names the Luna ObjFunction type. */
-Value luna_cfunc_dispatch(struct VM *vm, struct ObjFunction *fn, Value *args, int arg_count);
+Value py_cfunc_dispatch(struct VM *vm, struct ObjFunction *fn, Value *args, int arg_count);
 
 ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);

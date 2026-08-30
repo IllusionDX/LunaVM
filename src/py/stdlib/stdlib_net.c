@@ -27,7 +27,7 @@
 
 #include "stdlib_net.h"
 #include "value.h"
-#include "luna/object.h"
+#include "py/object.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
