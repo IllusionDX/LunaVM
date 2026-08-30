@@ -637,6 +637,15 @@ static Expr *parse_membership(Parser *parser) {
         if (match(parser, TOK_IN)) {
             op_str = "in";
             advance(parser);
+        } else if (match(parser, TOK_NOT)) {
+            Token *next = peek_ahead(parser, 1);
+            if (next && next->type == TOK_IN) {
+                advance(parser);
+                advance(parser);
+                op_str = "not in";
+            } else {
+                break;
+            }
         } else if (match(parser, TOK_IS)) {
             advance(parser);
             if (match(parser, TOK_NOT)) {

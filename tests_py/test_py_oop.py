@@ -32,6 +32,18 @@ else:
     print("x is not None ok")
 
 
+v = 3
+if v in [1, 2, 3]:
+    print("v in list")
+else:
+    print("bad in")
+
+if v not in [1, 2]:
+    print("v not in list")
+else:
+    print("bad not in")
+
+
 def grade(n):
     if n >= 90:
         return "A"

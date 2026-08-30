@@ -721,6 +721,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         else if (strcmp(op_str, ">") == 0) op = OP_GT;
         else if (strcmp(op_str, ">=") == 0) op = OP_GE;
         else if (strcmp(op_str, "in") == 0) op = OP_IN;
+        else if (strcmp(op_str, "not in") == 0) op = OP_IN;
         else if (strcmp(op_str, "is") == 0) op = OP_RAW_EQ;
         else if (strcmp(op_str, "is not") == 0) op = OP_RAW_NE;
         else if (strcmp(op_str, "&") == 0) op = OP_BAND;
@@ -734,6 +735,8 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         
         emit_ABC(c, op, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
         free_reg(c); /* temp */
+        if (strcmp(op_str, "not in") == 0)
+            emit_ABC(c, OP_NOT, (uint8_t)target, (uint8_t)target, 0);
         break;
     }
 
