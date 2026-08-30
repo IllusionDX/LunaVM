@@ -636,7 +636,7 @@ static void path_dirname(const char *path, char *buf, size_t buf_size) {
 #define FRAME       vm->frames[vm->frame_count-1]
 #define CHUNK       (FRAME.chunk)
 #define IP          (FRAME.ip)
-#define REG(i)      (vm->stack[FRAME.base + (i)])
+#define REG(i)      (REG_BASE[(i)])
 #define SET_REG(i, v) do { \
     REG(i) = (v); \
 } while (0)
@@ -646,7 +646,7 @@ static void path_dirname(const char *path, char *buf, size_t buf_size) {
 #define SET_STACK(idx, v) do { \
     vm->stack[idx] = (v); \
 } while (0)
-#define CONST(i)    (CHUNK->constants[(i)])
+#define CONST(i)    (current_chunk->constants[(i)])
 #define SET_FIELD(inst, idx, v) do { \
     (inst)->fields[idx] = (v); \
 } while (0)
