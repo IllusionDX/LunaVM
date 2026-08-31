@@ -4,6 +4,7 @@
 #include "value.h"
 
 struct py_State; /* forward decl: the py frontend's API state (see py.h) */
+struct APIState; /* embeddable C API state (see api.h) */
 
 /* ============================================================
  * Python Implementation Object Model (frontend-specific).
@@ -195,7 +196,7 @@ typedef struct ObjFunction {
     bool is_native;
     bool is_leaf;
     NativeFn native_fn;
-    int (*cfunc)(struct py_State *L);
+    int (*cfunc)(struct APIState *L);
     int upvalue_count;
     UpvalueDesc *upvalue_descriptors;
     struct FunctionParam *params;
@@ -244,11 +245,6 @@ ObjFunction *new_native_function(const char *name, NativeFn fn);
 ObjUserdata *new_userdata_tagged(const char *tag, void *data, UserdataFinalizer finalizer);
 #define new_userdata(data, finalizer) new_userdata_tagged("userdata", (data), (finalizer))
 Value make_exception_instance(struct VM *vm, void *cls, const char *message);
-
-/* C-function dispatch — invoked by the Luna `call` MOP when a function's
- * `cfunc` field is set.  Declared here (frontend header), not in vm.h, because
- * it names the Luna ObjFunction type. */
-Value py_cfunc_dispatch(struct VM *vm, struct ObjFunction *fn, Value *args, int arg_count);
 
 ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);

@@ -125,6 +125,42 @@ typedef struct VMFrontendHooks {
     Object *(*new_closure)(struct VM *vm, Value fn_val);
 } VMFrontendHooks;
 
+/* ============================================================
+ * FrontendDef — a language frontend's self-description + the
+ * embeddable C API bridge (see api.h).  The embedder picks a
+ * language by installing one of these on a VM; the core reaches
+ * the object model only through these hooks, never by name.
+ * ============================================================ */
+typedef struct APIState APIState;
+typedef int (*api_CFunction)(APIState *L);
+
+/* Object-model operations the language-agnostic C API needs that aren't
+ * already covered by the MOP Type vtable or VMFrontendHooks. */
+typedef struct FrontendObject {
+    int   (*type_of)(Value v);                      /* api_Type code */
+    Value (*new_cfunction)(api_CFunction fn);       /* native function */
+    bool  (*is_cfunction)(Value v);
+    const char *(*cstring)(Value v, size_t *len);   /* string chars (owned) */
+    Value (*new_userdata)(void *data, const char *tag, void (*finalizer)(void*));
+    void *(*userdata_data)(Value v);
+    const char *(*userdata_tag)(Value v);
+    int64_t (*int64_value)(Value v);
+    Value (*make_int64)(int64_t n);
+} FrontendObject;
+
+typedef struct FrontendDef {
+    const char *name;
+    void (*init_vm)(struct VM *vm);                 /* register builtins/classes */
+    void (*wire_lifecycle)(void);                   /* one-time MOP vtable wiring */
+    const VMFrontendHooks *hooks;
+    const FrontendObject  *object;
+    /* Lex + parse + compile source into a callable Value (closure).
+     * Returns NULL on success, or a static error message on failure.
+     * `is_repl` stores the last expression's value into the `_` global. */
+    const char *(*compile_source)(struct VM *vm, const char *source,
+                                  const char *path, bool is_repl, Value *out_fn);
+} FrontendDef;
+
 /* ---- Limits ---- */
 #define VM_MAX_FRAMES    256
 #define VM_MAX_REGISTERS 256
@@ -202,6 +238,7 @@ typedef struct {
 /* ---- VM State ---- */
 typedef struct VM {
     const VMFrontendHooks *frontend;
+    const FrontendDef     *frontend_def;
     void *frontend_state;
     void **frontend_slots;
     size_t frontend_slot_count;
@@ -295,6 +332,7 @@ typedef enum { VM_OK = 0, VM_EXCEPTION = 1, VM_ERROR = 2 } VMResult;
 
 void     vm_init(VM *vm);
 void     vm_set_frontend(VM *vm, const VMFrontendHooks *hooks);
+void     vm_install_frontend(VM *vm, const FrontendDef *fe);
 bool     vm_unary(VM *vm, VMOperation op, Value operand, Value *result);
 bool     vm_binary(VM *vm, VMOperation op, Value left, Value right, Value *result);
 bool     vm_compare(VM *vm, VMOperation op, Value left, Value right, Value *result);

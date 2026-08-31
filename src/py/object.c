@@ -17,6 +17,7 @@
 #include "py/object.h"
 #include "chunk.h"
 #include "vm.h"
+#include "api.h"
 
 /* Forward declarations for helpers used by the lifecycle/formatting vtable
  * (defined later in this file, but referenced by the per-type free funcs). */
@@ -129,7 +130,7 @@ static Value py_function_call(struct VM *vm, Value self, Value *args, int argc) 
         for (int i = 0; i < argc; i++) scratch[i] = args[i];
         Value result;
         if (fn->cfunc) {
-            result = py_cfunc_dispatch(vm, fn, scratch, argc);
+            result = api_cfunc_dispatch(vm, fn->cfunc, scratch, argc);
         } else {
             if (!vm_call_native(vm, fn->native_fn, scratch, argc, &result)) {
                 if (vm->native_jump) longjmp(vm->native_jump->env, 1);
@@ -157,7 +158,7 @@ static Value py_closure_call(struct VM *vm, Value self, Value *args, int argc) {
         Value scratch[256];
         for (int i = 0; i < argc; i++) scratch[i] = args[i];
         Value result;
-        if (cl->function->cfunc) return py_cfunc_dispatch(vm, cl->function, scratch, argc);
+        if (cl->function->cfunc) return api_cfunc_dispatch(vm, cl->function->cfunc, scratch, argc);
         if (!vm_call_native(vm, cl->function->native_fn, scratch, argc, &result)) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
@@ -504,7 +505,7 @@ static Value py_instance_call(struct VM *vm, Value self, Value *args, int argc) 
     for (int i = 0; i < argc; i++) scratch[i + 1] = args[i];
     Value out;
     if (fn->is_native) {
-        if (fn->cfunc) return py_cfunc_dispatch(vm, fn, scratch, argc + 1);
+        if (fn->cfunc) return api_cfunc_dispatch(vm, fn->cfunc, scratch, argc + 1);
         if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
@@ -540,7 +541,7 @@ static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
         for (int i = 0; i < argc && i < 255; i++) scratch[i + 1] = args[i];
         Value out;
         if (fn->is_native) {
-            if (fn->cfunc) return py_cfunc_dispatch(vm, fn, scratch, argc + 1);
+            if (fn->cfunc) return api_cfunc_dispatch(vm, fn->cfunc, scratch, argc + 1);
             if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
                 if (vm->native_jump) longjmp(vm->native_jump->env, 1);
                 return make_null();

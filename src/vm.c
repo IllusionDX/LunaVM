@@ -49,6 +49,14 @@ void vm_set_frontend(VM *vm, const VMFrontendHooks *hooks) {
     if (vm) vm->frontend = hooks;
 }
 
+void vm_install_frontend(VM *vm, const FrontendDef *fe) {
+    if (!vm || !fe) return;
+    vm->frontend_def = fe;
+    vm->frontend = fe->hooks;
+    if (fe->wire_lifecycle) fe->wire_lifecycle();
+    if (fe->init_vm) fe->init_vm(vm);
+}
+
 bool vm_unary(VM *vm, VMOperation op, Value operand, Value *result) {
     return vm && vm->frontend && vm->frontend->unary &&
            vm->frontend->unary(vm, op, operand, result);
