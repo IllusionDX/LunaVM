@@ -5,6 +5,7 @@
 #include "stdlib_string.h"
 #include "value.h"
 #include "luna/object.h"
+#include "luna/frontend_state.h"
 
 static void module_add_const(ObjModule *mod, const char *name, const char *value) {
     dict_set(mod->exports,
@@ -28,5 +29,5 @@ void vm_register_string_module(VM *vm) {
 
     Value mod_val = make_obj((Object *)mod);
     ObjString *key = new_string("string", 6);
-    dict_set(vm->module_cache, make_obj((Object *)key), mod_val);
+    dict_set(luna_fe(vm)->module_cache, make_obj((Object *)key), mod_val);
 }

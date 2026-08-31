@@ -519,6 +519,9 @@ void vm_free(VM *vm) {
     vm->frontend_slot_count = 0;
     vm->frontend_slot_capacity = 0;
 
+    free(vm->frontend_data);
+    vm->frontend_data = NULL;
+
     free(gray_stack);
     gray_stack = NULL;
     gray_cap = 0;
@@ -541,8 +544,6 @@ void vm_free(VM *vm) {
         vm->system_globals[i] = NULL;
     }
 
-    vm->module_cache = NULL;
-
     close_upvalues(vm, 0);
 
     free(vm->stack);
@@ -553,8 +554,6 @@ void vm_free(VM *vm) {
         vm->try_stack = tf->next;
         free(tf);
     }
-
-    vm->exception_class = NULL;
 
     value_free_intern_table();
 

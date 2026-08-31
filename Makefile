@@ -49,7 +49,7 @@ LUNA_SOURCES = src/luna/object.c src/luna/luna.c \
 LUNA_OBJECTS = $(LUNA_SOURCES:.c=.o)
 
 # Python-subset frontend
-PY_SOURCES = src/py/object.c src/py/py.c \
+PY_SOURCES = src/py/object.c src/py/py.c src/py/number_methods.c \
     src/py/lexer.c src/py/parser.c src/py/compiler.c \
     src/py/parse_expr.c src/py/parse_stmt.c src/py/parse_decl.c \
     src/py/fstring.c src/py/module.c src/py/ast_free.c \

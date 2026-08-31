@@ -14,6 +14,7 @@
 #include "stdlib_json.h"
 #include "value.h"
 #include "py/object.h"
+#include "py/frontend_state.h"
 
 typedef struct {
     const char *src;
@@ -49,7 +50,7 @@ static inline void skip_ws(JsonParser *p) {
 }
 
 static void json_error(JsonParser *p, const char *msg) {
-    luna_throw(p->vm, p->vm->runtime_error_class, "JSON parse error at pos %zu: %s", p->pos, msg);
+    luna_throw(p->vm, py_fe(p->vm)->runtime_error_class, "JSON parse error at pos %zu: %s", p->pos, msg);
 }
 
 /* ============================================================ */
@@ -366,7 +367,7 @@ static void encode_dict(VM *vm, ObjDict *dict, char **buf, size_t *len, size_t *
             Value key = dict->inline_entries[i].key;
             Value val = dict->inline_entries[i].value;
             if (!IS_STRING(key)) {
-                luna_throw(vm, vm->type_error_class,
+                luna_throw(vm, py_fe(vm)->type_error_class,
                     "json.encode(): dict keys must be strings");
             }
             if (!first) sb_append_char(buf, len, cap, ',');
@@ -383,7 +384,7 @@ static void encode_dict(VM *vm, ObjDict *dict, char **buf, size_t *len, size_t *
             Value key = dict->entries[idx].key;
             if (key == EMPTY_VAL || key == TOMBSTONE_VAL) continue;
             if (!IS_STRING(key)) {
-                luna_throw(vm, vm->type_error_class,
+                luna_throw(vm, py_fe(vm)->type_error_class,
                     "json.encode(): dict keys must be strings");
             }
             if (!first) sb_append_char(buf, len, cap, ',');
@@ -409,7 +410,7 @@ static void encode_list(VM *vm, ObjList *list, char **buf, size_t *len, size_t *
 
 static void encode_value(VM *vm, Value v, char **buf, size_t *len, size_t *cap, int depth) {
     if (depth > 100) {
-        luna_throw(vm, vm->runtime_error_class, "json.encode(): nesting too deep");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "json.encode(): nesting too deep");
     }
 
     if (IS_NIL(v)) {
@@ -428,7 +429,7 @@ static void encode_value(VM *vm, Value v, char **buf, size_t *len, size_t *cap, 
     } else if (IS_DOUBLE(v)) {
         double d = AS_DOUBLE(v);
         if (isinf(d) || isnan(d)) {
-            luna_throw(vm, vm->runtime_error_class,
+            luna_throw(vm, py_fe(vm)->runtime_error_class,
                 "json.encode(): cannot encode infinity or NaN");
         }
         char tmp[64];
@@ -443,7 +444,7 @@ static void encode_value(VM *vm, Value v, char **buf, size_t *len, size_t *cap, 
     } else if (IS_LIST(v)) {
         encode_list(vm, (ObjList*)AS_OBJ(v), buf, len, cap, depth);
     } else {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, py_fe(vm)->type_error_class,
             "json.encode(): unsupported type for JSON serialization");
     }
 }
@@ -454,17 +455,17 @@ static void encode_value(VM *vm, Value v, char **buf, size_t *len, size_t *cap, 
 
 static Value json_parse_native(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "json.parse() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "json.parse() expects exactly 1 argument");
     }
     if (!IS_STRING(args[0])) {
-        luna_throw(vm, vm->type_error_class, "json.parse() argument must be a string");
+        luna_throw(vm, py_fe(vm)->type_error_class, "json.parse() argument must be a string");
     }
     ObjString *s = (ObjString*)AS_OBJ(args[0]);
     JsonParser p = { s->chars, (size_t)s->length, 0, vm };
     Value result = parse_value(&p);
     skip_ws(&p);
     if (p.pos != p.len) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, py_fe(vm)->runtime_error_class,
             "json.parse(): trailing data after valid JSON at pos %zu", p.pos);
     }
     return result;
@@ -472,13 +473,13 @@ static Value json_parse_native(VM *vm, Value *args, int n) {
 
 static Value json_encode_native(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "json.encode() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "json.encode() expects exactly 1 argument");
     }
     size_t cap = 256;
     size_t len = 0;
     char *buf = (char*)malloc(cap);
     if (!buf) {
-        luna_throw(vm, vm->runtime_error_class, "json.encode(): out of memory");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "json.encode(): out of memory");
     }
     encode_value(vm, args[0], &buf, &len, &cap, 0);
     buf[len] = '\0';
@@ -505,7 +506,7 @@ void vm_register_json_module(VM *vm) {
              make_obj((Object*)new_string("encode", 6)),
              make_obj((Object*)fn));
 
-    dict_set(vm->module_cache,
+    dict_set(py_fe(vm)->module_cache,
              make_obj((Object*)new_string("json", 4)),
              make_obj((Object*)mod));
 }

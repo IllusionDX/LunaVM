@@ -289,33 +289,10 @@ typedef struct VM {
     uint64_t       instr_count;
     uint64_t       time_start_us; /* monotonic microseconds captured at vm_init */
 
-    /* Module cache — maps module name string to ObjModule */
-    void *module_cache;
-
-    /* Built-in Exception classes (fast access) */
-    void *exception_class;
-    void *type_error_class;
-    void *key_error_class;
-    void *index_error_class;
-    void *attribute_error_class;
-    void *value_error_class;
-    void *runtime_error_class;
-    void *argument_error_class;
-
-    /* Canonical classes for built-in types (fast dispatch) */
-    void *string_class;
-    void *list_class;
-    void *dict_class;
-    void *enum_class;
-    void *buffer_class;
-    void *vector_class;
-    void *matrix_class;
-    void *function_class;
-    void *closure_class;
-    void *bound_method_class;
-    void *class_class;
-    void *module_class;
-    void *userdata_class;
+    /* Frontend-owned runtime state. The core treats this as opaque: each
+     * language stores its canonical classes, exception classes and module
+     * cache here (see py/frontend_state.h, luna/frontend_state.h). */
+    void *frontend_data;
 
     /* Native exception jump stack (for longjmp from C builtins) */
     LunaJump *native_jump;

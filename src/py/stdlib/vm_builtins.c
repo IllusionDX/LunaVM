@@ -13,6 +13,7 @@
 #include "vm.h"
 #include "value.h"
 #include "py/object.h"
+#include "py/frontend_state.h"
 #include "chunk.h"
 
 /* Extern declarations for static mat4 helpers in vm.c */
@@ -310,14 +311,14 @@ static Value bn_isinf(VM *vm, Value *args, int n) {
 static Value bn_chr(VM *vm, Value *args, int n) {
     (void)vm;
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "chr() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "chr() expects exactly 1 argument");
     }
     if (!IS_INT(args[0]) && !IS_INT64(args[0])) {
-        luna_throw(vm, vm->type_error_class, "chr() argument must be an integer");
+        luna_throw(vm, py_fe(vm)->type_error_class, "chr() argument must be an integer");
     }
     int32_t cp = (int32_t)as_int64(args[0]);
     if (cp < 0 || cp > 0x10FFFF) {
-        luna_throw(vm, vm->value_error_class, "chr() argument must be in range 0..1114111");
+        luna_throw(vm, py_fe(vm)->value_error_class, "chr() argument must be in range 0..1114111");
     }
     char buf[4];
     int len;
@@ -345,14 +346,14 @@ static Value bn_chr(VM *vm, Value *args, int n) {
 static Value bn_ord(VM *vm, Value *args, int n) {
     (void)vm;
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "ord() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "ord() expects exactly 1 argument");
     }
     if (!IS_STRING(args[0])) {
-        luna_throw(vm, vm->type_error_class, "ord() argument must be a string");
+        luna_throw(vm, py_fe(vm)->type_error_class, "ord() argument must be a string");
     }
     ObjString *str = (ObjString*)AS_OBJ(args[0]);
     if (str->length == 0) {
-        luna_throw(vm, vm->value_error_class, "ord() argument must not be empty");
+        luna_throw(vm, py_fe(vm)->value_error_class, "ord() argument must not be empty");
     }
     uint8_t c = (uint8_t)str->chars[0];
     int32_t cp;
@@ -365,7 +366,7 @@ static Value bn_ord(VM *vm, Value *args, int n) {
     } else if ((c & 0xF8) == 0xF0 && str->length >= 4) {
         cp = ((c & 0x07) << 18) | (((uint8_t)str->chars[1] & 0x3F) << 12) | (((uint8_t)str->chars[2] & 0x3F) << 6) | ((uint8_t)str->chars[3] & 0x3F);
     } else {
-        luna_throw(vm, vm->value_error_class, "ord(): invalid UTF-8");
+        luna_throw(vm, py_fe(vm)->value_error_class, "ord(): invalid UTF-8");
     }
     return make_int64(cp);
 }
@@ -376,10 +377,10 @@ static Value bn_ord(VM *vm, Value *args, int n) {
 
 static Value bn_vec2(VM *vm, Value *args, int n) {
     if (n != 2) {
-        luna_throw(vm, vm->argument_error_class, "vec2() expects exactly 2 arguments (x, y)");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "vec2() expects exactly 2 arguments (x, y)");
     }
     if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1])) {
-        luna_throw(vm, vm->type_error_class, "vec2() arguments must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "vec2() arguments must be numeric");
     }
     float x = (float)value_to_double(args[0]);
     float y = (float)value_to_double(args[1]);
@@ -388,10 +389,10 @@ static Value bn_vec2(VM *vm, Value *args, int n) {
 
 static Value bn_vec3(VM *vm, Value *args, int n) {
     if (n != 3) {
-        luna_throw(vm, vm->argument_error_class, "vec3() expects exactly 3 arguments (x, y, z)");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "vec3() expects exactly 3 arguments (x, y, z)");
     }
     if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1]) || !IS_NUMBER(args[2])) {
-        luna_throw(vm, vm->type_error_class, "vec3() arguments must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "vec3() arguments must be numeric");
     }
     float x = (float)value_to_double(args[0]);
     float y = (float)value_to_double(args[1]);
@@ -401,10 +402,10 @@ static Value bn_vec3(VM *vm, Value *args, int n) {
 
 static Value bn_vec4(VM *vm, Value *args, int n) {
     if (n != 4) {
-        luna_throw(vm, vm->argument_error_class, "vec4() expects exactly 4 arguments (x, y, z, w)");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "vec4() expects exactly 4 arguments (x, y, z, w)");
     }
     if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1]) || !IS_NUMBER(args[2]) || !IS_NUMBER(args[3])) {
-        luna_throw(vm, vm->type_error_class, "vec4() arguments must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "vec4() arguments must be numeric");
     }
     float x = (float)value_to_double(args[0]);
     float y = (float)value_to_double(args[1]);
@@ -416,7 +417,7 @@ static Value bn_vec4(VM *vm, Value *args, int n) {
 static Value bn_mat4(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "mat4() takes no arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "mat4() takes no arguments");
     }
     return make_obj((Object*)new_matrix());
 }
@@ -521,7 +522,7 @@ static Value enum_method_count(VM *vm, Value *args, int nargs) {
 
 static Value string_method_to_buffer(VM *vm, Value *args, int nargs) {
     if (nargs < 1 || !IS_STRING(args[0])) return make_null();
-    if (nargs != 1) { luna_throw(vm, vm->argument_error_class, "string.to_buffer() takes no arguments"); return make_null(); }
+    if (nargs != 1) { luna_throw(vm, py_fe(vm)->argument_error_class, "string.to_buffer() takes no arguments"); return make_null(); }
     ObjString *str = (ObjString*)AS_OBJ(args[0]);
     ObjBuffer *buf = new_buffer((size_t)str->length);
     buffer_append_data(buf, (const uint8_t*)str->chars, (size_t)str->length);
@@ -532,13 +533,13 @@ static Value string_method_byte(VM *vm, Value *args, int nargs) {
     int64_t idx64 = 0;
     if (nargs >= 2) {
         if (!IS_INT(args[1]) && !IS_INT64(args[1])) {
-            luna_throw(vm, vm->type_error_class, "string.byte() expects an integer index"); return make_null();
+            luna_throw(vm, py_fe(vm)->type_error_class, "string.byte() expects an integer index"); return make_null();
         }
         idx64 = as_int64(args[1]);
     }
     ObjString *str = (ObjString*)AS_OBJ(args[0]);
     if (idx64 < 0 || idx64 >= str->length) {
-        luna_throw(vm, vm->index_error_class, "string.byte() index out of range"); return make_null();
+        luna_throw(vm, py_fe(vm)->index_error_class, "string.byte() index out of range"); return make_null();
     }
     return make_int((uint8_t)str->chars[idx64]);
 }
@@ -632,7 +633,7 @@ static Value vector_method_add(VM *vm, Value *args, int nargs) {
     float s = 1.0f;
     if (nargs >= 3) {
         if (!IS_NUMBER(args[2])) {
-            luna_throw(vm, vm->type_error_class, "vector.add() scalar must be numeric");
+            luna_throw(vm, py_fe(vm)->type_error_class, "vector.add() scalar must be numeric");
             return make_null();
         }
         s = (float)value_to_double(args[2]);
@@ -728,7 +729,7 @@ static Value matrix_method_invert(VM *vm, Value *args, int nargs) {
     ObjMatrix *mat = (ObjMatrix*)AS_OBJ(args[0]);
     ObjMatrix *tmp = new_matrix();
     if (!mat4_invert(mat->m, tmp->m)) {
-        luna_throw(vm, vm->value_error_class, "mat4.invert(): matrix is singular");
+        luna_throw(vm, py_fe(vm)->value_error_class, "mat4.invert(): matrix is singular");
         return make_null();
     }
     for (int i = 0; i < 16; i++) mat->m[i] = tmp->m[i];
@@ -739,7 +740,7 @@ static Value matrix_method_inverted(VM *vm, Value *args, int nargs) {
     if (!IS_MATRIX(args[0])) return make_null();
     ObjMatrix *out = new_matrix();
     if (!mat4_invert(((ObjMatrix*)AS_OBJ(args[0]))->m, out->m)) {
-        luna_throw(vm, vm->value_error_class, "mat4.inverted(): matrix is singular");
+        luna_throw(vm, py_fe(vm)->value_error_class, "mat4.inverted(): matrix is singular");
         return make_null();
     }
     return make_obj((Object*)out);
@@ -773,72 +774,72 @@ void vm_register_builtins(VM *vm) {
 
 void vm_register_canonical_classes(VM *vm) {
     /* String canonical class */
-    vm->string_class = new_class("String", NULL);
-    class_add_native_method(vm->string_class, "to_buffer", string_method_to_buffer);
-    class_add_native_method(vm->string_class, "byte", string_method_byte);
-    class_add_native_method(vm->string_class, "length", string_method_length);
-    class_add_native_method(vm->string_class, "size", string_method_size);
-    class_add_native_method(vm->string_class, "reverse", string_method_reverse);
+    py_fe(vm)->string_class = new_class("String", NULL);
+    class_add_native_method(py_fe(vm)->string_class, "to_buffer", string_method_to_buffer);
+    class_add_native_method(py_fe(vm)->string_class, "byte", string_method_byte);
+    class_add_native_method(py_fe(vm)->string_class, "length", string_method_length);
+    class_add_native_method(py_fe(vm)->string_class, "size", string_method_size);
+    class_add_native_method(py_fe(vm)->string_class, "reverse", string_method_reverse);
 
     /* List canonical class */
-    vm->list_class = new_class("List", NULL);
-    class_add_native_method(vm->list_class, "add", list_method_add);
-    class_add_native_method(vm->list_class, "append", list_method_add);
-    class_add_native_method(vm->list_class, "insert", list_method_insert);
-    class_add_native_method(vm->list_class, "remove", list_method_remove);
-    class_add_native_method(vm->list_class, "pop", list_method_pop);
-    class_add_native_method(vm->list_class, "clear", list_method_clear);
-    class_add_native_method(vm->list_class, "length", list_method_length);
-    class_add_native_method(vm->list_class, "size", list_method_length);
+    py_fe(vm)->list_class = new_class("List", NULL);
+    class_add_native_method(py_fe(vm)->list_class, "add", list_method_add);
+    class_add_native_method(py_fe(vm)->list_class, "append", list_method_add);
+    class_add_native_method(py_fe(vm)->list_class, "insert", list_method_insert);
+    class_add_native_method(py_fe(vm)->list_class, "remove", list_method_remove);
+    class_add_native_method(py_fe(vm)->list_class, "pop", list_method_pop);
+    class_add_native_method(py_fe(vm)->list_class, "clear", list_method_clear);
+    class_add_native_method(py_fe(vm)->list_class, "length", list_method_length);
+    class_add_native_method(py_fe(vm)->list_class, "size", list_method_length);
 
     /* Dict canonical class */
-    vm->dict_class = new_class("Dict", NULL);
-    class_add_native_method(vm->dict_class, "keys", dict_method_keys);
-    class_add_native_method(vm->dict_class, "has", dict_method_has);
-    class_add_native_method(vm->dict_class, "remove", dict_method_remove);
-    class_add_native_method(vm->dict_class, "values", dict_method_values);
-    class_add_native_method(vm->dict_class, "clear", dict_method_clear);
-    class_add_native_method(vm->dict_class, "length", dict_method_length);
+    py_fe(vm)->dict_class = new_class("Dict", NULL);
+    class_add_native_method(py_fe(vm)->dict_class, "keys", dict_method_keys);
+    class_add_native_method(py_fe(vm)->dict_class, "has", dict_method_has);
+    class_add_native_method(py_fe(vm)->dict_class, "remove", dict_method_remove);
+    class_add_native_method(py_fe(vm)->dict_class, "values", dict_method_values);
+    class_add_native_method(py_fe(vm)->dict_class, "clear", dict_method_clear);
+    class_add_native_method(py_fe(vm)->dict_class, "length", dict_method_length);
 
     /* Enum canonical class */
-    vm->enum_class = new_class("Enum", NULL);
-    class_add_native_method(vm->enum_class, "values", enum_method_values);
-    class_add_native_method(vm->enum_class, "keys", enum_method_keys);
-    class_add_native_method(vm->enum_class, "count", enum_method_count);
-    class_add_native_method(vm->enum_class, "length", enum_method_count);
-    class_add_native_method(vm->enum_class, "size", enum_method_count);
+    py_fe(vm)->enum_class = new_class("Enum", NULL);
+    class_add_native_method(py_fe(vm)->enum_class, "values", enum_method_values);
+    class_add_native_method(py_fe(vm)->enum_class, "keys", enum_method_keys);
+    class_add_native_method(py_fe(vm)->enum_class, "count", enum_method_count);
+    class_add_native_method(py_fe(vm)->enum_class, "length", enum_method_count);
+    class_add_native_method(py_fe(vm)->enum_class, "size", enum_method_count);
 
     /* Buffer canonical class */
-    vm->buffer_class = new_class("Buffer", NULL);
-    class_add_native_method(vm->buffer_class, "read_byte", buffer_method_read_byte);
-    class_add_native_method(vm->buffer_class, "read_short", buffer_method_read_short);
-    class_add_native_method(vm->buffer_class, "read_int", buffer_method_read_int);
-    class_add_native_method(vm->buffer_class, "read_long", buffer_method_read_long);
+    py_fe(vm)->buffer_class = new_class("Buffer", NULL);
+    class_add_native_method(py_fe(vm)->buffer_class, "read_byte", buffer_method_read_byte);
+    class_add_native_method(py_fe(vm)->buffer_class, "read_short", buffer_method_read_short);
+    class_add_native_method(py_fe(vm)->buffer_class, "read_int", buffer_method_read_int);
+    class_add_native_method(py_fe(vm)->buffer_class, "read_long", buffer_method_read_long);
 
     /* Vector canonical class */
-    vm->vector_class = new_class("Vector", NULL);
-    class_add_native_method(vm->vector_class, "add", vector_method_add);
-    class_add_native_method(vm->vector_class, "sub", vector_method_sub);
-    class_add_native_method(vm->vector_class, "mul", vector_method_mul);
-    class_add_native_method(vm->vector_class, "copy", vector_method_copy);
+    py_fe(vm)->vector_class = new_class("Vector", NULL);
+    class_add_native_method(py_fe(vm)->vector_class, "add", vector_method_add);
+    class_add_native_method(py_fe(vm)->vector_class, "sub", vector_method_sub);
+    class_add_native_method(py_fe(vm)->vector_class, "mul", vector_method_mul);
+    class_add_native_method(py_fe(vm)->vector_class, "copy", vector_method_copy);
 
     /* Matrix canonical class */
-    vm->matrix_class = new_class("Matrix", NULL);
-    class_add_native_method(vm->matrix_class, "translate", matrix_method_translate);
-    class_add_native_method(vm->matrix_class, "rotate_x", matrix_method_rotate_x);
-    class_add_native_method(vm->matrix_class, "rotate_y", matrix_method_rotate_y);
-    class_add_native_method(vm->matrix_class, "rotate_z", matrix_method_rotate_z);
-    class_add_native_method(vm->matrix_class, "scale", matrix_method_scale);
-    class_add_native_method(vm->matrix_class, "transpose", matrix_method_transpose);
-    class_add_native_method(vm->matrix_class, "transposed", matrix_method_transposed);
-    class_add_native_method(vm->matrix_class, "invert", matrix_method_invert);
-    class_add_native_method(vm->matrix_class, "inverted", matrix_method_inverted);
-    vm->function_class = new_class("Function", NULL);
-    vm->closure_class = new_class("Closure", NULL);
-    vm->bound_method_class = new_class("BoundMethod", NULL);
-    vm->class_class = new_class("Class", NULL);
-    vm->module_class = new_class("Module", NULL);
-    vm->userdata_class = new_class("Userdata", NULL);
+    py_fe(vm)->matrix_class = new_class("Matrix", NULL);
+    class_add_native_method(py_fe(vm)->matrix_class, "translate", matrix_method_translate);
+    class_add_native_method(py_fe(vm)->matrix_class, "rotate_x", matrix_method_rotate_x);
+    class_add_native_method(py_fe(vm)->matrix_class, "rotate_y", matrix_method_rotate_y);
+    class_add_native_method(py_fe(vm)->matrix_class, "rotate_z", matrix_method_rotate_z);
+    class_add_native_method(py_fe(vm)->matrix_class, "scale", matrix_method_scale);
+    class_add_native_method(py_fe(vm)->matrix_class, "transpose", matrix_method_transpose);
+    class_add_native_method(py_fe(vm)->matrix_class, "transposed", matrix_method_transposed);
+    class_add_native_method(py_fe(vm)->matrix_class, "invert", matrix_method_invert);
+    class_add_native_method(py_fe(vm)->matrix_class, "inverted", matrix_method_inverted);
+    py_fe(vm)->function_class = new_class("Function", NULL);
+    py_fe(vm)->closure_class = new_class("Closure", NULL);
+    py_fe(vm)->bound_method_class = new_class("BoundMethod", NULL);
+    py_fe(vm)->class_class = new_class("Class", NULL);
+    py_fe(vm)->module_class = new_class("Module", NULL);
+    py_fe(vm)->userdata_class = new_class("Userdata", NULL);
 }
 
 

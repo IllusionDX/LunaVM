@@ -28,6 +28,7 @@
 #include "stdlib_net.h"
 #include "value.h"
 #include "luna/object.h"
+#include "luna/frontend_state.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -128,7 +129,7 @@ static void socket_finalizer(void *data) {
 
 static void require_string(VM *vm, Value v, const char *fn, int idx) {
     if (!IS_STRING(v)) {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, luna_fe(vm)->type_error_class,
             "%s() argument %d must be a string", fn, idx);
     }
 }
@@ -139,7 +140,7 @@ static const char *as_cstring(Value v) {
 
 static int as_int_checked(VM *vm, Value v, const char *fn, int idx) {
     if (!IS_NUMBER(v)) {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, luna_fe(vm)->type_error_class,
             "%s() argument %d must be numeric", fn, idx);
     }
     return (int)value_to_double(v);
@@ -147,19 +148,19 @@ static int as_int_checked(VM *vm, Value v, const char *fn, int idx) {
 
 static ObjUserdata *socket_userdata_from_instance(VM *vm, Value self, const char *fn) {
     if (!IS_INSTANCE(self) || !AS_OBJ(self)) {
-        luna_throw(vm, vm->type_error_class, "%s() expects a Socket instance", fn);
+        luna_throw(vm, luna_fe(vm)->type_error_class, "%s() expects a Socket instance", fn);
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     Value handle = instance_get_field(inst, "_handle");
     if (!IS_USERDATA(handle) || !AS_OBJ(handle)) {
-        luna_throw(vm, vm->runtime_error_class, "%s() called on closed socket", fn);
+        luna_throw(vm, luna_fe(vm)->runtime_error_class, "%s() called on closed socket", fn);
     }
     ObjUserdata *ud = (ObjUserdata*)AS_OBJ(handle);
     if (!ud->data) {
-        luna_throw(vm, vm->runtime_error_class, "%s() called on closed socket", fn);
+        luna_throw(vm, luna_fe(vm)->runtime_error_class, "%s() called on closed socket", fn);
     }
     if (!ud->tag || strcmp(ud->tag, "net.Socket") != 0) {
-        luna_throw(vm, vm->type_error_class, "%s() invalid socket handle", fn);
+        luna_throw(vm, luna_fe(vm)->type_error_class, "%s() invalid socket handle", fn);
     }
     return ud;
 }
@@ -212,18 +213,18 @@ static void setup_socket_handle(ObjInstance *inst, int family, int type) {
 
 static Value socket_init(VM *vm, Value *args, int n) {
     if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "Socket._init() requires family and type arguments");
     }
     if (!IS_INSTANCE(args[0])) {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, luna_fe(vm)->type_error_class,
             "Socket._init() must be called on an instance");
     }
     int family = as_int_checked(vm, args[1], "Socket._init", 1);
     int type   = as_int_checked(vm, args[2], "Socket._init", 2);
 
     if (ensure_winsock() != 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "net: failed to initialize networking");
     }
 
@@ -238,7 +239,7 @@ static Value socket_init(VM *vm, Value *args, int n) {
 
 static Value socket_connect(VM *vm, Value *args, int n) {
     if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "connect() expects host and port arguments");
     }
     require_string(vm, args[1], "connect", 1);
@@ -246,7 +247,7 @@ static Value socket_connect(VM *vm, Value *args, int n) {
 
     LunaSocket *s = socket_handle_from_instance(vm, args[0], "connect");
     if (s->connected) {
-        luna_throw(vm, vm->runtime_error_class, "connect(): socket already connected");
+        luna_throw(vm, luna_fe(vm)->runtime_error_class, "connect(): socket already connected");
     }
 
     const char *host = as_cstring(args[1]);
@@ -260,7 +261,7 @@ static Value socket_connect(VM *vm, Value *args, int n) {
         /* Try DNS resolution */
         struct hostent *he = gethostbyname(host);
         if (!he || !he->h_addr_list[0]) {
-            luna_throw(vm, vm->runtime_error_class,
+            luna_throw(vm, luna_fe(vm)->runtime_error_class,
                 "connect(): could not resolve host '%s'", host);
         }
         memcpy(&addr.sin_addr, he->h_addr_list[0], (size_t)he->h_length);
@@ -270,7 +271,7 @@ static Value socket_connect(VM *vm, Value *args, int n) {
     if (rc != 0) {
         int err = socket_error();
         if (!is_wouldblock(err)) {
-            luna_throw(vm, vm->runtime_error_class,
+            luna_throw(vm, luna_fe(vm)->runtime_error_class,
                 "connect() failed: %d", err);
         }
     }
@@ -281,7 +282,7 @@ static Value socket_connect(VM *vm, Value *args, int n) {
 
 static Value socket_bind(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "bind() expects at least a port argument");
     }
     int port = as_int_checked(vm, args[1], "bind", 1);
@@ -299,7 +300,7 @@ static Value socket_bind(VM *vm, Value *args, int n) {
     addr.sin_port = htons((unsigned short)port);
 
     if (inet_pton(s->family, host, &addr.sin_addr) <= 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "bind(): invalid address '%s'", host);
     }
 
@@ -311,7 +312,7 @@ static Value socket_bind(VM *vm, Value *args, int n) {
 #endif
 
     if (bind(s->fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "bind() failed: %d", socket_error());
     }
 
@@ -328,7 +329,7 @@ static Value socket_listen(VM *vm, Value *args, int n) {
     LunaSocket *s = socket_handle_from_instance(vm, args[0], "listen");
 
     if (listen(s->fd, backlog) != 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "listen() failed: %d", socket_error());
     }
 
@@ -354,7 +355,7 @@ static Value socket_accept(VM *vm, Value *args, int n) {
         if (err == WSAEWOULDBLOCK) {
             return make_null();
         }
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "accept() failed: %d", err);
     }
 #else
@@ -364,7 +365,7 @@ static Value socket_accept(VM *vm, Value *args, int n) {
         if (err == EAGAIN || err == EWOULDBLOCK) {
             return make_null();
         }
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "accept() failed: %s", strerror(err));
     }
 #endif
@@ -377,7 +378,7 @@ static Value socket_accept(VM *vm, Value *args, int n) {
 #else
         close(client_fd);
 #endif
-        luna_throw(vm, vm->runtime_error_class, "accept(): out of memory");
+        luna_throw(vm, luna_fe(vm)->runtime_error_class, "accept(): out of memory");
     }
 
     client_sock->fd = client_fd;
@@ -406,7 +407,7 @@ static Value socket_accept(VM *vm, Value *args, int n) {
 
 static Value socket_send(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "send() requires a data argument");
     }
 
@@ -424,7 +425,7 @@ static Value socket_send(VM *vm, Value *args, int n) {
         data = buf->data;
         len = buf->size;
     } else {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, luna_fe(vm)->type_error_class,
             "send() data must be a string or buffer");
     }
 
@@ -441,7 +442,7 @@ static Value socket_send(VM *vm, Value *args, int n) {
             if (is_wouldblock(err)) {
                 break;
             }
-            luna_throw(vm, vm->runtime_error_class,
+            luna_throw(vm, luna_fe(vm)->runtime_error_class,
                 "send() failed: %d", err);
         }
         if (sent == 0) break;
@@ -453,12 +454,12 @@ static Value socket_send(VM *vm, Value *args, int n) {
 
 static Value socket_recv(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "recv() requires a max_size argument");
     }
     int max_size = as_int_checked(vm, args[1], "recv", 1);
     if (max_size <= 0 || max_size > 65536) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "recv() max_size must be between 1 and 65536");
     }
 
@@ -466,7 +467,7 @@ static Value socket_recv(VM *vm, Value *args, int n) {
 
     uint8_t *buf = (uint8_t*)malloc((size_t)max_size);
     if (!buf) {
-        luna_throw(vm, vm->runtime_error_class, "recv(): out of memory");
+        luna_throw(vm, luna_fe(vm)->runtime_error_class, "recv(): out of memory");
     }
 
 #ifdef _WIN32
@@ -483,7 +484,7 @@ static Value socket_recv(VM *vm, Value *args, int n) {
             ObjBuffer *empty = new_buffer(0);
             return make_obj((Object*)empty);
         }
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "recv() failed: %d", err);
     }
 
@@ -523,11 +524,11 @@ static Value socket_close(VM *vm, Value *args, int n) {
 
 static Value socket_set_blocking(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "set_blocking() requires a boolean argument");
     }
     if (!IS_BOOL(args[1])) {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, luna_fe(vm)->type_error_class,
             "set_blocking() argument must be a boolean");
     }
 
@@ -537,18 +538,18 @@ static Value socket_set_blocking(VM *vm, Value *args, int n) {
 #ifdef _WIN32
     u_long mode = blocking ? 0 : 1;
     if (ioctlsocket(s->fd, FIONBIO, &mode) != 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "set_blocking() failed: %d", WSAGetLastError());
     }
 #else
     int flags = fcntl(s->fd, F_GETFL, 0);
     if (flags < 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "set_blocking() failed: %s", strerror(errno));
     }
     flags = blocking ? (flags & ~O_NONBLOCK) : (flags | O_NONBLOCK);
     if (fcntl(s->fd, F_SETFL, flags) < 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "set_blocking() failed: %s", strerror(errno));
     }
 #endif
@@ -575,7 +576,7 @@ static Value socket_get_address(VM *vm, Value *args, int n) {
 #endif
 
     if (getsockname(s->fd, (struct sockaddr*)&addr, &addr_len) != 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "get_address() failed: %d", socket_error());
     }
 
@@ -594,7 +595,7 @@ static Value socket_get_address(VM *vm, Value *args, int n) {
 
 static Value net_dial(VM *vm, Value *args, int n) {
     if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "net.dial() requires protocol, host and port arguments");
     }
     require_string(vm, args[0], "dial", 1);
@@ -610,7 +611,7 @@ static Value net_dial(VM *vm, Value *args, int n) {
     } else if (strcmp(protocol, "udp") == 0) {
         type = SOCK_DGRAM;
     } else {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "net.dial() protocol must be 'tcp' or 'udp'");
     }
 
@@ -628,7 +629,7 @@ static Value net_dial(VM *vm, Value *args, int n) {
     if (inet_pton(family, host, &addr.sin_addr) <= 0) {
         struct hostent *he = gethostbyname(host);
         if (!he || !he->h_addr_list[0]) {
-            luna_throw(vm, vm->runtime_error_class,
+            luna_throw(vm, luna_fe(vm)->runtime_error_class,
                 "dial(): could not resolve host '%s'", host);
         }
         memcpy(&addr.sin_addr, he->h_addr_list[0], (size_t)he->h_length);
@@ -638,7 +639,7 @@ static Value net_dial(VM *vm, Value *args, int n) {
     if (rc != 0) {
         int err = socket_error();
         if (!is_wouldblock(err)) {
-            luna_throw(vm, vm->runtime_error_class,
+            luna_throw(vm, luna_fe(vm)->runtime_error_class,
                 "dial() failed: %d", err);
         }
     }
@@ -649,7 +650,7 @@ static Value net_dial(VM *vm, Value *args, int n) {
 
 static Value net_listen(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "net.listen() requires protocol and port arguments");
     }
     require_string(vm, args[0], "listen", 1);
@@ -664,7 +665,7 @@ static Value net_listen(VM *vm, Value *args, int n) {
     } else if (strcmp(protocol, "udp") == 0) {
         type = SOCK_DGRAM;
     } else {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "net.listen() protocol must be 'tcp' or 'udp'");
     }
 
@@ -679,7 +680,7 @@ static Value net_listen(VM *vm, Value *args, int n) {
     addr.sin_port = htons((unsigned short)port);
 
     if (inet_pton(family, "0.0.0.0", &addr.sin_addr) <= 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "listen(): invalid bind address");
     }
 
@@ -691,7 +692,7 @@ static Value net_listen(VM *vm, Value *args, int n) {
 #endif
 
     if (bind(s->fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "listen() bind failed: %d", socket_error());
     }
 
@@ -699,7 +700,7 @@ static Value net_listen(VM *vm, Value *args, int n) {
 
     if (type == SOCK_STREAM) {
         if (listen(s->fd, 5) != 0) {
-            luna_throw(vm, vm->runtime_error_class,
+            luna_throw(vm, luna_fe(vm)->runtime_error_class,
                 "listen() failed: %d", socket_error());
         }
         s->listening = 1;
@@ -710,7 +711,7 @@ static Value net_listen(VM *vm, Value *args, int n) {
 
 static Value net_resolve(VM *vm, Value *args, int n) {
     if (n < 1) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "net.resolve() requires a hostname argument");
     }
     require_string(vm, args[0], "resolve", 1);
@@ -718,7 +719,7 @@ static Value net_resolve(VM *vm, Value *args, int n) {
 
     struct hostent *he = gethostbyname(host);
     if (!he || !he->h_addr_list[0]) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "resolve(): could not resolve '%s'", host);
     }
 
@@ -781,7 +782,7 @@ void vm_register_net_module(VM *vm) {
              make_obj((Object*)new_string("UDP", 3)),
              make_int(SOCK_DGRAM));
 
-    dict_set(vm->module_cache,
+    dict_set(luna_fe(vm)->module_cache,
              make_obj((Object*)new_string("net", 3)),
              make_obj((Object*)mod));
 }

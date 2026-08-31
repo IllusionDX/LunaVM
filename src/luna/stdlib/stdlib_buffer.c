@@ -9,19 +9,20 @@
 #include "stdlib_buffer.h"
 #include "value.h"
 #include "luna/object.h"
+#include "luna/frontend_state.h"
 
 static Value buffer_new(VM *vm, Value *args, int n) {
     if (n > 1) {
-        luna_throw(vm, vm->argument_error_class, "buffer.new() expects at most 1 argument");
+        luna_throw(vm, luna_fe(vm)->argument_error_class, "buffer.new() expects at most 1 argument");
     }
     size_t capacity = 0;
     if (n == 1) {
         if (!IS_INT(args[0]) && !IS_INT64(args[0])) {
-            luna_throw(vm, vm->type_error_class, "buffer.new() capacity must be an integer");
+            luna_throw(vm, luna_fe(vm)->type_error_class, "buffer.new() capacity must be an integer");
         }
         int64_t cap = as_int64(args[0]);
         if (cap < 0) {
-            luna_throw(vm, vm->value_error_class, "buffer.new() capacity must be non-negative");
+            luna_throw(vm, luna_fe(vm)->value_error_class, "buffer.new() capacity must be non-negative");
         }
         capacity = (size_t)cap;
     }
@@ -30,10 +31,10 @@ static Value buffer_new(VM *vm, Value *args, int n) {
 
 static Value buffer_from_string(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "buffer.from_string() expects exactly 1 argument");
+        luna_throw(vm, luna_fe(vm)->argument_error_class, "buffer.from_string() expects exactly 1 argument");
     }
     if (!IS_STRING(args[0])) {
-        luna_throw(vm, vm->type_error_class, "buffer.from_string() argument must be a string");
+        luna_throw(vm, luna_fe(vm)->type_error_class, "buffer.from_string() argument must be a string");
     }
     ObjString *str = (ObjString*)AS_OBJ(args[0]);
     ObjBuffer *buf = new_buffer((size_t)str->length);
@@ -57,5 +58,5 @@ void vm_register_buffer_module(VM *vm) {
 
     Value mod_val = make_obj((Object *)mod);
     ObjString *mod_key = new_string("buffer", 6);
-    dict_set(vm->module_cache, make_obj((Object *)mod_key), mod_val);
+    dict_set(luna_fe(vm)->module_cache, make_obj((Object *)mod_key), mod_val);
 }

@@ -148,6 +148,12 @@ Done in `src/py` (verified at `8751d6a`):
   (sign-aware, int result for int operands), `**` is power (int for exact
   int64 results, float fallback); compound `//=` / `**=` included. New VM
   opcodes `OP_IDIV` / `OP_POW`. Tests: `tests_py/test_py_divpow.py`.
+- ~~**Numbers as virtual objects:**~~ **done in `src/py`** — immediate
+  int/float/bool resolve methods and attributes via canonical classes
+  (`bit_length`, `is_integer`, dunders, `real`/`imag`, `__class__`) without
+  boxing. The canonical classes live in the py frontend state
+  (`py/frontend_state.h`, `py_fe`), not in the language-agnostic VM core.
+  Tests: `tests_py/test_py_numobj.py`.
 - **Literal subset:** `0x`/`0o`/`0b` and `_` digit separators unverified in
   `scan_number` (`lexer.c:189`). Optional in phase 2.
 - **Builtins:** present: `print`, `len`, `range`, `type`, `str`, `int`,

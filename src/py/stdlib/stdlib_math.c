@@ -9,6 +9,7 @@
 #include "stdlib_math.h"
 #include "value.h"
 #include "py/object.h"
+#include "py/frontend_state.h"
 
 /* ============================================================ */
 /* Validation helpers                                           */
@@ -18,21 +19,21 @@ static inline bool is_num(Value v) { return IS_NUMBER(v); }
 
 static inline void check_arity(VM *vm, int n, int expected, const char *name) {
     if (n != expected) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, py_fe(vm)->argument_error_class,
             "%s() expects exactly %d argument(s), got %d", name, expected, n);
     }
 }
 
 static inline void check_arity_min(VM *vm, int n, int min, const char *name) {
     if (n < min) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, py_fe(vm)->argument_error_class,
             "%s() expects at least %d argument(s), got %d", name, min, n);
     }
 }
 
 static inline double to_double_checked(VM *vm, Value v, const char *fn, int arg_idx) {
     if (!is_num(v)) {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, py_fe(vm)->type_error_class,
             "%s() argument %d must be a number", fn, arg_idx);
     }
     return value_to_double(v);
@@ -64,7 +65,7 @@ static Value math_acos(VM *vm, Value *args, int n) {
     check_arity(vm, n, 1, "acos");
     double v = to_double_checked(vm, args[0], "acos", 1);
     if (v < -1.0 || v > 1.0) {
-        luna_throw(vm, vm->value_error_class,
+        luna_throw(vm, py_fe(vm)->value_error_class,
             "Math domain error: acos() argument must be in range [-1, 1]");
     }
     return make_double(acos(v));
@@ -74,7 +75,7 @@ static Value math_asin(VM *vm, Value *args, int n) {
     check_arity(vm, n, 1, "asin");
     double v = to_double_checked(vm, args[0], "asin", 1);
     if (v < -1.0 || v > 1.0) {
-        luna_throw(vm, vm->value_error_class,
+        luna_throw(vm, py_fe(vm)->value_error_class,
             "Math domain error: asin() argument must be in range [-1, 1]");
     }
     return make_double(asin(v));
@@ -84,7 +85,7 @@ static Value math_sqrt(VM *vm, Value *args, int n) {
     check_arity(vm, n, 1, "sqrt");
     double v = to_double_checked(vm, args[0], "sqrt", 1);
     if (v < 0.0) {
-        luna_throw(vm, vm->value_error_class,
+        luna_throw(vm, py_fe(vm)->value_error_class,
             "Math domain error: sqrt() of a negative number");
     }
     return make_double(sqrt(v));
@@ -94,7 +95,7 @@ static Value math_log(VM *vm, Value *args, int n) {
     check_arity(vm, n, 1, "log");
     double v = to_double_checked(vm, args[0], "log", 1);
     if (v <= 0.0) {
-        luna_throw(vm, vm->value_error_class,
+        luna_throw(vm, py_fe(vm)->value_error_class,
             "Math domain error: log() argument must be positive");
     }
     return make_double(log(v));
@@ -104,7 +105,7 @@ static Value math_log10(VM *vm, Value *args, int n) {
     check_arity(vm, n, 1, "log10");
     double v = to_double_checked(vm, args[0], "log10", 1);
     if (v <= 0.0) {
-        luna_throw(vm, vm->value_error_class,
+        luna_throw(vm, py_fe(vm)->value_error_class,
             "Math domain error: log10() argument must be positive");
     }
     return make_double(log10(v));
@@ -139,7 +140,7 @@ static Value math_pow(VM *vm, Value *args, int n) {
     double base = to_double_checked(vm, args[0], "pow", 1);
     double expv = to_double_checked(vm, args[1], "pow", 2);
     if (base < 0.0 && expv != floor(expv)) {
-        luna_throw(vm, vm->value_error_class,
+        luna_throw(vm, py_fe(vm)->value_error_class,
             "Math domain error: pow() with negative base and non-integer exponent");
     }
     return make_double(pow(base, expv));
@@ -157,7 +158,7 @@ static Value math_fmod(VM *vm, Value *args, int n) {
     double a = to_double_checked(vm, args[0], "mod", 1);
     double b = to_double_checked(vm, args[1], "mod", 2);
     if (b == 0.0) {
-        luna_throw(vm, vm->value_error_class,
+        luna_throw(vm, py_fe(vm)->value_error_class,
             "Math domain error: mod() by zero");
     }
     return make_double(fmod(a, b));
@@ -166,7 +167,7 @@ static Value math_fmod(VM *vm, Value *args, int n) {
 static Value math_abs(VM *vm, Value *args, int n) {
     check_arity(vm, n, 1, "abs");
     if (!is_num(args[0])) {
-        luna_throw(vm, vm->type_error_class, "abs() requires a numeric argument");
+        luna_throw(vm, py_fe(vm)->type_error_class, "abs() requires a numeric argument");
     }
     if (IS_INT(args[0])) {
         int v = AS_INT(args[0]);
@@ -281,5 +282,5 @@ void vm_register_math_module(VM *vm) {
     /* Cache it so import math finds it */
     Value mod_val = make_obj((Object*)mod);
     ObjString *key = new_string("math", 4);
-    dict_set(vm->module_cache, make_obj((Object*)key), mod_val);
+    dict_set(py_fe(vm)->module_cache, make_obj((Object*)key), mod_val);
 }

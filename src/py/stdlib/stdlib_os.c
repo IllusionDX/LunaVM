@@ -16,6 +16,7 @@
 #include "stdlib_os.h"
 #include "value.h"
 #include "py/object.h"
+#include "py/frontend_state.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -44,7 +45,7 @@ static void module_add_native(ObjModule *mod, const char *name, NativeFn fn) {
 
 static void require_string(VM *vm, Value v, const char *fn, int idx) {
     if (!IS_STRING(v)) {
-        luna_throw(vm, vm->type_error_class, "%s() argument %d must be a string", fn, idx);
+        luna_throw(vm, py_fe(vm)->type_error_class, "%s() argument %d must be a string", fn, idx);
     }
 }
 
@@ -59,16 +60,16 @@ static const char *as_cstring(Value v) {
 static Value os_getcwd(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "os.getcwd() takes no arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.getcwd() takes no arguments");
     }
     char buf[4096];
 #ifdef _WIN32
     if (!_getcwd(buf, sizeof(buf))) {
-        luna_throw(vm, vm->runtime_error_class, "os.getcwd(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.getcwd(): %s", strerror(errno));
     }
 #else
     if (!getcwd(buf, sizeof(buf))) {
-        luna_throw(vm, vm->runtime_error_class, "os.getcwd(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.getcwd(): %s", strerror(errno));
     }
 #endif
     return make_obj((Object*)new_string(buf, (int)strlen(buf)));
@@ -76,16 +77,16 @@ static Value os_getcwd(VM *vm, Value *args, int n) {
 
 static Value os_chdir(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "os.chdir() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.chdir() expects exactly 1 argument");
     }
     require_string(vm, args[0], "os.chdir", 1);
 #ifdef _WIN32
     if (_chdir(as_cstring(args[0])) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.chdir(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.chdir(): %s", strerror(errno));
     }
 #else
     if (chdir(as_cstring(args[0])) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.chdir(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.chdir(): %s", strerror(errno));
     }
 #endif
     return make_null();
@@ -93,7 +94,7 @@ static Value os_chdir(VM *vm, Value *args, int n) {
 
 static Value os_listdir(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "os.listdir() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.listdir() expects exactly 1 argument");
     }
     require_string(vm, args[0], "os.listdir", 1);
     const char *path = as_cstring(args[0]);
@@ -103,7 +104,7 @@ static Value os_listdir(VM *vm, Value *args, int n) {
     size_t path_len = strlen(path);
     char *pattern = malloc(path_len + 3);
     if (!pattern) {
-        luna_throw(vm, vm->runtime_error_class, "os.listdir(): out of memory");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.listdir(): out of memory");
     }
     memcpy(pattern, path, path_len);
     if (path_len > 0 && (path[path_len - 1] == '\\' || path[path_len - 1] == '/')) {
@@ -119,7 +120,7 @@ static Value os_listdir(VM *vm, Value *args, int n) {
     intptr_t handle = _findfirst(pattern, &fd);
     free(pattern);
     if (handle == -1) {
-        luna_throw(vm, vm->runtime_error_class, "os.listdir(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.listdir(): %s", strerror(errno));
     }
     do {
         if (strcmp(fd.name, ".") != 0 && strcmp(fd.name, "..") != 0) {
@@ -130,7 +131,7 @@ static Value os_listdir(VM *vm, Value *args, int n) {
 #else
     DIR *dp = opendir(path);
     if (!dp) {
-        luna_throw(vm, vm->runtime_error_class, "os.listdir(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.listdir(): %s", strerror(errno));
     }
     struct dirent *entry;
     while ((entry = readdir(dp)) != NULL) {
@@ -145,17 +146,17 @@ static Value os_listdir(VM *vm, Value *args, int n) {
 
 static Value os_mkdir(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "os.mkdir() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.mkdir() expects exactly 1 argument");
     }
     require_string(vm, args[0], "os.mkdir", 1);
     const char *path = as_cstring(args[0]);
 #ifdef _WIN32
     if (_mkdir(path) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.mkdir(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.mkdir(): %s", strerror(errno));
     }
 #else
     if (mkdir(path, 0755) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.mkdir(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.mkdir(): %s", strerror(errno));
     }
 #endif
     return make_null();
@@ -183,7 +184,7 @@ static char *dup_cstr(const char *s) {
 
 static char *value_to_cstring(VM *vm, Value v, const char *fn, int arg_idx) {
     if (!IS_STRING(v)) {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, py_fe(vm)->type_error_class,
             "%s() argument %d must be a string", fn, arg_idx);
     }
     ObjString *s = (ObjString*)AS_OBJ(v);
@@ -208,19 +209,19 @@ static void file_finalizer(void *data) {
 
 static ObjUserdata *file_userdata_from_instance(VM *vm, Value self, const char *fn) {
     if (!IS_INSTANCE(self) || !AS_OBJ(self)) {
-        luna_throw(vm, vm->type_error_class, "%s() expects a File instance", fn);
+        luna_throw(vm, py_fe(vm)->type_error_class, "%s() expects a File instance", fn);
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     Value handle = instance_get_field(inst, "_handle");
     if (!IS_USERDATA(handle) || !AS_OBJ(handle)) {
-        luna_throw(vm, vm->runtime_error_class, "%s() called on closed file handle", fn);
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed file handle", fn);
     }
     ObjUserdata *ud = (ObjUserdata*)AS_OBJ(handle);
     if (!ud->data) {
-        luna_throw(vm, vm->runtime_error_class, "%s() called on closed file handle", fn);
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed file handle", fn);
     }
     if (!ud->tag || strcmp(ud->tag, "os.File") != 0) {
-        luna_throw(vm, vm->type_error_class, "%s() invalid file handle", fn);
+        luna_throw(vm, py_fe(vm)->type_error_class, "%s() invalid file handle", fn);
     }
     return ud;
 }
@@ -271,14 +272,14 @@ static Value file_flush(VM *vm, Value *args, int n) {
     (void)n;
     LunaFile *file = file_handle_from_instance(vm, args[0], "flush");
     if (fflush(file->fp) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "flush() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "flush() failed");
     }
     return make_null();
 }
 
 static Value file_write(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class, "write() requires a value argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "write() requires a value argument");
     }
     LunaFile *file = file_handle_from_instance(vm, args[0], "write");
     char *text = value_to_string(args[1]);
@@ -286,7 +287,7 @@ static Value file_write(VM *vm, Value *args, int n) {
     size_t written = fwrite(text, 1, len, file->fp);
     free(text);
     if (written != len) {
-        luna_throw(vm, vm->runtime_error_class, "write() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "write() failed");
     }
     return make_int((int32_t)written);
 }
@@ -312,14 +313,14 @@ static Value file_read_all(VM *vm, Value *args, int n) {
     long start = ftell(file->fp);
     if (start < 0) start = 0;
     if (fseek(file->fp, 0, SEEK_END) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "read_all() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read_all() failed");
     }
     long size = ftell(file->fp);
     if (size < 0) {
-        luna_throw(vm, vm->runtime_error_class, "read_all() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read_all() failed");
     }
     if (fseek(file->fp, start, SEEK_SET) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "read_all() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read_all() failed");
     }
 
     char *buf = malloc((size_t)size + 1);
@@ -327,7 +328,7 @@ static Value file_read_all(VM *vm, Value *args, int n) {
     size_t read = fread(buf, 1, (size_t)size, file->fp);
     if (read == 0 && ferror(file->fp)) {
         free(buf);
-        luna_throw(vm, vm->runtime_error_class, "read_all() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read_all() failed");
     }
     buf[read] = '\0';
     Value out = make_obj((Object*)new_string(buf, (int)read));
@@ -339,7 +340,7 @@ static Value file_read_all(VM *vm, Value *args, int n) {
 
 static Value os_open(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class, "os.open() requires path and mode");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.open() requires path and mode");
     }
     char *path = value_to_cstring(vm, args[0], "open", 1);
     char *mode = value_to_cstring(vm, args[1], "open", 2);
@@ -347,7 +348,7 @@ static Value os_open(VM *vm, Value *args, int n) {
     if (!fp) {
         free(path);
         free(mode);
-        luna_throw(vm, vm->runtime_error_class, "os.open: failed to open file");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.open: failed to open file");
     }
 
     ObjInstance *inst = new_instance(file_class, 4);
@@ -359,7 +360,7 @@ static Value os_open(VM *vm, Value *args, int n) {
 
 static Value os_exists(VM *vm, Value *args, int n) {
     if (n < 1) {
-        luna_throw(vm, vm->argument_error_class, "os.exists() requires a path");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.exists() requires a path");
     }
     char *path = value_to_cstring(vm, args[0], "exists", 1);
     FILE *fp = fopen(path, "rb");
@@ -371,30 +372,30 @@ static Value os_exists(VM *vm, Value *args, int n) {
 
 static Value os_read_file(VM *vm, Value *args, int n) {
     if (n < 1) {
-        luna_throw(vm, vm->argument_error_class, "os.read_file() requires a path");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.read_file() requires a path");
     }
     char *path = value_to_cstring(vm, args[0], "read_file", 1);
     FILE *fp = fopen(path, "rb");
     if (!fp) {
         free(path);
-        luna_throw(vm, vm->runtime_error_class, "os.read_file: failed to open file");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.read_file: failed to open file");
     }
 
     if (fseek(fp, 0, SEEK_END) != 0) {
         fclose(fp);
         free(path);
-        luna_throw(vm, vm->runtime_error_class, "read_file() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read_file() failed");
     }
     long size = ftell(fp);
     if (size < 0) {
         fclose(fp);
         free(path);
-        luna_throw(vm, vm->runtime_error_class, "read_file() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read_file() failed");
     }
     if (fseek(fp, 0, SEEK_SET) != 0) {
         fclose(fp);
         free(path);
-        luna_throw(vm, vm->runtime_error_class, "read_file() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read_file() failed");
     }
 
     char *buf = malloc((size_t)size + 1);
@@ -405,7 +406,7 @@ static Value os_read_file(VM *vm, Value *args, int n) {
     free(path);
     if (had_error) {
         free(buf);
-        luna_throw(vm, vm->runtime_error_class, "read_file() failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read_file() failed");
     }
     buf[read] = '\0';
     Value out = make_obj((Object*)new_string(buf, (int)read));
@@ -415,7 +416,7 @@ static Value os_read_file(VM *vm, Value *args, int n) {
 
 static Value os_write_file(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class, "os.write_file() requires path and data");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.write_file() requires path and data");
     }
     char *path = value_to_cstring(vm, args[0], "write_file", 1);
     char *data = value_to_string(args[1]);
@@ -423,7 +424,7 @@ static Value os_write_file(VM *vm, Value *args, int n) {
     if (!fp) {
         free(path);
         free(data);
-        luna_throw(vm, vm->runtime_error_class, "os.write_file: failed to open file");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.write_file: failed to open file");
     }
     size_t len = strlen(data);
     size_t written = fwrite(data, 1, len, fp);
@@ -435,7 +436,7 @@ static Value os_write_file(VM *vm, Value *args, int n) {
 
 static Value os_append_file(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class, "os.append_file() requires path and data");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.append_file() requires path and data");
     }
     char *path = value_to_cstring(vm, args[0], "append_file", 1);
     char *data = value_to_string(args[1]);
@@ -443,7 +444,7 @@ static Value os_append_file(VM *vm, Value *args, int n) {
     if (!fp) {
         free(path);
         free(data);
-        luna_throw(vm, vm->runtime_error_class, "os.append_file: failed to open file");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.append_file: failed to open file");
     }
     size_t len = strlen(data);
     size_t written = fwrite(data, 1, len, fp);
@@ -459,19 +460,19 @@ static Value os_append_file(VM *vm, Value *args, int n) {
 
 static Value os_rename(VM *vm, Value *args, int n) {
     if (n != 2) {
-        luna_throw(vm, vm->argument_error_class, "os.rename() expects exactly 2 arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.rename() expects exactly 2 arguments");
     }
     require_string(vm, args[0], "os.rename", 1);
     require_string(vm, args[1], "os.rename", 2);
     if (rename(as_cstring(args[0]), as_cstring(args[1])) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.rename(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.rename(): %s", strerror(errno));
     }
     return make_null();
 }
 
 static Value os_remove(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "os.remove() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.remove() expects exactly 1 argument");
     }
     require_string(vm, args[0], "os.remove", 1);
     int rc = remove(as_cstring(args[0]));
@@ -480,7 +481,7 @@ static Value os_remove(VM *vm, Value *args, int n) {
 
 static Value os_stat(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "os.stat() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.stat() expects exactly 1 argument");
     }
     require_string(vm, args[0], "os.stat", 1);
     const char *path = as_cstring(args[0]);
@@ -488,13 +489,13 @@ static Value os_stat(VM *vm, Value *args, int n) {
 #ifdef _WIN32
     struct _stat st;
     if (_stat(path, &st) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.stat(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.stat(): %s", strerror(errno));
     }
     int is_dir = (st.st_mode & _S_IFDIR) != 0;
 #else
     struct stat st;
     if (stat(path, &st) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.stat(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.stat(): %s", strerror(errno));
     }
     int is_dir = S_ISDIR(st.st_mode);
 #endif
@@ -522,7 +523,7 @@ static Value os_stat(VM *vm, Value *args, int n) {
 
 static Value os_execute(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "os.execute() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.execute() expects exactly 1 argument");
     }
     require_string(vm, args[0], "os.execute", 1);
     const char *cmd = as_cstring(args[0]);
@@ -531,7 +532,7 @@ static Value os_execute(VM *vm, Value *args, int n) {
     return make_int((int64_t)ret);
 #else
     if (ret == -1) {
-        luna_throw(vm, vm->runtime_error_class, "os.execute(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.execute(): %s", strerror(errno));
     }
     if (WIFEXITED(ret)) {
         return make_int((int64_t)WEXITSTATUS(ret));
@@ -543,7 +544,7 @@ static Value os_execute(VM *vm, Value *args, int n) {
 static Value os_args(VM *vm, Value *args_val, int n) {
     (void)args_val;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "os.args() takes no arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.args() takes no arguments");
     }
     ObjList *list = new_list(vm->process_argc);
     for (int i = 0; i < vm->process_argc; i++) {
@@ -555,10 +556,10 @@ static Value os_args(VM *vm, Value *args_val, int n) {
 
 static Value os_exit(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "os.exit() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.exit() expects exactly 1 argument");
     }
     if (!IS_NUMBER(args[0])) {
-        luna_throw(vm, vm->type_error_class, "os.exit() argument must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "os.exit() argument must be numeric");
     }
     int code = (int)value_to_double(args[0]);
     fflush(stdout);
@@ -570,7 +571,7 @@ static Value os_exit(VM *vm, Value *args, int n) {
 static Value os_platform(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "os.platform() takes no arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.platform() takes no arguments");
     }
 #ifdef _WIN32
     return make_obj((Object*)new_string("win32", 5));
@@ -582,7 +583,7 @@ static Value os_platform(VM *vm, Value *args, int n) {
 static Value os_getpid(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "os.getpid() takes no arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.getpid() takes no arguments");
     }
 #ifdef _WIN32
     return make_int((int64_t)_getpid());
@@ -594,17 +595,17 @@ static Value os_getpid(VM *vm, Value *args, int n) {
 static Value os_hostname(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "os.hostname() takes no arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.hostname() takes no arguments");
     }
     char buf[256];
 #ifdef _WIN32
     DWORD size = sizeof(buf);
     if (!GetComputerNameA(buf, &size)) {
-        luna_throw(vm, vm->runtime_error_class, "os.hostname(): system call failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.hostname(): system call failed");
     }
 #else
     if (gethostname(buf, sizeof(buf)) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.hostname(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.hostname(): %s", strerror(errno));
     }
 #endif
     buf[sizeof(buf) - 1] = '\0';
@@ -614,19 +615,19 @@ static Value os_hostname(VM *vm, Value *args, int n) {
 static Value os_username(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "os.username() takes no arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.username() takes no arguments");
     }
 #ifdef _WIN32
     char buf[256];
     DWORD size = sizeof(buf);
     if (!GetUserNameA(buf, &size)) {
-        luna_throw(vm, vm->runtime_error_class, "os.username(): system call failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.username(): system call failed");
     }
     return make_obj((Object*)new_string(buf, (int)strlen(buf)));
 #else
     struct passwd *pw = getpwuid(getuid());
     if (!pw || !pw->pw_name) {
-        luna_throw(vm, vm->runtime_error_class, "os.username(): unable to determine user");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.username(): unable to determine user");
     }
     return make_obj((Object*)new_string(pw->pw_name, (int)strlen(pw->pw_name)));
 #endif
@@ -635,13 +636,13 @@ static Value os_username(VM *vm, Value *args, int n) {
 static Value os_tmpdir(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "os.tmpdir() takes no arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.tmpdir() takes no arguments");
     }
 #ifdef _WIN32
     char buf[MAX_PATH + 1];
     DWORD len = GetTempPathA(sizeof(buf), buf);
     if (len == 0 || len > sizeof(buf)) {
-        luna_throw(vm, vm->runtime_error_class, "os.tmpdir(): system call failed");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.tmpdir(): system call failed");
     }
     /* Remove trailing backslash if present */
     size_t slen = strlen(buf);
@@ -663,7 +664,7 @@ static Value os_tmpdir(VM *vm, Value *args, int n) {
 
 static Value os_getenv(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "os.getenv() expects exactly 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.getenv() expects exactly 1 argument");
     }
     require_string(vm, args[0], "os.getenv", 1);
     const char *key = as_cstring(args[0]);
@@ -674,7 +675,7 @@ static Value os_getenv(VM *vm, Value *args, int n) {
 
 static Value os_setenv(VM *vm, Value *args, int n) {
     if (n != 2) {
-        luna_throw(vm, vm->argument_error_class, "os.setenv() expects exactly 2 arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.setenv() expects exactly 2 arguments");
     }
     require_string(vm, args[0], "os.setenv", 1);
     require_string(vm, args[1], "os.setenv", 2);
@@ -683,11 +684,11 @@ static Value os_setenv(VM *vm, Value *args, int n) {
 
 #ifdef _WIN32
     if (_putenv_s(key, val) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.setenv(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.setenv(): %s", strerror(errno));
     }
 #else
     if (setenv(key, val, 1) != 0) {
-        luna_throw(vm, vm->runtime_error_class, "os.setenv(): %s", strerror(errno));
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.setenv(): %s", strerror(errno));
     }
 #endif
     return make_null();
@@ -699,7 +700,7 @@ static Value os_setenv(VM *vm, Value *args, int n) {
 
 static Value os_path_join(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class, "os.path_join() expects at least 2 arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.path_join() expects at least 2 arguments");
     }
     for (int i = 0; i < n; i++) {
         require_string(vm, args[i], "os.path_join", i + 1);
@@ -713,7 +714,7 @@ static Value os_path_join(VM *vm, Value *args, int n) {
 
     char *buf = (char*)malloc(capacity);
     if (!buf) {
-        luna_throw(vm, vm->runtime_error_class, "os.path_join(): out of memory");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.path_join(): out of memory");
     }
 
     size_t pos = 0;
@@ -812,7 +813,7 @@ void vm_register_os_module(VM *vm) {
              make_obj((Object*)new_string("pathsep", 7)),
              make_obj((Object*)new_string(pathsep_str, 1)));
 
-    dict_set(vm->module_cache,
+    dict_set(py_fe(vm)->module_cache,
              make_obj((Object*)new_string("os", 2)),
              make_obj((Object*)mod));
 }

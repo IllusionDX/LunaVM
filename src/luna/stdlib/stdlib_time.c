@@ -15,6 +15,7 @@
 #include "stdlib_time.h"
 #include "value.h"
 #include "luna/object.h"
+#include "luna/frontend_state.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -77,7 +78,7 @@ static void sleep_ms(double ms) {
 
 static inline double checked_number(VM *vm, Value v, const char *fn) {
     if (!IS_NUMBER(v)) {
-        luna_throw(vm, vm->type_error_class, "%s() argument must be numeric", fn);
+        luna_throw(vm, luna_fe(vm)->type_error_class, "%s() argument must be numeric", fn);
     }
     return value_to_double(v);
 }
@@ -85,7 +86,7 @@ static inline double checked_number(VM *vm, Value v, const char *fn) {
 static Value time_now(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "time.now() takes no arguments");
+        luna_throw(vm, luna_fe(vm)->argument_error_class, "time.now() takes no arguments");
     }
     return make_double(unix_time_seconds());
 }
@@ -98,7 +99,7 @@ static uint64_t time_elapsed_us(VM *vm) {
 static Value time_ticks_usec(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "time.ticks_usec() takes no arguments");
+        luna_throw(vm, luna_fe(vm)->argument_error_class, "time.ticks_usec() takes no arguments");
     }
     return make_double((double)time_elapsed_us(vm));
 }
@@ -106,14 +107,14 @@ static Value time_ticks_usec(VM *vm, Value *args, int n) {
 static Value time_ticks_msec(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class, "time.ticks_msec() takes no arguments");
+        luna_throw(vm, luna_fe(vm)->argument_error_class, "time.ticks_msec() takes no arguments");
     }
     return make_double((double)time_elapsed_us(vm) / 1000.0);
 }
 
 static Value time_sleep(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class, "time.sleep() expects exactly 1 argument");
+        luna_throw(vm, luna_fe(vm)->argument_error_class, "time.sleep() expects exactly 1 argument");
     }
     double ms = checked_number(vm, args[0], "time.sleep");
     sleep_ms(ms);
@@ -135,5 +136,5 @@ void vm_register_time_module(VM *vm) {
 
     Value mod_val = make_obj((Object *)mod);
     ObjString *key = new_string("time", 4);
-    dict_set(vm->module_cache, make_obj((Object *)key), mod_val);
+    dict_set(luna_fe(vm)->module_cache, make_obj((Object *)key), mod_val);
 }

@@ -11,6 +11,7 @@
 #include "stdlib_io.h"
 #include "value.h"
 #include "luna/object.h"
+#include "luna/frontend_state.h"
 
 typedef struct PipeData {
     char *buf;
@@ -42,23 +43,23 @@ static void pipe_finalizer(void *data) {
 
 static Value io_read_all(VM *vm, Value *args, int n) {
     if (n != 1) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "io.read_all() expects exactly 1 argument");
     }
     if (!IS_INSTANCE(args[0])) {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, luna_fe(vm)->type_error_class,
             "io.read_all() requires an instance with a read_all method");
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
     if (!inst->klass) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "io.read_all(): object has no class");
     }
     for (int i = 0; i < inst->klass->method_count; i++) {
         if (strcmp(inst->klass->method_names[i], "read_all") == 0) {
             ObjFunction *m = inst->klass->methods[i];
             if (!m->is_native) {
-                luna_throw(vm, vm->runtime_error_class,
+                luna_throw(vm, luna_fe(vm)->runtime_error_class,
                     "io.read_all(): read_all is not a native method");
             }
             Value call_args[2];
@@ -69,7 +70,7 @@ static Value io_read_all(VM *vm, Value *args, int n) {
             return result;
         }
     }
-    luna_throw(vm, vm->runtime_error_class,
+    luna_throw(vm, luna_fe(vm)->runtime_error_class,
         "io.read_all(): object has no read_all method");
     return make_null();
 }
@@ -81,25 +82,25 @@ static Value io_read_all(VM *vm, Value *args, int n) {
 
 static Value io_copy(VM *vm, Value *args, int n) {
     if (n != 2) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "io.copy() expects exactly 2 arguments (dst, src)");
     }
     Value data = io_read_all(vm, args + 1, 1);
 
     if (!IS_INSTANCE(args[0])) {
-        luna_throw(vm, vm->type_error_class,
+        luna_throw(vm, luna_fe(vm)->type_error_class,
             "io.copy() destination must be an instance with a write method");
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
     if (!inst->klass) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "io.copy(): destination has no class");
     }
     for (int i = 0; i < inst->klass->method_count; i++) {
         if (strcmp(inst->klass->method_names[i], "write") == 0) {
             ObjFunction *m = inst->klass->methods[i];
             if (!m->is_native) {
-                luna_throw(vm, vm->runtime_error_class,
+                luna_throw(vm, luna_fe(vm)->runtime_error_class,
                     "io.copy(): write is not a native method");
             }
             Value call_args[3];
@@ -111,7 +112,7 @@ static Value io_copy(VM *vm, Value *args, int n) {
             return result;
         }
     }
-    luna_throw(vm, vm->runtime_error_class,
+    luna_throw(vm, luna_fe(vm)->runtime_error_class,
         "io.copy(): destination has no write method");
     return make_null();
 }
@@ -155,7 +156,7 @@ static Value pipe_read_all(VM *vm, Value *args, int n) {
 
 static Value pipe_write(VM *vm, Value *args, int n) {
     if (n < 2) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "pipe.write() requires a value argument");
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
@@ -164,7 +165,7 @@ static Value pipe_write(VM *vm, Value *args, int n) {
     ObjUserdata *ud = (ObjUserdata*)AS_OBJ(h);
     PipeData *pd = (PipeData*)ud->data;
     if (!pd) {
-        luna_throw(vm, vm->runtime_error_class,
+        luna_throw(vm, luna_fe(vm)->runtime_error_class,
             "pipe.write(): pipe is closed");
     }
 
@@ -199,7 +200,7 @@ static Value pipe_close(VM *vm, Value *args, int n) {
 static Value io_pipe(VM *vm, Value *args, int n) {
     (void)args;
     if (n != 0) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "io.pipe() takes no arguments");
     }
 
@@ -288,7 +289,7 @@ void vm_register_io_module(VM *vm) {
                  make_obj((Object*)fn));
     }
 
-    dict_set(vm->module_cache,
+    dict_set(luna_fe(vm)->module_cache,
              make_obj((Object*)new_string("io", 2)),
              make_obj((Object*)mod));
 }

@@ -20,6 +20,7 @@
 #include "vm.h"
 #include "value.h"
 #include "py/object.h"
+#include "py/frontend_state.h"
 #include "stdlib_random.h"
 
 /* ============================================================ */
@@ -326,7 +327,7 @@ static ObjList *get_state_list(Value self) {
 static Value rng_int(VM *vm, Value *args, int n) {
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list)
-        luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "Random instance corrupted: missing _state");
 
     uint64_t raw = rng_step(state_list);
 
@@ -335,13 +336,13 @@ static Value rng_int(VM *vm, Value *args, int n) {
         return make_ranged_result(raw);
     }
     if (n != 3) {
-        luna_throw(vm, vm->argument_error_class, "Random.int() expects 0 or 2 arguments (min, max)");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "Random.int() expects 0 or 2 arguments (min, max)");
     }
 
     if (!IS_NUMBER(args[1]))
-        luna_throw(vm, vm->type_error_class, "Random.int(): min must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "Random.int(): min must be numeric");
     if (!IS_NUMBER(args[2]))
-        luna_throw(vm, vm->type_error_class, "Random.int(): max must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "Random.int(): max must be numeric");
 
     int64_t min = value_to_int64(args[1]);
     int64_t max = value_to_int64(args[2]);
@@ -357,11 +358,11 @@ static Value rng_int(VM *vm, Value *args, int n) {
 /* --- rng.float(min, max) --- */
 static Value rng_float(VM *vm, Value *args, int n) {
     if (n < 1)
-        luna_throw(vm, vm->argument_error_class, "Random.float() called without instance");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "Random.float() called without instance");
 
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list)
-        luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "Random instance corrupted: missing _state");
 
     uint64_t raw = rng_step(state_list);
     /* Upper 53 bits of 64-bit random → uniform double in [0, 1) */
@@ -372,28 +373,28 @@ static Value rng_float(VM *vm, Value *args, int n) {
     }
     if (n >= 3) {
         if (!IS_NUMBER(args[1]))
-            luna_throw(vm, vm->type_error_class, "Random.float(): min must be numeric");
+            luna_throw(vm, py_fe(vm)->type_error_class, "Random.float(): min must be numeric");
         if (!IS_NUMBER(args[2]))
-            luna_throw(vm, vm->type_error_class, "Random.float(): max must be numeric");
+            luna_throw(vm, py_fe(vm)->type_error_class, "Random.float(): max must be numeric");
         double min = value_to_double(args[1]);
         double max = value_to_double(args[2]);
         return make_double(min + normalized * (max - min));
     }
 
-    luna_throw(vm, vm->argument_error_class, "Random.float() takes 0 or 2 arguments");
+    luna_throw(vm, py_fe(vm)->argument_error_class, "Random.float() takes 0 or 2 arguments");
     return make_null(); /* unreachable */
 }
 
 /* --- rng.seed(new_seed) --- */
 static Value rng_seed(VM *vm, Value *args, int n) {
     if (n < 2)
-        luna_throw(vm, vm->argument_error_class, "Random.seed() requires 1 argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "Random.seed() requires 1 argument");
     if (!IS_NUMBER(args[1]))
-        luna_throw(vm, vm->type_error_class, "Random.seed(): seed must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "Random.seed(): seed must be numeric");
 
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list)
-        luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "Random instance corrupted: missing _state");
 
     uint64_t new_seed = value_to_uint64(args[1]);
     int tag = AS_INT(list_get(state_list, 0));
@@ -412,12 +413,12 @@ static Value rng_seed(VM *vm, Value *args, int n) {
 /* --- rng_call: the callable protocol --- */
 static Value rng_call(VM *vm, Value *args, int n) {
     if (n != 1 && n != 3) {
-        luna_throw(vm, vm->argument_error_class, "Random() takes 0 or 2 arguments");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "Random() takes 0 or 2 arguments");
     }
 
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list)
-        luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "Random instance corrupted: missing _state");
 
     uint64_t raw = rng_step(state_list);
 
@@ -428,9 +429,9 @@ static Value rng_call(VM *vm, Value *args, int n) {
     }
 
     if (!IS_NUMBER(args[1]))
-        luna_throw(vm, vm->type_error_class, "Random(): first argument must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "Random(): first argument must be numeric");
     if (!IS_NUMBER(args[2]))
-        luna_throw(vm, vm->type_error_class, "Random(): second argument must be numeric");
+        luna_throw(vm, py_fe(vm)->type_error_class, "Random(): second argument must be numeric");
 
     bool is_int_range = (IS_INT(args[1]) || IS_INT64(args[1])) &&
                         (IS_INT(args[2]) || IS_INT64(args[2]));
@@ -456,22 +457,22 @@ static Value rng_call(VM *vm, Value *args, int n) {
 /* --- rng.choice(seq) --- */
 static Value rng_choice(VM *vm, Value *args, int n) {
     if (n < 2)
-        luna_throw(vm, vm->argument_error_class, "choice() requires a sequence argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "choice() requires a sequence argument");
 
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list)
-        luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "Random instance corrupted: missing _state");
 
     Value seq = args[1];
     if (!IS_OBJ(seq))
-        luna_throw(vm, vm->type_error_class, "choice(): argument must be a list or string");
+        luna_throw(vm, py_fe(vm)->type_error_class, "choice(): argument must be a list or string");
 
     Object *obj = AS_OBJ(seq);
     if (obj->type->kind == OBJ_LIST) {
         ObjList *list = (ObjList*)obj;
         int len = list_length(list);
         if (len == 0)
-            luna_throw(vm, vm->value_error_class, "choice(): list is empty");
+            luna_throw(vm, py_fe(vm)->value_error_class, "choice(): list is empty");
         uint64_t raw = rng_step(state_list);
         int idx = (int)lemire_range_64(raw, (uint64_t)len);
         return list_get(list, idx);
@@ -479,23 +480,23 @@ static Value rng_choice(VM *vm, Value *args, int n) {
     if (obj->type->kind == OBJ_STRING) {
         ObjString *str = (ObjString*)obj;
         if (str->length == 0)
-            luna_throw(vm, vm->value_error_class, "choice(): string is empty");
+            luna_throw(vm, py_fe(vm)->value_error_class, "choice(): string is empty");
         uint64_t raw = rng_step(state_list);
         int idx = (int)lemire_range_64(raw, (uint64_t)str->length);
         return make_obj((Object*)new_string(&str->chars[idx], 1));
     }
 
-    luna_throw(vm, vm->type_error_class, "choice(): argument must be a list or string");
+    luna_throw(vm, py_fe(vm)->type_error_class, "choice(): argument must be a list or string");
     return make_null(); /* unreachable */
 }
 
 /* --- rng.shuffle(list) — Fisher-Yates, in-place --- */
 static Value rng_shuffle(VM *vm, Value *args, int n) {
     if (n < 2)
-        luna_throw(vm, vm->argument_error_class, "shuffle() requires a list argument");
+        luna_throw(vm, py_fe(vm)->argument_error_class, "shuffle() requires a list argument");
 
     if (!IS_OBJ(args[1]) || AS_OBJ(args[1])->type->kind != OBJ_LIST)
-        luna_throw(vm, vm->type_error_class, "shuffle(): argument must be a list");
+        luna_throw(vm, py_fe(vm)->type_error_class, "shuffle(): argument must be a list");
 
     ObjList *list = (ObjList*)AS_OBJ(args[1]);
     int len = list->count;
@@ -503,7 +504,7 @@ static Value rng_shuffle(VM *vm, Value *args, int n) {
 
     ObjList *state_list = get_state_list(args[0]);
     if (!state_list)
-        luna_throw(vm, vm->runtime_error_class, "Random instance corrupted: missing _state");
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "Random instance corrupted: missing _state");
 
     for (int i = len - 1; i > 0; i--) {
         uint64_t raw = rng_step(state_list);
@@ -530,7 +531,7 @@ static Value random_WyRand(VM *vm, Value *args, int n) {
     uint64_t seed = 0;
     if (n >= 1) {
         if (!IS_NUMBER(args[0]))
-            luna_throw(vm, vm->type_error_class, "WyRand(): seed must be numeric");
+            luna_throw(vm, py_fe(vm)->type_error_class, "WyRand(): seed must be numeric");
         seed = seed_from_arg(args[0]);
     }
     return make_rng_instance(vm, RNG_WYRAND, seed);
@@ -540,7 +541,7 @@ static Value random_Xoshiro256(VM *vm, Value *args, int n) {
     uint64_t seed = 0;
     if (n >= 1) {
         if (!IS_NUMBER(args[0]))
-            luna_throw(vm, vm->type_error_class, "Xoshiro256(): seed must be numeric");
+            luna_throw(vm, py_fe(vm)->type_error_class, "Xoshiro256(): seed must be numeric");
         seed = seed_from_arg(args[0]);
     }
     return make_rng_instance(vm, RNG_XOSHIRO256SS, seed);
@@ -550,7 +551,7 @@ static Value random_PCG(VM *vm, Value *args, int n) {
     uint64_t seed = 0;
     if (n >= 1) {
         if (!IS_NUMBER(args[0]))
-            luna_throw(vm, vm->type_error_class, "PCG(): seed must be numeric");
+            luna_throw(vm, py_fe(vm)->type_error_class, "PCG(): seed must be numeric");
         seed = seed_from_arg(args[0]);
     }
     return make_rng_instance(vm, RNG_PCG64, seed);
@@ -581,7 +582,7 @@ void vm_register_random_module(VM *vm) {
 
     /* Cache module */
     Value mod_val = make_obj((Object*)mod);
-    dict_set(vm->module_cache,
+    dict_set(py_fe(vm)->module_cache,
              make_obj((Object*)new_string("random", 6)),
              mod_val);
 }

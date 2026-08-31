@@ -15,6 +15,7 @@
 
 #include "value.h"
 #include "py/object.h"
+#include "py/frontend_state.h"
 #include "chunk.h"
 #include "vm.h"
 #include "api.h"
@@ -1748,7 +1749,7 @@ void buffer_append_data(ObjBuffer *buf, const uint8_t *data, size_t len) {
 
 Value make_exception_instance(struct VM *vm, void *cls_obj, const char *message) {
     ObjClass *cls = (ObjClass*)cls_obj;
-    if (!cls) cls = vm->exception_class;
+    if (!cls) cls = py_fe(vm)->exception_class;
     if (!cls) return make_null();
     ObjInstance *inst = new_instance(cls, 4);
     instance_set_field(inst, "message", make_obj((Object*)new_string(message, strlen(message))));
@@ -2271,21 +2272,26 @@ void class_add_native_method(void *cls_obj, const char *name, NativeFn fn) {
 }
 
 struct ObjClass *get_class(VM *vm, Value val) {
-    if (!IS_OBJ(val) || !AS_OBJ(val)) return NULL;
+    if (!IS_OBJ(val) || !AS_OBJ(val)) {
+        /* Immediates are virtual objects: bool/int map to int, double to float. */
+        if (IS_INT(val) || IS_BOOL(val)) return py_fe(vm)->int_class;
+        if (IS_DOUBLE(val)) return py_fe(vm)->float_class;
+        return NULL;
+    }
     switch (AS_OBJ(val)->type->kind) {
-        case OBJ_STRING:       return vm->string_class;
-        case OBJ_LIST:         return vm->list_class;
-        case OBJ_DICT:         return vm->dict_class;
-        case OBJ_ENUM:         return vm->enum_class;
-        case OBJ_BUFFER:       return vm->buffer_class;
-        case OBJ_VECTOR:       return vm->vector_class;
-        case OBJ_MATRIX:       return vm->matrix_class;
-        case OBJ_FUNCTION:     return vm->function_class;
-        case OBJ_CLOSURE:      return vm->closure_class;
-        case OBJ_BOUND_METHOD: return vm->bound_method_class;
-        case OBJ_CLASS:        return vm->class_class;
-        case OBJ_MODULE:       return vm->module_class;
-        case OBJ_USERDATA:     return vm->userdata_class;
+        case OBJ_STRING:       return py_fe(vm)->string_class;
+        case OBJ_LIST:         return py_fe(vm)->list_class;
+        case OBJ_DICT:         return py_fe(vm)->dict_class;
+        case OBJ_ENUM:         return py_fe(vm)->enum_class;
+        case OBJ_BUFFER:       return py_fe(vm)->buffer_class;
+        case OBJ_VECTOR:       return py_fe(vm)->vector_class;
+        case OBJ_MATRIX:       return py_fe(vm)->matrix_class;
+        case OBJ_FUNCTION:     return py_fe(vm)->function_class;
+        case OBJ_CLOSURE:      return py_fe(vm)->closure_class;
+        case OBJ_BOUND_METHOD: return py_fe(vm)->bound_method_class;
+        case OBJ_CLASS:        return py_fe(vm)->class_class;
+        case OBJ_MODULE:       return py_fe(vm)->module_class;
+        case OBJ_USERDATA:     return py_fe(vm)->userdata_class;
         case OBJ_INSTANCE:     return ((ObjInstance*)AS_OBJ(val))->klass;
         default:               return NULL;
     }

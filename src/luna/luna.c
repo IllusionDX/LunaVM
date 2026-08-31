@@ -10,6 +10,7 @@
 #include "vm.h"
 #include "value.h"
 #include "luna/object.h"
+#include "luna/frontend_state.h"
 #include "chunk.h"
 #include "lexer.h"
 #include "parser.h"
@@ -23,16 +24,18 @@
 
 void luna_mark_roots(VM *vm) {
     api_mark_roots(vm);
-    /* All language-owned roots live behind the frontend hook.  The core must
-     * not know which canonical classes or module cache a language uses. */
+    /* All language-owned roots live in the frontend state. The core must not
+     * know which canonical classes or module cache a language uses. */
+    LunaFrontend *fe = luna_fe(vm);
+    if (!fe) return;
     void *roots[] = {
-        vm->module_cache, vm->exception_class, vm->type_error_class,
-        vm->key_error_class, vm->index_error_class, vm->attribute_error_class,
-        vm->value_error_class, vm->runtime_error_class, vm->argument_error_class,
-        vm->string_class, vm->list_class, vm->dict_class, vm->enum_class,
-        vm->buffer_class, vm->vector_class, vm->matrix_class, vm->function_class,
-        vm->closure_class, vm->bound_method_class, vm->class_class,
-        vm->module_class, vm->userdata_class
+        fe->module_cache, fe->exception_class, fe->type_error_class,
+        fe->key_error_class, fe->index_error_class, fe->attribute_error_class,
+        fe->value_error_class, fe->runtime_error_class, fe->argument_error_class,
+        fe->string_class, fe->list_class, fe->dict_class, fe->enum_class,
+        fe->buffer_class, fe->vector_class, fe->matrix_class, fe->function_class,
+        fe->closure_class, fe->bound_method_class, fe->class_class,
+        fe->module_class, fe->userdata_class
     };
     for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
         if (roots[i]) vm_mark_value(vm, make_obj(roots[i]));
@@ -115,11 +118,11 @@ static bool luna_binary_operation(VM *vm, VMOperation op, Value left, Value righ
             case VM_OP_MUL: *out = luna_integer_result(a * b); return true;
             case VM_OP_DIV:
                 if (b) { *out = luna_integer_result(a / b); return true; }
-                vm->last_exception = make_exception_instance(vm, vm->runtime_error_class, "division by zero");
+                vm->last_exception = make_exception_instance(vm, luna_fe(vm)->runtime_error_class, "division by zero");
                 return false;
             case VM_OP_MOD:
                 if (b) { *out = luna_integer_result(a % b); return true; }
-                vm->last_exception = make_exception_instance(vm, vm->exception_class, "mod/0");
+                vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, "mod/0");
                 return false;
             case VM_OP_BAND: *out = luna_integer_result(a & b); return true;
             case VM_OP_BOR:  *out = luna_integer_result(a | b); return true;
@@ -183,23 +186,23 @@ static bool luna_compare_operation(VM *vm, VMOperation op, Value left, Value rig
 static bool luna_index_get(VM *vm, Value object, Value key, bool safe, Value *out) {
     if (!IS_OBJ(object) || !AS_OBJ(object)) {
         if (safe) { *out = make_null(); return true; }
-        vm->last_exception = make_exception_instance(vm, vm->type_error_class, "cannot index null value");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->type_error_class, "cannot index null value");
         return false;
     }
     Type *type = AS_OBJ(object)->type;
     if (!type || !type->getitem) {
         if (safe) { *out = make_null(); return true; }
-        vm->last_exception = make_exception_instance(vm, vm->type_error_class, "value is not indexable");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->type_error_class, "value is not indexable");
         return false;
     }
     if (IS_LIST(object) && !IS_INT(key)) {
         if (safe) { *out = make_null(); return true; }
-        vm->last_exception = make_exception_instance(vm, vm->type_error_class, "list index must be integer");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->type_error_class, "list index must be integer");
         return false;
     }
     if (IS_STRING(object) && !IS_INT(key)) {
         if (safe) { *out = make_null(); return true; }
-        vm->last_exception = make_exception_instance(vm, vm->type_error_class, "string index must be integer");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->type_error_class, "string index must be integer");
         return false;
     }
     *out = type->getitem(vm, object, key);
@@ -208,14 +211,14 @@ static bool luna_index_get(VM *vm, Value object, Value key, bool safe, Value *ou
         char message[256];
         snprintf(message, sizeof(message), "%s not found in dict", ks);
         free(ks);
-        vm->last_exception = make_exception_instance(vm, vm->key_error_class, message);
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->key_error_class, message);
         return false;
     }
     if (!safe && IS_LIST(object)) {
         ObjList *list = (ObjList *)AS_OBJ(object);
         int index = AS_INT(key); if (index < 0) index += list->count;
         if (index < 0 || index >= list->count) {
-            vm->last_exception = make_exception_instance(vm, vm->index_error_class, "list index out of bounds");
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->index_error_class, "list index out of bounds");
             return false;
         }
     }
@@ -223,7 +226,7 @@ static bool luna_index_get(VM *vm, Value object, Value key, bool safe, Value *ou
         ObjString *string = (ObjString *)AS_OBJ(object);
         int index = AS_INT(key); if (index < 0) index += string->length;
         if (index < 0 || index >= string->length) {
-            vm->last_exception = make_exception_instance(vm, vm->index_error_class, "string index out of bounds");
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->index_error_class, "string index out of bounds");
             return false;
         }
     }
@@ -233,11 +236,11 @@ static bool luna_index_get(VM *vm, Value object, Value key, bool safe, Value *ou
 static bool luna_index_set(VM *vm, Value object, Value key, Value value) {
     if (!IS_OBJ(object) || !AS_OBJ(object) || !AS_OBJ(object)->type ||
         !AS_OBJ(object)->type->setitem) {
-        vm->last_exception = make_exception_instance(vm, vm->type_error_class, "invalid index assignment");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->type_error_class, "invalid index assignment");
         return false;
     }
     if (IS_LIST(object) && !IS_INT(key)) {
-        vm->last_exception = make_exception_instance(vm, vm->type_error_class, "list index must be integer");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->type_error_class, "list index must be integer");
         return false;
     }
     if (IS_LIST(object)) {
@@ -247,7 +250,7 @@ static bool luna_index_set(VM *vm, Value object, Value key, Value value) {
         if (index < 0 || index >= list->count) {
             char message[128];
             snprintf(message, sizeof(message), "list index out of bounds (index: %d, size: %d)", index, list->count);
-            vm->last_exception = make_exception_instance(vm, vm->index_error_class, message);
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->index_error_class, message);
             return false;
         }
     }
@@ -395,10 +398,10 @@ static bool luna_iterate(VM *vm, Value object, Value *iter, Value *state) {
     } else if (IS_LIST(object) || IS_STRING(object)) {
         *iter = object;
     } else if (IS_OBJ(object) && AS_OBJ(object)) {
-        vm->last_exception = make_exception_instance(vm, vm->type_error_class, "object is not iterable");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->type_error_class, "object is not iterable");
         return false;
     } else {
-        vm->last_exception = make_exception_instance(vm, vm->type_error_class, "cannot iterate null value");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->type_error_class, "cannot iterate null value");
         return false;
     }
     *state = make_int(0);
@@ -443,7 +446,7 @@ static bool luna_new_dict_op(VM *vm, Value *out) {
  * hook), so this only performs the language-level append + type check. */
 static bool luna_list_append_op(VM *vm, Value list, Value value) {
     if (!IS_LIST(list)) {
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, "listappend on non-list");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, "listappend on non-list");
         return false;
     }
     list_add((ObjList *)AS_OBJ(list), value);
@@ -467,7 +470,7 @@ static bool luna_construct(VM *vm, Value class_name_value, Value *out) {
         if (!vm_get_global(vm, mod_name, &mod_val) || !IS_MODULE(mod_val)) {
             char buf[256];
             snprintf(buf, sizeof(buf), "module '%s' not found for new", mod_name);
-            vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, buf);
             return false;
         }
         ObjModule *mod = (ObjModule *)AS_OBJ(mod_val);
@@ -476,14 +479,14 @@ static bool luna_construct(VM *vm, Value class_name_value, Value *out) {
         if (!IS_CLASS(cls_val)) {
             char buf[256];
             snprintf(buf, sizeof(buf), "class '%s' not found in module '%s'", dot + 1, mod_name);
-            vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, buf);
             return false;
         }
     } else {
         if (!vm_get_global(vm, cls_name, &cls_val) || !IS_CLASS(cls_val)) {
             char buf[256];
             snprintf(buf, sizeof(buf), "class '%s' not found for new", cls_name);
-            vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, buf);
             return false;
         }
     }
@@ -547,7 +550,7 @@ static bool luna_set_field_slot(VM *vm, Value obj, int slot, Value value) {
 static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *callable) {
     *callable = make_null();
     if (!IS_OBJ(obj) || !AS_OBJ(obj) || !IS_STRING(name)) {
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, "unknown method");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, "unknown method");
         return false;
     }
     ObjString *name_obj = (ObjString *)AS_OBJ(name);
@@ -563,7 +566,7 @@ static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *c
             }
             char buf[256];
             snprintf(buf, sizeof(buf), "class '%s' has no method '%s'", cls->name, mname);
-            vm->last_exception = make_exception_instance(vm, vm->attribute_error_class, buf);
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->attribute_error_class, buf);
             return false;
         }
         case OBJ_MODULE: {
@@ -576,7 +579,7 @@ static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *c
             }
             char buf[256];
             snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
-            vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, buf);
             return false;
         }
         case OBJ_INSTANCE: {
@@ -595,7 +598,7 @@ static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *c
             if (k && strcmp(mname, "_init") == 0) return true;
             char buf[256];
             snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
-            vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, buf);
             return false;
         }
         default: {
@@ -609,7 +612,7 @@ static bool luna_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *c
             if (klass && strcmp(mname, "_init") == 0) return true;
             char buf[256];
             snprintf(buf, sizeof(buf), "unknown method '%s'", mname);
-            vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
+            vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, buf);
             return false;
         }
     }
@@ -634,7 +637,7 @@ static bool luna_super(VM *vm, Value self, Value name, Value *self_arg, Value *c
     }
     char buf[256];
     snprintf(buf, sizeof(buf), "unknown super method '%s'", mname);
-    vm->last_exception = make_exception_instance(vm, vm->exception_class, buf);
+    vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, buf);
     return false;
 }
 
@@ -660,7 +663,7 @@ static bool member_miss(VM *vm, bool safe, void *err_class, const char *msg, Val
 static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *out) {
     if (!IS_OBJ(object) || !AS_OBJ(object) || !IS_STRING(name)) {
         if (safe) { *out = make_null(); return true; }
-        vm->last_exception = make_exception_instance(vm, vm->attribute_error_class, "cannot access member of null value");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->attribute_error_class, "cannot access member of null value");
         return false;
     }
     char *chars = ((ObjString *)AS_OBJ(name))->chars;
@@ -689,7 +692,7 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
             }
             char buf[256];
             snprintf(buf, sizeof(buf), "instance has no field or method '%s'", chars);
-            return member_miss(vm, safe, vm->attribute_error_class, buf, out);
+            return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, buf, out);
         }
         case OBJ_MODULE: {
             ObjModule *mod = (ObjModule *)AS_OBJ(object);
@@ -697,10 +700,10 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
             if (!IS_NIL(export_val)) { *out = export_val; return true; }
             char buf[256];
             snprintf(buf, sizeof(buf), "module '%s' has no attribute '%s'", mod->name->chars, chars);
-            return member_miss(vm, safe, vm->attribute_error_class, buf, out);
+            return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, buf, out);
         }
         case OBJ_DICT: {
-            ObjClass *dklass = vm->dict_class;
+            ObjClass *dklass = luna_fe(vm)->dict_class;
             ObjFunction *mfn = dklass ? class_find_method(dklass, chars) : NULL;
             if (mfn) {
                 *out = make_obj((Object *)new_bound_method(object, mfn));
@@ -710,7 +713,7 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
             if (!IS_NIL(val)) { *out = val; return true; }
             char buf[256];
             snprintf(buf, sizeof(buf), "'%s' not found in dict", chars);
-            return member_miss(vm, safe, vm->key_error_class, buf, out);
+            return member_miss(vm, safe, luna_fe(vm)->key_error_class, buf, out);
         }
         case OBJ_STRING:
         case OBJ_LIST: {
@@ -721,7 +724,7 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
                     Value result;
                     Value native_args[1] = { object };
                     if (!vm_call_native(vm, mfn->native_fn, native_args, 1, &result))
-                        return member_miss(vm, safe, vm->attribute_error_class, type->name, out);
+                        return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, type->name, out);
                     *out = result;
                     return true;
                 }
@@ -730,7 +733,7 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
             }
             char buf[256];
             snprintf(buf, sizeof(buf), "%s has no field '%s'", type->name, chars);
-            return member_miss(vm, safe, vm->attribute_error_class, buf, out);
+            return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, buf, out);
         }
         case OBJ_ENUM: {
             ObjEnum *e = (ObjEnum *)AS_OBJ(object);
@@ -740,7 +743,7 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
             if (fi >= 0) { *out = make_int(e->values[fi]); return true; }
             char buf[256];
             snprintf(buf, sizeof(buf), "enum has no variant '%s'", chars);
-            return member_miss(vm, safe, vm->attribute_error_class, buf, out);
+            return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, buf, out);
         }
         case OBJ_CLASS: {
             ObjClass *cls = (ObjClass *)AS_OBJ(object);
@@ -758,7 +761,7 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
             }
             char buf[256];
             snprintf(buf, sizeof(buf), "class '%s' has no field '%s'", cls->name, chars);
-            return member_miss(vm, safe, vm->attribute_error_class, buf, out);
+            return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, buf, out);
         }
         case OBJ_VECTOR: {
             ObjVector *vec = (ObjVector *)AS_OBJ(object);
@@ -769,14 +772,14 @@ static bool luna_member_get(VM *vm, Value object, Value name, bool safe, Value *
                 else if (c == 'y') v = vec->data[1];
                 else if (c == 'z') v = vec->data[2];
                 else if (c == 'w') v = vec->data[3];
-                else return member_miss(vm, safe, vm->attribute_error_class, "vector has no field", out);
+                else return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, "vector has no field", out);
                 *out = make_double((double)v);
                 return true;
             }
-            return member_miss(vm, safe, vm->attribute_error_class, "vector has no field", out);
+            return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, "vector has no field", out);
         }
         default:
-            return member_miss(vm, safe, vm->attribute_error_class, "value has no fields", out);
+            return member_miss(vm, safe, luna_fe(vm)->attribute_error_class, "value has no fields", out);
     }
 }
 
@@ -809,39 +812,39 @@ static bool luna_member_set(VM *vm, Value object, Value name, Value value) {
             else if (c == 'z') vec->data[2] = v;
             else if (c == 'w') vec->data[3] = v;
             else {
-                vm->last_exception = make_exception_instance(vm, vm->attribute_error_class, "vector has no field");
+                vm->last_exception = make_exception_instance(vm, luna_fe(vm)->attribute_error_class, "vector has no field");
                 return false;
             }
             return true;
         }
-        vm->last_exception = make_exception_instance(vm, vm->attribute_error_class, "vector has no field");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->attribute_error_class, "vector has no field");
         return false;
     }
-    vm->last_exception = make_exception_instance(vm, vm->attribute_error_class, "cannot set field on this type");
+    vm->last_exception = make_exception_instance(vm, luna_fe(vm)->attribute_error_class, "cannot set field on this type");
     return false;
 }
 
 static bool luna_import_module(VM *vm, Value module_name, const char *from_path, Value *out) {
     if (!IS_STRING(module_name)) {
-        vm->last_exception = make_exception_instance(vm, vm->exception_class,
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class,
             "import: module name must be a string");
         return false;
     }
     const char *name = ((ObjString *)AS_OBJ(module_name))->chars;
-    Value cached = dict_get(vm->module_cache, module_name);
+    Value cached = dict_get(luna_fe(vm)->module_cache, module_name);
     if (!IS_NIL(cached) && IS_MODULE(cached)) { *out = cached; return true; }
 
     char *path = module_resolve_path(name, from_path && from_path[0] ? from_path : NULL);
     if (!path) {
         char message[256]; snprintf(message, sizeof(message), "module '%s' not found", name);
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, message);
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, message);
         return false;
     }
     char *source = module_read_source(path);
     if (!source) {
         free(path);
         char message[256]; snprintf(message, sizeof(message), "cannot read module '%s'", name);
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, message);
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, message);
         return false;
     }
     Lexer *lexer = lexer_new(source);
@@ -850,7 +853,7 @@ static bool luna_import_module(VM *vm, Value module_name, const char *from_path,
     Program *program = parser_parse(parser);
     if (parser->had_error) {
         parser_free(parser); token_list_free(tokens); lexer_free(lexer); free(source); free(path);
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, "import: parser errors");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, "import: parser errors");
         return false;
     }
     GlobalEntry **saved = vm_globals_save(vm);
@@ -860,7 +863,7 @@ static bool luna_import_module(VM *vm, Value module_name, const char *from_path,
     parser_free(parser); token_list_free(tokens); lexer_free(lexer); free(source);
     if (!compiled) {
         vm_globals_restore(vm, saved); free(path);
-        vm->last_exception = make_exception_instance(vm, vm->exception_class, "import: compilation errors");
+        vm->last_exception = make_exception_instance(vm, luna_fe(vm)->exception_class, "import: compilation errors");
         return false;
     }
     ObjFunction *function = new_function(name);
@@ -877,20 +880,20 @@ static bool luna_import_module(VM *vm, Value module_name, const char *from_path,
     module->exports = (ObjDict *)vm_globals_to_dict(vm);
     vm_globals_restore(vm, saved);
     *out = make_obj((Object *)module);
-    dict_set(vm->module_cache, make_obj((Object *)new_string(name, (int)strlen(name))), *out);
+    dict_set(luna_fe(vm)->module_cache, make_obj((Object *)new_string(name, (int)strlen(name))), *out);
     return true;
 }
 
 static Value luna_make_exception(VM *vm, VMExceptionKind kind, const char *message) {
-    void *klass = vm->exception_class;
+    void *klass = luna_fe(vm)->exception_class;
     switch (kind) {
-        case VM_EXCEPTION_TYPE: klass = vm->type_error_class; break;
-        case VM_EXCEPTION_KEY: klass = vm->key_error_class; break;
-        case VM_EXCEPTION_INDEX: klass = vm->index_error_class; break;
-        case VM_EXCEPTION_ATTRIBUTE: klass = vm->attribute_error_class; break;
-        case VM_EXCEPTION_VALUE: klass = vm->value_error_class; break;
-        case VM_EXCEPTION_RUNTIME: klass = vm->runtime_error_class; break;
-        case VM_EXCEPTION_ARGUMENT: klass = vm->argument_error_class; break;
+        case VM_EXCEPTION_TYPE: klass = luna_fe(vm)->type_error_class; break;
+        case VM_EXCEPTION_KEY: klass = luna_fe(vm)->key_error_class; break;
+        case VM_EXCEPTION_INDEX: klass = luna_fe(vm)->index_error_class; break;
+        case VM_EXCEPTION_ATTRIBUTE: klass = luna_fe(vm)->attribute_error_class; break;
+        case VM_EXCEPTION_VALUE: klass = luna_fe(vm)->value_error_class; break;
+        case VM_EXCEPTION_RUNTIME: klass = luna_fe(vm)->runtime_error_class; break;
+        case VM_EXCEPTION_ARGUMENT: klass = luna_fe(vm)->argument_error_class; break;
         default: break;
     }
     return make_exception_instance(vm, klass, message);
@@ -1051,19 +1054,22 @@ static ObjClass *luna_register_exception(VM *vm, const char *name, ObjClass *bas
 
 void luna_init_vm(VM *vm) {
     vm->time_start_us = luna_time_monotonic_us();
+    vm->frontend_data = calloc(1, sizeof(LunaFrontend));
+    if (!vm->frontend_data) { fprintf(stderr, "Out of memory\n"); exit(1); }
+    LunaFrontend *fe = luna_fe(vm);
     vm_register_builtins(vm);
     vm_register_canonical_classes(vm);
 
-    vm->exception_class = luna_register_exception(vm, "Exception", NULL);
-    vm->type_error_class = luna_register_exception(vm, "TypeError", vm->exception_class);
-    vm->key_error_class = luna_register_exception(vm, "KeyError", vm->exception_class);
-    vm->index_error_class = luna_register_exception(vm, "IndexError", vm->exception_class);
-    vm->attribute_error_class = luna_register_exception(vm, "AttributeError", vm->exception_class);
-    vm->value_error_class = luna_register_exception(vm, "ValueError", vm->exception_class);
-    vm->runtime_error_class = luna_register_exception(vm, "RuntimeError", vm->exception_class);
-    vm->argument_error_class = luna_register_exception(vm, "ArgumentError", vm->exception_class);
+    fe->exception_class = luna_register_exception(vm, "Exception", NULL);
+    fe->type_error_class = luna_register_exception(vm, "TypeError", fe->exception_class);
+    fe->key_error_class = luna_register_exception(vm, "KeyError", fe->exception_class);
+    fe->index_error_class = luna_register_exception(vm, "IndexError", fe->exception_class);
+    fe->attribute_error_class = luna_register_exception(vm, "AttributeError", fe->exception_class);
+    fe->value_error_class = luna_register_exception(vm, "ValueError", fe->exception_class);
+    fe->runtime_error_class = luna_register_exception(vm, "RuntimeError", fe->exception_class);
+    fe->argument_error_class = luna_register_exception(vm, "ArgumentError", fe->exception_class);
 
-    vm->module_cache = new_dict();
+    fe->module_cache = new_dict();
     vm_register_math_module(vm);
     vm_register_random_module(vm);
     vm_register_noise_module(vm);

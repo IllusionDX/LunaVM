@@ -18,6 +18,7 @@
 #include "vm.h"
 #include "value.h"
 #include "luna/object.h"
+#include "luna/frontend_state.h"
 #include "stdlib_noise.h"
 
 /* ============================================================ */
@@ -496,7 +497,7 @@ static Value perlin_init(VM *vm, Value *args, int n) {
 
 static Value perlin_sample(VM *vm, Value *args, int n) {
     if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "perlin.sample requires at least (x, y)");
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
@@ -527,7 +528,7 @@ static Value simplex_init(VM *vm, Value *args, int n) {
 
 static Value simplex_sample(VM *vm, Value *args, int n) {
     if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "simplex.sample requires at least (x, y)");
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
@@ -564,7 +565,7 @@ static Value voronoi_init(VM *vm, Value *args, int n) {
 
 static Value voronoi_sample(VM *vm, Value *args, int n) {
     if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "voronoi.sample requires at least (x, y)");
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
@@ -585,7 +586,7 @@ static Value voronoi_sample(VM *vm, Value *args, int n) {
 
 static Value voronoi_edge(VM *vm, Value *args, int n) {
     if (n < 3) {
-        luna_throw(vm, vm->argument_error_class,
+        luna_throw(vm, luna_fe(vm)->argument_error_class,
             "voronoi.edge requires at least (x, y)");
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
@@ -636,7 +637,7 @@ void vm_register_noise_module(VM *vm) {
              make_obj((Object*)new_string("Voronoi", 7)),
              make_obj((Object*)voronoi_class));
 
-    dict_set(vm->module_cache,
+    dict_set(luna_fe(vm)->module_cache,
              make_obj((Object*)new_string("noise", 5)),
              make_obj((Object*)mod));
 }

@@ -76,6 +76,10 @@ verified working in `pyluna` (`tests_py` suite + probes below).
   `tuple` and `set` are `Plan`).
 - ~~f-strings~~ — verified: `f"..."` / `f'...'` (`lexer.c:491`, `fstring.c`);
   used throughout `tests_py`.
+- ~~Numbers as virtual objects:~~ immediate `int`/`float`/`bool` resolve
+  methods and attributes through canonical classes without boxing —
+  `bit_length`, `is_integer`, `__int__`/`__float__`/`__bool__`/`__index__`,
+  `real`/`imag`, `__class__` (`test_py_numobj.py`). `bool` maps to `int`.
 - Multiple inheritance — not implemented: `src/py/parse_decl.c:103` accepts a
   single base only.
 
@@ -86,8 +90,8 @@ verified working in `pyluna` (`tests_py` suite + probes below).
 ### Types
 | Type | Status | Note |
 |---|---|---|
-| `int` | Done (int64-cap) | extend to bignum in phase 2 if required |
-| `float` | Done | native double |
+| `int` | Done (int64-cap) | virtual-object methods: `bit_length`, `real`/`imag`, `__int__`/`__index__`/`__float__`/`__bool__`; bignum in phase 2 |
+| `float` | Done | native double; `is_integer` + conversion dunders via virtual class |
 | `bool` | Done | |
 | `None` | Done | |
 | `str` | Done | interned |
