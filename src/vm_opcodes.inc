@@ -108,7 +108,25 @@
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 12. OP_NEG */
+    /* 12. OP_IDIV */
+    op_idiv: {
+        Value _L = RKB, _R = RKC;
+        Value _v = do_arith(vm, _L, _R, OP_IDIV);
+        if (IS_NIL(_v)) { _exc = vm->last_exception; if (IS_NIL(_exc)) _exc = vm_make_exception(vm, VM_EXCEPTION_RUNTIME, "unsupported floor division"); goto op_throw; }
+        SET_REG(RA, _v);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 13. OP_POW */
+    op_pow: {
+        Value _L = RKB, _R = RKC;
+        Value _v = do_arith(vm, _L, _R, OP_POW);
+        if (IS_NIL(_v)) { _exc = vm->last_exception; if (IS_NIL(_exc)) _exc = vm_make_exception(vm, VM_EXCEPTION_RUNTIME, "unsupported power"); goto op_throw; }
+        SET_REG(RA, _v);
+        DECODE; goto *op_labels[OP(instr)];
+    }
+
+    /* 14. OP_NEG */
     op_neg: {
         Value v = REG(RB);
         Value result = make_null();

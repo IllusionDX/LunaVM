@@ -577,7 +577,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                 if (strcmp(op_str, "+") == 0) result = li + ri;
                 else if (strcmp(op_str, "-") == 0) result = li - ri;
                 else if (strcmp(op_str, "*") == 0) result = li * ri;
-                else if (strcmp(op_str, "/") == 0) { if (ri == 0) valid = false; else result = li / ri; }
+                else if (strcmp(op_str, "/") == 0) valid = false; /* float / → true division, kept for runtime */
                 else if (strcmp(op_str, "%") == 0) { if (ri == 0) valid = false; else result = li % ri; }
                 else if (strcmp(op_str, "<")  == 0) { emit_loadbool(c, (uint8_t)target, li <  ri); folded = true; }
                 else if (strcmp(op_str, "<=") == 0) { emit_loadbool(c, (uint8_t)target, li <= ri); folded = true; }
@@ -713,7 +713,9 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         else if (strcmp(op_str, "-") == 0) op = OP_SUB;
         else if (strcmp(op_str, "*") == 0) op = OP_MUL;
         else if (strcmp(op_str, "/") == 0) op = OP_DIV;
+        else if (strcmp(op_str, "//") == 0) op = OP_IDIV;
         else if (strcmp(op_str, "%") == 0) op = OP_MOD;
+        else if (strcmp(op_str, "**") == 0) op = OP_POW;
         else if (strcmp(op_str, "==") == 0) op = OP_EQ;
         else if (strcmp(op_str, "!=") == 0) op = OP_NE;
         else if (strcmp(op_str, "<") == 0) op = OP_LT;
@@ -1123,7 +1125,9 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         if (strcmp(op_str, "+=") == 0) op = OP_ADD;
         else if (strcmp(op_str, "-=") == 0) op = OP_SUB;
         else if (strcmp(op_str, "*=") == 0) op = OP_MUL;
+        else if (strcmp(op_str, "**=") == 0) op = OP_POW;
         else if (strcmp(op_str, "/=") == 0) op = OP_DIV;
+        else if (strcmp(op_str, "//=") == 0) op = OP_IDIV;
         else if (strcmp(op_str, "%=") == 0) op = OP_MOD;
         else if (strcmp(op_str, "&=") == 0) op = OP_BAND;
         else if (strcmp(op_str, "|=") == 0) op = OP_BOR;
@@ -1132,7 +1136,12 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         if (lhs->kind == EXPR_IDENTIFIER) {
             /* simple identifiers can be re-evaluated cleanly */
             Expr fake_rhs = *rhs;
-            char bin_op[3] = {op_str[0], '\0'};
+            /* Rebuild the binary operator by stripping the trailing '=':
+               "+=" -> "+", "//=" -> "//", "**=" -> "**" */
+            char bin_op[3] = {0};
+            int oplen = (int)strlen(op_str) - 1;
+            if (oplen > 2) oplen = 2;
+            memcpy(bin_op, op_str, (size_t)oplen);
             Expr fake_bin = {
                 .kind = EXPR_BINARY,
                 .data.binary = { .left = lhs, .operator = bin_op, .right = &fake_rhs }

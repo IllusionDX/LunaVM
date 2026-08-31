@@ -326,9 +326,19 @@ static Token *scan_operator(Lexer *lexer) {
             if (next == '>') { advance(lexer); return make_token(lexer, TOK_ARROW, start, 2); }
             return make_token(lexer, TOK_MINUS, start, 1);
         case '*':
+            if (next == '*') {
+                advance(lexer);
+                if (peek(lexer) == '=') { advance(lexer); return make_token(lexer, TOK_STAR_STAR_ASSIGN, start, 3); }
+                return make_token(lexer, TOK_STAR_STAR, start, 2);
+            }
             if (next == '=') { advance(lexer); return make_token(lexer, TOK_STAR_ASSIGN, start, 2); }
             return make_token(lexer, TOK_STAR, start, 1);
         case '/':
+            if (next == '/') {
+                advance(lexer);
+                if (peek(lexer) == '=') { advance(lexer); return make_token(lexer, TOK_SLASH_SLASH_ASSIGN, start, 3); }
+                return make_token(lexer, TOK_SLASH_SLASH, start, 2);
+            }
             if (next == '=') { advance(lexer); return make_token(lexer, TOK_SLASH_ASSIGN, start, 2); }
             return make_token(lexer, TOK_SLASH, start, 1);
         case '%':
@@ -663,6 +673,8 @@ const char *token_type_name(TokenType type) {
         case TOK_STAR: return "STAR";
         case TOK_SLASH: return "SLASH";
         case TOK_PERCENT: return "PERCENT";
+        case TOK_STAR_STAR: return "STAR_STAR";
+        case TOK_SLASH_SLASH: return "SLASH_SLASH";
         case TOK_EQ: return "EQ";
         case TOK_NE: return "NE";
         case TOK_LT: return "LT";
@@ -674,6 +686,8 @@ const char *token_type_name(TokenType type) {
         case TOK_MINUS_ASSIGN: return "MINUS_ASSIGN";
         case TOK_STAR_ASSIGN: return "STAR_ASSIGN";
         case TOK_SLASH_ASSIGN: return "SLASH_ASSIGN";
+        case TOK_STAR_STAR_ASSIGN: return "STAR_STAR_ASSIGN";
+        case TOK_SLASH_SLASH_ASSIGN: return "SLASH_SLASH_ASSIGN";
         case TOK_ARROW: return "ARROW";
         case TOK_LAMBDA: return "LAMBDA";
         case TOK_COALESCE: return "COALESCE";

@@ -10,6 +10,10 @@ CPython". Inspired by MicroPython (subset, not a fork).
 > Living document. The **Done** column reflects a code audit at
 > `lunascript @ 69bf37d`. Unverified items are marked **To confirm** to avoid
 > confusing "planned" with "implemented".
+>
+> The **Python frontend** (`src/py/`) was re-audited at
+> `python-subset @ 8751d6a`. Struck-through items were verified by running
+> `pyluna.exe` (7/7 `tests_py` tests pass).
 
 > **VM architecture:** the language-agnostic core + per-language frontend design
 > (Luna as the first frontend, Python as the second) is in
@@ -52,15 +56,28 @@ CPython". Inspired by MicroPython (subset, not a fork).
 - **Fuller C FFI** and **sandboxing**.
 
 ### To confirm (audit pending)
-- Full `try/except/finally` (there is `exception_class` and `TryFrame`;
-  scope not yet measured).
-- Comprehensions (list/dict/set).
-- `with` / context managers (`__enter__` / `__exit__`).
-- `isinstance` / `super` (`OP_ISINSTANCE` exists; `super()` unverified).
-- Available builtins (`print`, `len`, `range`, `type`, `enumerate`, ...).
-- `tuple` / `set` as types.
-- `f-strings` (seen in tests; full inventory pending).
-- Multiple inheritance (only a single `base` today).
+Re-audited in the Python frontend (`src/py`). Struck-through items were
+verified working in `pyluna` (`tests_py` suite + probes below).
+
+- ~~Full `try/except/finally`:~~ `raise X`, `except X as e`, and `finally`
+  verified (`test_py_oop.py`, interactive probe). No bare re-raise yet.
+- ~~List comprehensions:~~ `[e for x in it if c]` verified
+  (`parse_expr.c:33`, `compiler.c:1249`). Dict/set comprehensions absent.
+- `with` / context managers (`__enter__` / `__exit__`) — not implemented
+  (no `TOK_WITH`, no dunders).
+- ~~`super()`~~ — verified (`py.c` `py_super`; `super().__init__()` in
+  `test_py_oop.py`). Global `isinstance()` still missing (`OP_ISINSTANCE`
+  exists but is only used by `except Type:`).
+- Available builtins — verified in `src/py/stdlib/vm_builtins.c`: `print`,
+  `len`, `range`, `type`, `str`, `int`, `float` exist; `isinstance`,
+  `enumerate`, `abs`, `min`, `max`, `sorted`, `repr`, `bool` do not
+  (only `math.abs`).
+- `tuple` / `set` as types — absent (`tuple` no type in lexer/AST; both
+  `tuple` and `set` are `Plan`).
+- ~~f-strings~~ — verified: `f"..."` / `f'...'` (`lexer.c:491`, `fstring.c`);
+  used throughout `tests_py`.
+- Multiple inheritance — not implemented: `src/py/parse_decl.c:103` accepts a
+  single base only.
 
 ---
 
@@ -76,30 +93,38 @@ CPython". Inspired by MicroPython (subset, not a fork).
 | `str` | Done | interned |
 | `list` | Done | inline SOO (4 elems) |
 | `dict` | Done | insertion-ordered |
-| `tuple` | To confirm | |
+| `tuple` | Plan | absent from lexer/AST |
 | `set` | Plan | |
 | `bytes` | Plan | |
-| `function` / `lambda` | Done / to confirm | |
+| ~~`function` / `lambda`~~ | Done | lambda keyword verified in `src/py` |
 | `class` | Done | single inheritance |
 | `module` | Done | via `import` |
 | `exception` | Done | |
 
 ### Syntax / constructs
-- Functions, parameters, return.
-- Classes with inheritance (single today; multiple in phase 2 with C3).
-- `for` / `while` / `break` / `continue`.
-- `if` / `elif` / `else`.
-- `try` / `except` / `finally` (scope to confirm).
+- ~~Functions, parameters, return.~~
+- ~~Classes with inheritance~~ (single today; multiple in phase 2 with C3).
+- ~~`for` / `while` / `break` / `continue`.~~
+- ~~`if` / `elif` / `else`.~~ (`elif` added in the Python frontend)
+- ~~`try` / `except` / `finally`.~~ (no bare re-raise yet)
 - `with` (phase 2: context managers).
-- `f-strings` (inventory to confirm).
-- Comprehensions (to confirm).
-- `lambda` (to confirm).
-- Multiple assignment / unpacking (to confirm).
+- ~~f-strings.~~
+- ~~List comprehensions~~ (dict/set comprehensions: phase 2).
+- ~~`lambda`.~~
+- ~~Multiple assignment / unpacking.~~ (`a, b = b, a` verified)
+- Type annotations per [PEP 526](https://peps.python.org/pep-0526/):
+  function params + `->` return hints parsed & ignored (PEP 484 syntax).
+  Variable annotations `x: int = 5` pending — see
+  [`python-frontend-delta.md`](./python-frontend-delta.md).
 - Decorators, generators, `async`/`await` → **phase 2**.
 
 ### Target core builtins
-`print`, `len`, `range`, `isinstance`, `type`, `enumerate`, `abs`, `min`,
-`max`, `sorted`, `repr`, `str`, `int`, `float`, `bool`. (Confirm which exist.)
+Target: `print`, `len`, `range`, `isinstance`, `type`, `enumerate`, `abs`,
+`min`, `max`, `sorted`, `repr`, `str`, `int`, `float`, `bool`.
+
+Verified present in `src/py/stdlib/vm_builtins.c`: `print`, `len`, `range`,
+`type`, `str`, `int`, `float`. Still missing: `isinstance`, `enumerate`,
+`abs` (only in `math`), `min`, `max`, `sorted`, `repr`, `bool`.
 
 ### Semantics
 - Dynamic typing, pass-by-object (reference).
@@ -110,8 +135,12 @@ CPython". Inspired by MicroPython (subset, not a fork).
 ---
 
 ## 3. Work sequence (proposal)
-1. **Close the "Done" column** by auditing the "To confirm" items (parser/VM).
-2. **Frontend:** align parser/compiler to the subset's Python 3 semantics.
+1. ~~Close the "Done" column by auditing the "To confirm" items~~ (parser/VM
+   audit done for `src/py`; see §1).
+2. **Frontend:** parser/compiler aligned to the subset — lexical/parser work
+   is done (`src/py`); arithmetic semantics done (`/` true division, `//`,
+   `**`, `//=`, `**=`). Remaining deltas: builtins, dunders. Tracked in
+   [`python-frontend-delta.md`](./python-frontend-delta.md).
 3. **Trimmed stdlib** oriented toward games.
 4. **C-API / sandboxing / FFI** (solid base already present).
 5. **Baseline JIT** only once the interpreter is stable.

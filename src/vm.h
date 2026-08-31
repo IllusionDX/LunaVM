@@ -25,6 +25,7 @@ typedef Value (*VMNativeFn)(struct VM *vm, Value *args, int arg_count);
  * its classes, slots, or exception hierarchy to the core. */
 typedef enum {
     VM_OP_ADD, VM_OP_SUB, VM_OP_MUL, VM_OP_DIV, VM_OP_MOD,
+    VM_OP_IDIV, VM_OP_POW,
     VM_OP_NEG, VM_OP_BAND, VM_OP_BOR, VM_OP_BXOR, VM_OP_BNOT,
     VM_OP_SHL, VM_OP_SHR,
     VM_OP_EQ, VM_OP_NE, VM_OP_LT, VM_OP_LE, VM_OP_GT, VM_OP_GE

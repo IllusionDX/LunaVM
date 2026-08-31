@@ -6,11 +6,19 @@ All code edits go in `src/py/*`, never in `src/luna/*`.
 Audited against the current code. References point at `src/luna/` (they apply to
 `src/py/`, which is an identical copy).
 
+> **Status (audited at `python-subset @ 8751d6a`):** §1 (remove) and the parser
+> half of §2 (add) are **complete**; §3 holds. §4 is partially done (object
+> model: `self`/`super()`/instantiation done; arithmetic semantics — `/`
+> true division, `//`, `**`, compound `//=`, `**=` — done (OP_IDIV/OP_POW);
+> dunders and extra builtins pending). Struck-through items below are verified.
+
 ---
 
 ## 1. Remove (JS-ish / Luna-only syntax)
 
 ### Lexer keywords to drop (`lexer.c:145-181`)
+> **Status: complete** — none of these are in the `src/py` keyword table; the
+> typedefs (`TOK_VAR`, `TOK_NEW`, ...) are dead leftovers in `lexer.h`.
 | Keyword | Token | Why it goes | Python alternative |
 |---|---|---|---|
 | `var` | `TOK_VAR` | does not exist in Python | plain assignment `x = v` |
@@ -38,7 +46,30 @@ In Python, `int`/`float`/`bool`/`str`/`list`/`dict` are builtins (identifiers),
 **not keywords**. `char` and `string` do not even exist (it is `str`). The
 annotation machinery can stay; what needs re-mapping is keyword vs identifier.
 
+### Annotations — scope per [PEP 526](https://peps.python.org/pep-0526/)
+Type hints follow PEP 526 (variable annotations, Python 3.6+) on top of the
+PEP 484 function-annotation syntax. In this frontend they are **parsed and
+ignored** — no runtime type checking, no `__annotations__` storage
+(consistent with "subset, not CPython").
+
+**Works in `src/py`:**
+- Function parameter annotations: `def f(a: int, b: str):` (`parse_decl.c:39`).
+- Return annotations: `def f(...) -> str:` via `TOK_ARROW` (`parse_decl.c:69`).
+- Type names are plain identifiers, not keywords: `int = 3` / `str = "x"`
+  remain valid Python.
+
+**Missing (PEP 526 forms not yet accepted):**
+- Variable annotation with/without value at module/function scope: `x: int = 5`
+  and bare `x: int` — today `x:` is a parse error.
+- Class-level annotated *assignment*: `captain: str = 'Picard'` fails (class
+  fields parse bare `x: int` as a field declaration but accept no default
+  value).
+- Generic container annotations `list[int]` / `dict[str, int]` (PEP 585).
+- `__annotations__` (out of scope by design).
+
 ### Operators and tokens (JS-ish)
+> **Status: complete** — `!`, `&&`, `||`, `??`, `?.`, `?[`, `=>` all rejected /
+> removed in `src/py/lexer.c:315-383` (hidden by the `should_fail` test).
 | Syntax | Token | Where | Action |
 |---|---|---|---|
 | `=>` (arrow lambda) | `TOK_LAMBDA` | `lexer.c:313` (there is NO `lambda` keyword today; lambdas are `=>`) | replace with the `lambda` keyword |
@@ -58,20 +89,22 @@ annotation machinery can stay; what needs re-mapping is keyword vs identifier.
 
 ## 2. Add (missing Python keywords)
 
-| Keyword | Token to create | Notes |
+Done in `src/py` (verified at `8751d6a`):
+
+| Keyword | Token | Status |
 |---|---|---|
-| `None` | reuse `TOK_NULL` with the `None` spelling (or a new token) | same runtime nil |
-| `True` / `False` | reuse `TOK_TRUE`/`TOK_FALSE` (or new) | same runtime bool |
-| `elif` | `TOK_ELIF` | does not exist today (`lexer.c:145-181`); the parser only sees `else` |
-| `is` | `TOK_IS` | identity comparison; compose `is not` |
-| `raise` | `TOK_RAISE` | replaces `throw`; support re-raise |
-| `lambda` | keyword -> `TOK_LAMBDA` | today `=>` produces `TOK_LAMBDA` (`lexer.c:313`) |
-| `with` | `TOK_WITH` | context (`__enter__`/`__exit__`), phase 2 |
-| `assert` | `TOK_ASSERT` | |
-| `del` | `TOK_DEL` | `del x`, `del x[i]` statements |
-| `yield` | `TOK_YIELD` | generators, phase 2 |
-| `global` / `nonlocal` | -- | phase 2 |
-| `async` / `await` | -- | phase 2 |
+| `None` | `TOK_NULL` | Done (`lexer.c:130`) |
+| `True` / `False` | `TOK_TRUE` / `TOK_FALSE` | Done (`lexer.c:131-132`) |
+| `elif` | `TOK_ELIF` | Done (`lexer.c:136`, `parse_stmt.c:171`) |
+| `is` | `TOK_IS` | Done (`lexer.c:141`; + `is not`, `parse_expr.c:649`) |
+| `raise` | `TOK_RAISE` | Done (`lexer.c:150`, `parse_stmt.c:324`; no bare re-raise) |
+| `lambda` | `TOK_LAMBDA` | Done — keyword replaces `=>` (`lexer.c:154`) |
+| `with` | `TOK_WITH` | pending (context managers, phase 2) |
+| `assert` | `TOK_ASSERT` | pending |
+| `del` | `TOK_DEL` | pending |
+| `yield` | `TOK_YIELD` | pending (generators, phase 2) |
+| `global` / `nonlocal` | -- | pending (phase 2) |
+| `async` / `await` | -- | pending (phase 2) |
 
 ---
 
@@ -100,31 +133,37 @@ annotation machinery can stay; what needs re-mapping is keyword vs identifier.
 
 ## 4. Semantic delta (non-lexical, later phases)
 
-- **Methods and `self`:** today `self` is an implicit keyword (first register of
-  the method, `parse_decl.c:30`). Python declares `self` explicitly as the first
-  parameter. Affects method lookup and `OP_INVOKE` (front-end `invoke` hook in
-  `luna.c:565`).
-- **Instantiation:** `new Foo(...)` -> call the class `Foo(...)`. The
-  `construct` hook (`luna.c:473`) needs revisiting.
-- **Inheritance:** `extends` -> parenthesized base list. `super` hook
-  (`luna.c:637`) must re-map onto MRO.
-- **Division:** today `/` on integers is integer division (`luna.c:134`).
-  Python 3: `/` is always float, `//` is floor div. Missing `//`, `**`, and
-  their compound `=` forms.
-- **Literal subset:** `0x`/`0o`/`0b` and `_` digit separators are unverified in
-  `scan_number` (`lexer.c:213`). Optional in phase 2.
-- **Builtins:** confirm `print`, `len`, `type`, `isinstance`, `enumerate`,
-  `abs`, `min`, `max`, `sorted`, `repr`, `str`, `int`, `float`, `bool`
-  (actual state in `vm_builtins.c`).
+- ~~**Methods and `self`:**~~ **done in `src/py`** — `self` is an explicit
+  first parameter (`def __init__(self, name):`); `OP_INVOKE` binds it as in
+  Python (commit `7aa1a2c`).
+- ~~**Instantiation:**~~ **done in `src/py`** — `Foo(...)` calls the class via
+  `py_class_call` (`object.c:528`), which runs inherited `__init__`.
+- ~~**Inheritance:**~~ **done in `src/py`** — `class A(Base):` parses the
+  parenthesized base (`parse_decl.c:103`); `super().method()` resolves through
+  the base via `py_super` (`py.c:619`).
+- ~~**Division:** `/` on integers is still integer division
+  (`py.c:116-119` → `print(10 / 4)` gives `2`, not `2.5`). Python 3 requires
+  float `/`; `//` and `**` are still missing (lexer/parser).~~ **done in
+  `src/py`** — `/` is true division (int/int → float), `//` is floor division
+  (sign-aware, int result for int operands), `**` is power (int for exact
+  int64 results, float fallback); compound `//=` / `**=` included. New VM
+  opcodes `OP_IDIV` / `OP_POW`. Tests: `tests_py/test_py_divpow.py`.
+- **Literal subset:** `0x`/`0o`/`0b` and `_` digit separators unverified in
+  `scan_number` (`lexer.c:189`). Optional in phase 2.
+- **Builtins:** present: `print`, `len`, `range`, `type`, `str`, `int`,
+  `float` (`vm_builtins.c:748-768`). Missing: `isinstance`, `enumerate`,
+  `abs`, `min`, `max`, `sorted`, `repr`, `bool`.
 
 ---
 
 ## 5. Suggested work order
 
-1. **Lexer** (`src/py/lexer.c`): remove JS keywords/ops, add Python keywords
-   (`None/True/False`, `elif`, `is`, `raise`, `lambda`).
-2. **Parser** (`parse_stmt.c`/`parse_expr.c`/`parse_decl.c`): `elif`, `is`,
-   `raise`, call-based instantiation, parenthesized inheritance.
-3. **Object model** (`object.c`/`luna.c` hooks): explicit `self`, `super()`
-   MRO, `/` vs `//`, dunders.
-4. **Tests** driven by failing `.py` cases.
+1. ~~**Lexer:** remove JS keywords/ops, add Python keywords~~
+   (`None/True/False`, `elif`, `is`, `raise`, `lambda`). **Done** in `src/py`.
+2. ~~**Parser:** `elif`, `is`, `raise`, call-based instantiation,
+   parenthesized inheritance.~~ **Done** in `src/py`.
+3. **Object model:** `self`, `super()` MRO, call-based instantiation, and
+   arithmetic semantics (`/`, `//`, `**`) are done; dunders and missing
+   builtins remain.
+4. **Tests:** 8 `tests_py/*.py` files pass; keep adding failing `.py` cases
+   for the remaining semantic gaps (builtins, dunders).

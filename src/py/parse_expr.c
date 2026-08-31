@@ -558,6 +558,25 @@ static Expr *parse_postfix(Parser *parser) {
 
 /* ============== Unary expression parsing ============== */
 
+static Expr *parse_unary(Parser *parser);
+
+/* Python `power`: atom_expr ['**' factor] — right-associative and binds
+ * tighter than unary minus so `-2**2` == `-(2**2)`. The right operand goes
+ * through `parse_unary` (factor), which recurses back here for `2**3**2`. */
+static Expr *parse_power(Parser *parser) {
+    Expr *left = parse_postfix(parser);
+    if (match(parser, TOK_STAR_STAR)) {
+        Token *op = advance(parser);
+        Expr *right = parse_unary(parser);
+        Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
+        expr->data.binary.left = left;
+        expr->data.binary.operator = strdup(op->value);
+        expr->data.binary.right = right;
+        left = expr;
+    }
+    return left;
+}
+
 static Expr *parse_unary(Parser *parser) {
     if (match(parser, TOK_MINUS) || match(parser, TOK_NOT) ||
         match(parser, TOK_TILDE) || match(parser, TOK_PLUS)) {
@@ -568,14 +587,14 @@ static Expr *parse_unary(Parser *parser) {
         expr->data.unary.operand = operand;
         return expr;
     }
-    return parse_postfix(parser);
+    return parse_power(parser);
 }
 
 /* ============== Binary expression parsing (precedence climbing) ============== */
 
 static Expr *parse_multiplicative(Parser *parser) {
     Expr *left = parse_unary(parser);
-    while (match(parser, TOK_STAR) || match(parser, TOK_SLASH) || match(parser, TOK_PERCENT)) {
+    while (match(parser, TOK_STAR) || match(parser, TOK_SLASH) || match(parser, TOK_SLASH_SLASH) || match(parser, TOK_PERCENT)) {
         Token *op = advance(parser);
         Expr *right = parse_unary(parser);
         Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
@@ -744,7 +763,8 @@ static bool is_multi_assignment(Parser *parser) {
         if (!t2) return false;
         if (t2->type == TOK_ASSIGN || t2->type == TOK_PLUS_ASSIGN ||
             t2->type == TOK_MINUS_ASSIGN || t2->type == TOK_STAR_ASSIGN ||
-            t2->type == TOK_SLASH_ASSIGN) {
+            t2->type == TOK_SLASH_ASSIGN || t2->type == TOK_STAR_STAR_ASSIGN ||
+            t2->type == TOK_SLASH_SLASH_ASSIGN) {
             return true;
         }
         if (t2->type != TOK_COMMA) return false;
@@ -801,7 +821,8 @@ static Expr *parse_assignment(Parser *parser) {
         }
 
         if (match(parser, TOK_PLUS_ASSIGN) || match(parser, TOK_MINUS_ASSIGN) ||
-            match(parser, TOK_STAR_ASSIGN) || match(parser, TOK_SLASH_ASSIGN)) {
+            match(parser, TOK_STAR_ASSIGN) || match(parser, TOK_SLASH_ASSIGN) ||
+            match(parser, TOK_STAR_STAR_ASSIGN) || match(parser, TOK_SLASH_SLASH_ASSIGN)) {
             parser_error(parser,
                 "compound assignment does not support multiple targets");
             for (int i = 1; i < target_count; i++) free_expr(targets[i]);
@@ -848,7 +869,8 @@ static Expr *parse_assignment(Parser *parser) {
         return assign;
     }
     if (match(parser, TOK_PLUS_ASSIGN) || match(parser, TOK_MINUS_ASSIGN) ||
-        match(parser, TOK_STAR_ASSIGN) || match(parser, TOK_SLASH_ASSIGN)) {
+        match(parser, TOK_STAR_ASSIGN) || match(parser, TOK_SLASH_ASSIGN) ||
+        match(parser, TOK_STAR_STAR_ASSIGN) || match(parser, TOK_SLASH_SLASH_ASSIGN)) {
         Token *op = advance(parser);
         Expr *value = parse_assignment(parser);
         Expr *assign = make_expr(EXPR_COMPOUND_ASSIGN, peek(parser)->line);

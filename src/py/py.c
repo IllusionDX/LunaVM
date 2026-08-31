@@ -60,6 +60,17 @@ static int64_t py_to_i64(Value v) {
 
 static bool py_value_is_integer(Value v) { return IS_INT(v) || IS_INT64(v); }
 
+/* Exact int64 overflow check for `a * b` (avoids signed-overflow UB). */
+static bool py_i64_mul_overflows(int64_t a, int64_t b) {
+    if (a == 0 || b == 0) return false;
+    if (a > 0) {
+        if (b > 0) return a > INT64_MAX / b;
+        return b < INT64_MIN / a;
+    }
+    if (b > 0) return a < INT64_MIN / b;
+    return a < INT64_MAX / b;
+}
+
 static Value py_integer_result(int64_t value) {
     return value >= INT32_MIN && value <= INT32_MAX
         ? make_int((int32_t)value) : make_int64(value);
@@ -114,13 +125,39 @@ static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right,
             case VM_OP_SUB: *out = py_integer_result(a - b); return true;
             case VM_OP_MUL: *out = py_integer_result(a * b); return true;
             case VM_OP_DIV:
-                if (b) { *out = py_integer_result(a / b); return true; }
+                /* Python 3: `/` is always true division — int / int → float */
+                if (b) { *out = make_double((double)a / (double)b); return true; }
                 vm->last_exception = make_exception_instance(vm, vm->runtime_error_class, "division by zero");
                 return false;
             case VM_OP_MOD:
                 if (b) { *out = py_integer_result(a % b); return true; }
                 vm->last_exception = make_exception_instance(vm, vm->exception_class, "mod/0");
                 return false;
+            case VM_OP_IDIV: {
+                if (b) {
+                    if (a == INT64_MIN && b == -1) { *out = make_double(9223372036854775808.0); return true; }
+                    int64_t q = a / b;
+                    int64_t r = a % b;
+                    if (r != 0 && ((r < 0) != (b < 0))) q -= 1;  /* floor, not truncate */
+                    *out = py_integer_result(q);
+                    return true;
+                }
+                vm->last_exception = make_exception_instance(vm, vm->runtime_error_class, "division by zero");
+                return false;
+            }
+            case VM_OP_POW: {
+                if (b < 0) { *out = make_double(pow(py_to_f64(left), py_to_f64(right))); return true; }
+                int64_t base = a, res = 1, exp = b;
+                bool overflow = false;
+                while (exp > 0 && !overflow) {
+                    if (exp & 1) { if (py_i64_mul_overflows(res, base)) overflow = true; else res *= base; }
+                    exp >>= 1;
+                    if (exp && !overflow) { if (py_i64_mul_overflows(base, base)) overflow = true; else base *= base; }
+                }
+                if (overflow) { *out = make_double(pow(py_to_f64(left), py_to_f64(right))); return true; }
+                *out = py_integer_result(res);
+                return true;
+            }
             case VM_OP_BAND: *out = py_integer_result(a & b); return true;
             case VM_OP_BOR:  *out = py_integer_result(a | b); return true;
             case VM_OP_BXOR: *out = py_integer_result(a ^ b); return true;
@@ -137,6 +174,9 @@ static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right,
         case VM_OP_DIV: *out = b == 0.0 ? (a == 0.0 ? make_double(0.0 / 0.0) :
             (a > 0.0 ? make_pos_inf() : make_neg_inf())) : make_double(a / b); return true;
         case VM_OP_MOD: *out = b == 0.0 ? make_double(0.0 / 0.0) : make_double(fmod(a, b)); return true;
+        case VM_OP_IDIV: *out = b == 0.0 ? (a == 0.0 ? make_double(0.0 / 0.0) :
+            (a > 0.0 ? make_pos_inf() : make_neg_inf())) : make_double(floor(a / b)); return true;
+        case VM_OP_POW: *out = make_double(pow(a, b)); return true;
         default: return false;
     }
 }

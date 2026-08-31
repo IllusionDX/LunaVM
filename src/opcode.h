@@ -70,6 +70,8 @@ typedef enum {
     OP_MUL,         /* ABC  : A = B * C                                    */
     OP_DIV,         /* ABC  : A = B / C                                    */
     OP_MOD,         /* ABC  : A = B % C                                    */
+    OP_IDIV,        /* ABC  : A = B // C  (floor division)                 */
+    OP_POW,         /* ABC  : A = B ** C  (power)                          */
     OP_NEG,         /* ABC  : A = -B                                       */
     OP_BAND,        /* ABC  : A = B & C                                    */
     OP_BOR,         /* ABC  : A = B | C                                    */

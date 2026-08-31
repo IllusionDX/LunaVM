@@ -218,6 +218,8 @@ static inline Value do_arith(VM *vm, Value L, Value R, OpCode op) {
         case OP_MUL: operation = VM_OP_MUL; break;
         case OP_DIV: operation = VM_OP_DIV; break;
         case OP_MOD: operation = VM_OP_MOD; break;
+        case OP_IDIV: operation = VM_OP_IDIV; break;
+        case OP_POW: operation = VM_OP_POW; break;
         case OP_BAND: operation = VM_OP_BAND; break;
         case OP_BOR: operation = VM_OP_BOR; break;
         case OP_BXOR: operation = VM_OP_BXOR; break;
@@ -788,7 +790,9 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_mul,           // 9  OP_MUL
         &&op_div,           // 10 OP_DIV
         &&op_mod,           // 11 OP_MOD
-        &&op_neg,           // 12 OP_NEG
+        &&op_idiv,          // 12 OP_IDIV
+        &&op_pow,           // 13 OP_POW
+        &&op_neg,           // 14 OP_NEG
         &&op_band,          // 13 OP_BAND
         &&op_bor,           // 14 OP_BOR
         &&op_bxor,          // 15 OP_BXOR
