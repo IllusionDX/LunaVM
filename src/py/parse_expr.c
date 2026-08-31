@@ -620,12 +620,68 @@ static Expr *parse_additive(Parser *parser) {
     return left;
 }
 
-static Expr *parse_comparison(Parser *parser) {
+static Expr *parse_shift(Parser *parser) {
     Expr *left = parse_additive(parser);
+    while (match(parser, TOK_LSHIFT) || match(parser, TOK_RSHIFT)) {
+        Token *op = advance(parser);
+        Expr *right = parse_additive(parser);
+        Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
+        expr->data.binary.left = left;
+        expr->data.binary.operator = strdup(op->value);
+        expr->data.binary.right = right;
+        left = expr;
+    }
+    return left;
+}
+
+static Expr *parse_bitand(Parser *parser) {
+    Expr *left = parse_shift(parser);
+    while (match(parser, TOK_AMPERSAND)) {
+        Token *op = advance(parser);
+        Expr *right = parse_shift(parser);
+        Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
+        expr->data.binary.left = left;
+        expr->data.binary.operator = strdup(op->value);
+        expr->data.binary.right = right;
+        left = expr;
+    }
+    return left;
+}
+
+static Expr *parse_bitxor(Parser *parser) {
+    Expr *left = parse_bitand(parser);
+    while (match(parser, TOK_CARET)) {
+        Token *op = advance(parser);
+        Expr *right = parse_bitand(parser);
+        Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
+        expr->data.binary.left = left;
+        expr->data.binary.operator = strdup(op->value);
+        expr->data.binary.right = right;
+        left = expr;
+    }
+    return left;
+}
+
+static Expr *parse_bitor(Parser *parser) {
+    Expr *left = parse_bitxor(parser);
+    while (match(parser, TOK_PIPE)) {
+        Token *op = advance(parser);
+        Expr *right = parse_bitxor(parser);
+        Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
+        expr->data.binary.left = left;
+        expr->data.binary.operator = strdup(op->value);
+        expr->data.binary.right = right;
+        left = expr;
+    }
+    return left;
+}
+
+static Expr *parse_comparison(Parser *parser) {
+    Expr *left = parse_bitor(parser);
     while (match(parser, TOK_LT) || match(parser, TOK_GT) ||
            match(parser, TOK_LE) || match(parser, TOK_GE)) {
         Token *op = advance(parser);
-        Expr *right = parse_additive(parser);
+        Expr *right = parse_bitor(parser);
         Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
         expr->data.binary.left = left;
         expr->data.binary.operator = strdup(op->value);

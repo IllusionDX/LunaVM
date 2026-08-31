@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include "vm.h"
 #include "value.h"
 #include "py/object.h"
@@ -152,15 +153,25 @@ static Value bn_input(VM *vm, Value *args, int n) {
     return make_null();
 }
 
+/* Exact int64 view of a builtin arg: doubles keep the legacy truncation;
+ * bigints beyond int64 raise OverflowError (CPython semantics). */
+static int64_t bn_int64_arg(VM *vm, Value v) {
+    if (IS_DOUBLE(v)) return (int64_t)AS_DOUBLE(v);
+    int64_t out;
+    if (int64_exact(v, &out)) return out;
+    luna_throw(vm, py_fe(vm)->overflow_error_class, "Python int too large to convert to C ssize_t");
+    return 0;
+}
+
 static Value bn_range(VM *vm, Value *args, int n) {
     (void)vm;
     int64_t start = 0, end = 0, step = 1;
     if (n == 1 && IS_NUMBER(args[0])) {
-        end = as_int64(args[0]);
+        end = bn_int64_arg(vm, args[0]);
     } else if (n >= 2) {
-        if (IS_NUMBER(args[0])) start = as_int64(args[0]);
-        if (IS_NUMBER(args[1])) end   = as_int64(args[1]);
-        if (n >= 3 && IS_NUMBER(args[2])) step = as_int64(args[2]);
+        if (IS_NUMBER(args[0])) start = bn_int64_arg(vm, args[0]);
+        if (IS_NUMBER(args[1])) end   = bn_int64_arg(vm, args[1]);
+        if (n >= 3 && IS_NUMBER(args[2])) step = bn_int64_arg(vm, args[2]);
     }
     ObjList *l = new_list(0);
     if (step > 0) {
@@ -180,23 +191,28 @@ static Value bn_str(VM *vm, Value *args, int n) {
 }
 
 static Value bn_int(VM *vm, Value *args, int n) {
-    (void)vm;
     if (!n) return make_int(0);
-    if (IS_INT(args[0])) return args[0];
-    if (IS_INT64(args[0])) {
-        int64_t v = as_int64(args[0]);
-        return (v >= INT32_MIN && v <= INT32_MAX) ? make_int((int32_t)v) : make_int64(v);
+    Value v = args[0];
+    if (IS_INT(v)) return v;
+    if (IS_BIGINT(v)) return v;
+    if (IS_BOOL(v)) return make_int(AS_BOOL(v) ? 1 : 0);
+    if (IS_DOUBLE(v)) {
+        Value out;
+        if (bigint_from_f64(AS_DOUBLE(v), &out)) return out;
+        luna_throw(vm, py_fe(vm)->value_error_class,
+            isnan(AS_DOUBLE(v)) ? "cannot convert float NaN to integer"
+                                : "cannot convert float infinity to integer");
     }
-    if (IS_DOUBLE(args[0])) {
-        int64_t v = (int64_t)AS_DOUBLE(args[0]);
-        return (v >= INT32_MIN && v <= INT32_MAX) ? make_int((int32_t)v) : make_int64(v);
+    if (IS_STRING(v)) {
+        ObjString *s = (ObjString *)AS_OBJ(v);
+        Value out;
+        if (bigint_from_decimal(s->chars, (size_t)s->length, &out)) return out;
+        char msg[128];
+        snprintf(msg, sizeof(msg), "invalid literal for int() with base 10: '%.64s'", s->chars);
+        luna_throw(vm, py_fe(vm)->value_error_class, msg);
     }
-    if (IS_BOOL(args[0])) return make_int(AS_BOOL(args[0]) ? 1 : 0);
-    if (IS_STRING(args[0]))
-    {
-        int64_t v = atoll(((ObjString*)AS_OBJ(args[0]))->chars);
-        return (v >= INT32_MIN && v <= INT32_MAX) ? make_int((int32_t)v) : make_int64(v);
-    }
+    luna_throw(vm, py_fe(vm)->type_error_class,
+        "int() argument must be a string, a bytes-like object or a real number");
     return make_int(0);
 }
 
@@ -205,7 +221,14 @@ static Value bn_float(VM *vm, Value *args, int n) {
     if (!n) return make_double(0.0);
     if (IS_DOUBLE(args[0])) return args[0];
     if (IS_INT(args[0])) return make_double((double)AS_INT(args[0]));
-    if (IS_INT64(args[0])) return make_double((double)as_int64(args[0]));
+    if (IS_BIGINT(args[0])) {
+        double d = bigint_to_f64((ObjBigInt *)AS_OBJ(args[0]));
+        if (isinf(d)) {
+            luna_throw(vm, py_fe(vm)->overflow_error_class,
+                "int too large to convert to float");
+        }
+        return make_double(d);
+    }
     if (IS_BOOL(args[0])) return make_double(AS_BOOL(args[0]) ? 1.0 : 0.0);
     if (IS_STRING(args[0])) {
         const char *s = ((ObjString*)AS_OBJ(args[0]))->chars;
@@ -238,7 +261,7 @@ static Value bn_type(VM *vm, Value *args, int n) {
         if (IS_NIL(args[0])) t = "null";
         else if (IS_BOOL(args[0])) t = "bool";
         else if (IS_INT(args[0])) t = "int";
-        else if (IS_INT64(args[0])) t = "int64";
+        else if (IS_BIGINT(args[0])) t = "int";
         else if (IS_POS_INF(args[0])) t = "inf";
         else if (IS_NEG_INF(args[0])) t = "-inf";
         else if (IS_NAN(args[0])) t = "nan";
@@ -308,15 +331,36 @@ static Value bn_isinf(VM *vm, Value *args, int n) {
     return make_bool(IS_INF(args[0]));
 }
 
+static Value bn_abs(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (n != 1) {
+        luna_throw(vm, py_fe(vm)->argument_error_class, "abs() expects exactly 1 argument");
+    }
+    Value v = args[0];
+    if (IS_INT(v)) {
+        int32_t i = AS_INT(v);
+        return bigint_from_i64_value(i < 0 ? -(int64_t)i : (int64_t)i);
+    }
+    if (IS_BIGINT(v)) return bigint_to_value(bigint_abs((ObjBigInt *)AS_OBJ(v)));
+    if (IS_DOUBLE(v)) return make_double(fabs(AS_DOUBLE(v)));
+    if (IS_BOOL(v)) return v;
+    luna_throw(vm, py_fe(vm)->type_error_class, "abs() argument must be a number");
+    return make_null();
+}
+
 static Value bn_chr(VM *vm, Value *args, int n) {
     (void)vm;
     if (n != 1) {
         luna_throw(vm, py_fe(vm)->argument_error_class, "chr() expects exactly 1 argument");
     }
-    if (!IS_INT(args[0]) && !IS_INT64(args[0])) {
+    if (!IS_INT(args[0]) && !IS_BIGINT(args[0])) {
         luna_throw(vm, py_fe(vm)->type_error_class, "chr() argument must be an integer");
     }
-    int32_t cp = (int32_t)as_int64(args[0]);
+    int64_t cp64;
+    if (!int64_exact(args[0], &cp64)) {
+        luna_throw(vm, py_fe(vm)->overflow_error_class, "chr() argument too large");
+    }
+    int32_t cp = (int32_t)cp64;
     if (cp < 0 || cp > 0x10FFFF) {
         luna_throw(vm, py_fe(vm)->value_error_class, "chr() argument must be in range 0..1114111");
     }
@@ -368,7 +412,7 @@ static Value bn_ord(VM *vm, Value *args, int n) {
     } else {
         luna_throw(vm, py_fe(vm)->value_error_class, "ord(): invalid UTF-8");
     }
-    return make_int64(cp);
+    return bigint_from_i64_value(cp);   /* codepoints fit int32; normalizes */
 }
 
 /* ============================================================ */
@@ -532,10 +576,12 @@ static Value string_method_byte(VM *vm, Value *args, int nargs) {
     if (nargs < 1 || !IS_STRING(args[0])) return make_null();
     int64_t idx64 = 0;
     if (nargs >= 2) {
-        if (!IS_INT(args[1]) && !IS_INT64(args[1])) {
+        if (!IS_INT(args[1]) && !IS_BIGINT(args[1])) {
             luna_throw(vm, py_fe(vm)->type_error_class, "string.byte() expects an integer index"); return make_null();
         }
-        idx64 = as_int64(args[1]);
+        if (!int64_exact(args[1], &idx64)) {
+            luna_throw(vm, py_fe(vm)->overflow_error_class, "string.byte(): index too large"); return make_null();
+        }
     }
     ObjString *str = (ObjString*)AS_OBJ(args[0]);
     if (idx64 < 0 || idx64 >= str->length) {
@@ -760,6 +806,7 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "gc", bn_gc);
     vm_define_native(vm, "isnan", bn_isnan);
     vm_define_native(vm, "isinf", bn_isinf);
+    vm_define_native(vm, "abs",   bn_abs);
     vm_define_native(vm, "ord",   bn_ord);
     vm_define_native(vm, "chr",   bn_chr);
     vm_define_native(vm, "vec2",  bn_vec2);

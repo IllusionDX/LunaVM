@@ -15,37 +15,41 @@
 #include "py/frontend_state.h"
 #include "py/number_methods.h"
 
-/* __int__ / __index__ / int(self) — truncate floats, pass ints through. */
+/* __int__ / __index__ / int(self) — exact conversions (CPython semantics). */
 static Value py_num_int(VM *vm, Value *args, int n) {
-    (void)vm; (void)n;
+    (void)n;
     Value v = args[0];
-    int64_t iv;
-    if (IS_BOOL(v)) iv = IS_TRUE(v) ? 1 : 0;
-    else if (IS_DOUBLE(v)) {
-        double d = AS_DOUBLE(v);
-        if (d != d) iv = 0;                                /* NaN -> 0 */
-        else if (d >= (double)INT64_MAX) iv = INT64_MAX;
-        else if (d <= (double)INT64_MIN) iv = INT64_MIN;
-        else iv = (int64_t)d;
-    } else {
-        iv = as_int64(v);                                  /* int / int64 */
+    if (IS_BOOL(v)) return make_int(IS_TRUE(v) ? 1 : 0);
+    if (IS_INT(v) || IS_BIGINT(v)) return v;
+    if (IS_DOUBLE(v)) {
+        Value out;
+        if (bigint_from_f64(AS_DOUBLE(v), &out)) return out;
+        luna_throw(vm, py_fe(vm)->value_error_class,
+            isnan(AS_DOUBLE(v)) ? "cannot convert float NaN to integer"
+                                : "cannot convert float infinity to integer");
     }
-    return (iv >= INT32_MIN && iv <= INT32_MAX)
-               ? make_int((int32_t)iv) : make_int64(iv);
+    return make_int(0);
 }
 
 static Value py_num_index(VM *vm, Value *args, int n) {
     return py_num_int(vm, args, n);
 }
 
-/* __float__ / float(self) */
+/* __float__ / float(self) — correctly rounded for bigints; overflow raises. */
 static Value py_num_float(VM *vm, Value *args, int n) {
-    (void)vm; (void)n;
+    (void)n;
     Value v = args[0];
     double d;
     if (IS_BOOL(v)) d = IS_TRUE(v) ? 1.0 : 0.0;
     else if (IS_DOUBLE(v)) d = AS_DOUBLE(v);
-    else d = as_int64(v);                                  /* int / int64 */
+    else if (IS_BIGINT(v)) {
+        d = bigint_to_f64((ObjBigInt *)AS_OBJ(v));
+        if (isinf(d)) {
+            luna_throw(vm, py_fe(vm)->overflow_error_class,
+                "int too large to convert to float");
+        }
+    }
+    else d = (double)AS_INT(v);
     return make_double(d);
 }
 
@@ -55,7 +59,8 @@ static Value py_num_bool(VM *vm, Value *args, int n) {
     Value v = args[0];
     if (IS_BOOL(v)) return v;
     if (IS_DOUBLE(v)) return BOOL_VAL(AS_DOUBLE(v) != 0.0);
-    return BOOL_VAL(as_int64(v) != 0);
+    if (IS_BIGINT(v)) return BOOL_VAL(!bigint_is_zero((ObjBigInt *)AS_OBJ(v)));
+    return BOOL_VAL(AS_INT(v) != 0);
 }
 
 /* int.bit_length() — bits needed for the magnitude (CPython semantics). */
@@ -63,7 +68,8 @@ static Value py_num_bit_length(VM *vm, Value *args, int n) {
     (void)vm; (void)n;
     Value v = args[0];
     if (IS_BOOL(v)) return make_int(IS_TRUE(v) ? 1 : 0);
-    int64_t val = as_int64(v);
+    if (IS_BIGINT(v)) return make_int(bigint_bit_length((ObjBigInt *)AS_OBJ(v)));
+    int64_t val = AS_INT(v);
     uint64_t mag = (val < 0) ? (uint64_t)(-(val + 1)) + 1 : (uint64_t)val;
     int bits = 0;
     while (mag) { bits++; mag >>= 1; }

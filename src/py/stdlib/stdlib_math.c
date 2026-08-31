@@ -173,9 +173,9 @@ static Value math_abs(VM *vm, Value *args, int n) {
         int v = AS_INT(args[0]);
         return make_int(v < 0 ? -v : v);
     }
-    if (IS_INT64(args[0])) {
-        int64_t v = as_int64(args[0]);
-        return make_int64(v < 0 ? -v : v);
+    if (IS_BIGINT(args[0])) {
+        ObjBigInt *a = (ObjBigInt *)AS_OBJ(args[0]);
+        return bigint_to_value(bigint_abs(a));
     }
     double v = AS_DOUBLE(args[0]);
     return make_double(v < 0.0 ? -v : v);

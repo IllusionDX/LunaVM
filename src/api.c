@@ -186,12 +186,14 @@ double api_to_number(APIState *L, int idx) {
     return (double)api_to_integer(L, idx);
 }
 
-/* int64 heap extraction when the value is a boxed 64-bit integer. */
-static int64_t int64_of(APIState *L, Value v) {
+/* Exact integer extraction through the frontend bridge. Returns false when
+ * the value is a frontend integer that does not fit in an int64_t (the API
+ * cannot represent it); callers decide how to report that. */
+static bool integer_of(APIState *L, Value v, int64_t *out) {
     if (L->vm && L->vm->frontend_def && L->vm->frontend_def->object &&
-        L->vm->frontend_def->object->int64_value)
-        return L->vm->frontend_def->object->int64_value(v);
-    return 0;
+        L->vm->frontend_def->object->integer_value)
+        return L->vm->frontend_def->object->integer_value(v, out);
+    return false;
 }
 
 int64_t api_to_integer(APIState *L, int idx) {
@@ -199,7 +201,10 @@ int64_t api_to_integer(APIState *L, int idx) {
     if (!v) return 0;
     if (IS_INT(*v)) return AS_INT(*v);
     if (IS_DOUBLE(*v)) return (int64_t)AS_DOUBLE(*v);
-    if (IS_OBJ(*v) && api_type(L, idx) == LUNA_TINTEGER) return int64_of(L, *v);
+    if (IS_OBJ(*v) && api_type(L, idx) == LUNA_TINTEGER) {
+        int64_t out;
+        if (integer_of(L, *v, &out)) return out;
+    }
     return 0;
 }
 
@@ -229,8 +234,8 @@ void api_push_integer(APIState *L, int64_t n) {
     if (n >= INT32_MIN && n <= INT32_MAX)
         L->stack[L->top++] = make_int((int32_t)n);
     else if (L->vm->frontend_def && L->vm->frontend_def->object &&
-             L->vm->frontend_def->object->make_int64)
-        L->stack[L->top++] = L->vm->frontend_def->object->make_int64(n);
+             L->vm->frontend_def->object->make_integer)
+        L->stack[L->top++] = L->vm->frontend_def->object->make_integer(n);
     else
         L->stack[L->top++] = make_null();
 }
@@ -537,7 +542,13 @@ double api_checknumber(APIState *L, int arg) {
 int64_t api_checkinteger(APIState *L, int arg) {
     if (!api_is_integer(L, arg))
         api_error(L, "bad argument #%d (integer expected)", arg + (arg < 0 ? L->top + 1 : 1));
-    return api_to_integer(L, arg);
+    Value *v = stack_ptr(L, arg);
+    int64_t out;
+    if (v && IS_INT(*v)) return AS_INT(*v);
+    if (v && IS_DOUBLE(*v)) return (int64_t)AS_DOUBLE(*v);
+    if (v && integer_of(L, *v, &out)) return out;
+    api_error(L, "bad argument #%d (integer too large)", arg + (arg < 0 ? L->top + 1 : 1));
+    return 0;
 }
 
 const char *api_checkstring(APIState *L, int arg) {

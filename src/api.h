@@ -77,6 +77,9 @@ bool        api_is_userdata(APIState *L, int idx);
 
 bool        api_to_boolean(APIState *L, int idx);
 double      api_to_number(APIState *L, int idx);
+/* Exact int64 extraction. Returns 0 when the slot holds an integer that
+ * does not fit in a C int64_t (e.g. an arbitrary-precision int) — the
+ * int64 API cannot represent it. Use api_checkinteger to get an error. */
 int64_t     api_to_integer(APIState *L, int idx);
 const char *api_to_string(APIState *L, int idx, size_t *len);
 
@@ -136,6 +139,7 @@ void api_error(APIState *L, const char *fmt, ...);
 
 /* Argument checking */
 double      api_checknumber(APIState *L, int arg);
+/* Checks the arg is an integer AND fits in an int64_t (errors otherwise). */
 int64_t     api_checkinteger(APIState *L, int arg);
 const char* api_checkstring(APIState *L, int arg);
 void*       api_checkuserdata(APIState *L, int arg, const char *tag);

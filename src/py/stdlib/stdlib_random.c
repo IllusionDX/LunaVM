@@ -99,15 +99,18 @@ static uint64_t pcg64_step(__uint128_t *state, __uint128_t inc) {
 
 static inline uint64_t list_get_u64(ObjList *list, int idx) {
     Value v = list_get(list, idx);
-    if (IS_INT64(v))
-        return ((ObjInt64*)AS_OBJ(v))->value;
+    if (IS_BIGINT(v)) {
+        int64_t r;
+        bigint_get_i64((ObjBigInt *)AS_OBJ(v), &r);
+        return (uint64_t)r;
+    }
     if (IS_INT(v))
         return (uint64_t)(int64_t)AS_INT(v);
     return 0;
 }
 
 static inline void list_set_u64(ObjList *list, int idx, uint64_t val) {
-    list_set(list, idx, make_int64((int64_t)val));
+    list_set(list, idx, bigint_from_i64_value((int64_t)val));
 }
 
 /* Helpers to store/load __uint128_t from state list [low, high] */
@@ -174,17 +177,14 @@ static uint64_t lemire_range_64(uint64_t random, uint64_t range) {
 /* Binding layer — "The Customs"                                 */
 /* ============================================================ */
 
-/* Returns result as a fast int32 if it fits, otherwise as heap Int64.
+/* Returns result as a fast int32 if it fits, otherwise as a heap bigint.
  * This keeps the GC pressure at zero for >99% of game calls
  * (loot drops, hit numbers, particle lifetimes, etc.). */
 static Value make_ranged_result(uint64_t value) {
-    if (value <= (uint64_t)INT32_MAX) {
-        return make_int((int32_t)value);
-    }
-    return make_int64((int64_t)value);
+    return bigint_from_i64_value((int64_t)value);
 }
 
-/* Convert any numeric VM value to int64 */
+/* Convert any numeric VM value to int64 (internal: seed / state only) */
 static int64_t value_to_int64(Value v) {
     return as_int64(v);
 }
@@ -192,6 +192,69 @@ static int64_t value_to_int64(Value v) {
 /* Convert any numeric VM value to uint64 */
 static uint64_t value_to_uint64(Value v) {
     return (uint64_t)as_int64(v);
+}
+
+/* Exact integer ordering of two int values (int32 or bigint). */
+static int rng_int_cmp(Value a, Value b) {
+    if (IS_INT(a) && IS_INT(b)) {
+        int64_t x = AS_INT(a), y = AS_INT(b);
+        return x < y ? -1 : x > y ? 1 : 0;
+    }
+    if (IS_BIGINT(a) && IS_BIGINT(b))
+        return bigint_cmp((ObjBigInt *)AS_OBJ(a), (ObjBigInt *)AS_OBJ(b));
+    return IS_BIGINT(a) ? bigint_cmp_value((ObjBigInt *)AS_OBJ(a), b)
+                        : -bigint_cmp_value((ObjBigInt *)AS_OBJ(b), a);
+}
+
+/* Uniform random in [0, range) with arbitrary precision — rejection sampling
+ * like CPython's _randbelow_with_getrandbits. Returns a normalized Value. */
+static Value rng_randbelow(VM *vm, ObjList *state_list, ObjBigInt *range) {
+    (void)vm;
+    int k = bigint_bit_length(range);
+    int words = (k + 63) / 64;
+    for (;;) {
+        ObjBigInt *acc = bigint_alloc(1);   /* zero */
+        for (int i = 0; i < words; i++) {
+            ObjBigInt *t = bigint_shl(acc, 64);
+            bigint_release(acc);
+            ObjBigInt *wv = bigint_from_u64(rng_step(state_list));
+            acc = bigint_add(t, wv);
+            bigint_release(t);
+            bigint_release(wv);
+        }
+        if (bigint_cmp(acc, range) < 0) return bigint_to_value(acc);
+        bigint_release(acc);
+    }
+}
+
+/* Uniform random integer in [min, max] (inclusive), arbitrary precision. */
+static Value rng_int_range(VM *vm, ObjList *state_list, Value minv, Value maxv) {
+    if (rng_int_cmp(minv, maxv) > 0) { Value t = minv; minv = maxv; maxv = t; }
+    int64_t mn, mx;
+    if (int64_exact(minv, &mn) && int64_exact(maxv, &mx)) {
+        /* Fast path: both bounds fit int64 (Lemire reduction, no allocation). */
+        uint64_t u_min = (uint64_t)mn;
+        uint64_t u_range = (uint64_t)mx - u_min + 1;
+        uint64_t raw = rng_step(state_list);
+        uint64_t result = (u_range == 0) ? u_min + raw            /* full 2^64 span */
+                                         : u_min + lemire_range_64(raw, u_range);
+        return make_ranged_result(result);
+    }
+    /* Arbitrary-precision path: range = max - min + 1, result = min + randbelow. */
+    ObjBigInt *mnb = IS_BIGINT(minv) ? (ObjBigInt *)AS_OBJ(minv) : bigint_from_i64(AS_INT(minv));
+    ObjBigInt *mxb = IS_BIGINT(maxv) ? (ObjBigInt *)AS_OBJ(maxv) : bigint_from_i64(AS_INT(maxv));
+    bool mn_temp = IS_INT(minv), mx_temp = IS_INT(maxv);
+    ObjBigInt *one = bigint_from_i64(1);
+    ObjBigInt *sub = bigint_sub(mxb, mnb);
+    ObjBigInt *range = bigint_add(sub, one);
+    bigint_release(sub);
+    bigint_release(one);
+    Value r = rng_randbelow(vm, state_list, range);
+    bigint_release(range);
+    Value result = bigint_binary_value(vm, VM_OP_ADD, r, minv);
+    if (mn_temp) bigint_release(mnb);
+    if (mx_temp) bigint_release(mxb);
+    return result;
 }
 
 /* Extract uint64_t seed from constructor argument.
@@ -344,15 +407,7 @@ static Value rng_int(VM *vm, Value *args, int n) {
     if (!IS_NUMBER(args[2]))
         luna_throw(vm, py_fe(vm)->type_error_class, "Random.int(): max must be numeric");
 
-    int64_t min = value_to_int64(args[1]);
-    int64_t max = value_to_int64(args[2]);
-    if (min > max) { int64_t t = min; min = max; max = t; }
-
-    uint64_t range = (uint64_t)(max - min + 1);
-    if (range == 0) return make_ranged_result(raw);
-
-    uint64_t result = (uint64_t)min + lemire_range_64(raw, range);
-    return make_ranged_result(result);
+    return rng_int_range(vm, state_list, args[1], args[2]);
 }
 
 /* --- rng.float(min, max) --- */
@@ -433,18 +488,10 @@ static Value rng_call(VM *vm, Value *args, int n) {
     if (!IS_NUMBER(args[2]))
         luna_throw(vm, py_fe(vm)->type_error_class, "Random(): second argument must be numeric");
 
-    bool is_int_range = (IS_INT(args[1]) || IS_INT64(args[1])) &&
-                        (IS_INT(args[2]) || IS_INT64(args[2]));
+    bool is_int_range = (IS_INT(args[1]) || IS_BIGINT(args[1])) &&
+                        (IS_INT(args[2]) || IS_BIGINT(args[2]));
     if (is_int_range) {
-        int64_t min = value_to_int64(args[1]);
-        int64_t max = value_to_int64(args[2]);
-        if (min > max) { int64_t t = min; min = max; max = t; }
-
-        uint64_t range = (uint64_t)(max - min + 1);
-        if (range == 0) return make_ranged_result(raw);
-
-        uint64_t result = (uint64_t)min + lemire_range_64(raw, range);
-        return make_ranged_result(result);
+        return rng_int_range(vm, state_list, args[1], args[2]);
     }
 
     /* Float path */

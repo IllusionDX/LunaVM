@@ -187,19 +187,12 @@ static Value parse_number(JsonParser *p) {
     memcpy(tmp, p->src + start, len);
     tmp[len] = '\0';
 
-    Value result;
     if (!is_float) {
-        /* Try int64 first, then int32, then fallback to double */
-        errno = 0;
-        long long ll = strtoll(tmp, NULL, 10);
-        if (errno == 0) {
-            if (ll >= INT32_MIN && ll <= INT32_MAX) {
-                result = make_int((int32_t)ll);
-            } else {
-                result = make_obj((Object*)new_int64((int64_t)ll));
-            }
+        /* Integer tokens parse exactly (arbitrary precision). */
+        Value out;
+        if (bigint_from_decimal(tmp, len, &out)) {
             free(tmp);
-            return result;
+            return out;
         }
     }
 
@@ -421,11 +414,10 @@ static void encode_value(VM *vm, Value v, char **buf, size_t *len, size_t *cap, 
         char tmp[32];
         snprintf(tmp, sizeof(tmp), "%lld", (long long)AS_INT(v));
         sb_append_cstr(buf, len, cap, tmp);
-    } else if (IS_INT64(v)) {
-        ObjInt64 *obj = (ObjInt64*)AS_OBJ(v);
-        char tmp[32];
-        snprintf(tmp, sizeof(tmp), "%lld", (long long)obj->value);
-        sb_append_cstr(buf, len, cap, tmp);
+    } else if (IS_BIGINT(v)) {
+        char *s = bigint_to_decimal((ObjBigInt *)AS_OBJ(v));
+        sb_append_cstr(buf, len, cap, s);
+        free(s);
     } else if (IS_DOUBLE(v)) {
         double d = AS_DOUBLE(v);
         if (isinf(d) || isnan(d)) {

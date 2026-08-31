@@ -26,7 +26,6 @@ static void intern_remove(ObjString *s);
 static void userdata_run_finalizer(ObjUserdata *ud);
 
 /* ---- helpers available to vtable functions ---- */
-static inline bool is_int64_type(Value v) { return IS_OBJ(v) && AS_OBJ(v) && AS_OBJ(v)->type == py_types[OBJ_INT64]; }
 
 /* ============================================================
  * String operations (vtable)
@@ -662,75 +661,34 @@ static uint32_t py_matrix_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(
 static int py_matrix_len(struct VM *vm, Value self) { (void)vm; return 16; }
 
 /* ============================================================
- * Int64 numeric arithmetic.
- * The core int (int32) path already promotes to int64 on overflow in
- * py_binary_operation(); these MOPs restore that behaviour for the
- * int64 object itself (e.g. int64 + int32) and promote the result back
- * to core int whenever it fits, keeping the value as int64 otherwise.
+ * BigInt numeric arithmetic (arbitrary precision, PyLong-style).
+ * The core int (int32) path stays immediate; every result is
+ * normalized back to int32 when it fits, so the heap bigint only
+ * holds values beyond the int32 range.
  * ============================================================ */
-static Value py_int64_promote(int64_t value) {
-    if (value >= -2147483647LL - 1LL && value <= 2147483647LL)
-        return make_int((int32_t)value);
-    return make_int64(value);
-}
-
-static Value py_int64_add(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) + as_double(b));
-    return py_int64_promote(as_int64(a) + as_int64(b));
-}
-static Value py_int64_sub(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) - as_double(b));
-    return py_int64_promote(as_int64(a) - as_int64(b));
-}
-static Value py_int64_mul(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (IS_DOUBLE(a) || IS_DOUBLE(b)) return make_double(as_double(a) * as_double(b));
-    return py_int64_promote(as_int64(a) * as_int64(b));
-}
-static Value py_int64_div(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
-        double da = as_double(a), db = as_double(b);
-        return make_double(db == 0.0 ? da / 0.0 : da / db);
-    }
-    int64_t ia = as_int64(a), ib = as_int64(b);
-    if (ib == 0) return make_null();
-    return py_int64_promote(ia / ib);
-}
-static Value py_int64_mod(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
-        double da = as_double(a), db = as_double(b);
-        return make_double(db == 0.0 ? da / 0.0 : fmod(da, db));
-    }
-    int64_t ia = as_int64(a), ib = as_int64(b);
-    if (ib == 0) return make_null();
-    return py_int64_promote(ia % ib);
-}
-static Value py_int64_neg(struct VM *vm, Value a) {
-    (void)vm;
+static Value py_bigint_add(struct VM *vm, Value a, Value b) { return bigint_binary_value(vm, VM_OP_ADD, a, b); }
+static Value py_bigint_sub(struct VM *vm, Value a, Value b) { return bigint_binary_value(vm, VM_OP_SUB, a, b); }
+static Value py_bigint_mul(struct VM *vm, Value a, Value b) { return bigint_binary_value(vm, VM_OP_MUL, a, b); }
+static Value py_bigint_div(struct VM *vm, Value a, Value b) { return bigint_binary_value(vm, VM_OP_DIV, a, b); }
+static Value py_bigint_mod(struct VM *vm, Value a, Value b) { return bigint_binary_value(vm, VM_OP_MOD, a, b); }
+static Value py_bigint_neg(struct VM *vm, Value a) {
     if (IS_DOUBLE(a)) return make_double(-AS_DOUBLE(a));
-    return py_int64_promote(-as_int64(a));
+    return bigint_unary_value(vm, VM_OP_NEG, a);
 }
-static int py_int64_cmp(struct VM *vm, Value a, Value b) {
+static int py_bigint_cmp(struct VM *vm, Value a, Value b) {
     (void)vm;
     if (IS_DOUBLE(a) || IS_DOUBLE(b)) {
-        double da = as_double(a), db = as_double(b);
-        return (da < db) ? -1 : (da > db) ? 1 : 0;
+        double db = IS_DOUBLE(a) ? AS_DOUBLE(a) : AS_DOUBLE(b);
+        if (isnan(db)) return 2;                 /* incomparable */
+        return IS_BIGINT(a) ? bigint_cmp_f64((ObjBigInt *)AS_OBJ(a), db)
+                            : -bigint_cmp_f64((ObjBigInt *)AS_OBJ(b), db);
     }
-    int64_t ia = as_int64(a), ib = as_int64(b);
-    return (ia < ib) ? -1 : (ia > ib) ? 1 : 0;
+    return IS_BIGINT(a) ? bigint_cmp_value((ObjBigInt *)AS_OBJ(a), b)
+                        : -bigint_cmp_value((ObjBigInt *)AS_OBJ(b), a);
 }
-static Value py_int64_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
-static void py_int64_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
-static Value py_int64_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int py_int64_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value py_int64_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value py_int64_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t py_int64_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int py_int64_len(struct VM *vm, Value self) { (void)vm; return 1; }
+static Value py_bigint_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+static uint32_t py_bigint_hash(Value self) { return bigint_hash((ObjBigInt *)AS_OBJ(self)); }
+static int py_bigint_len(struct VM *vm, Value self) { (void)vm; (void)self; return 1; }
 
 /* ============================================================
  * Default stubs for kinds without special arithmetic/index rules
@@ -873,13 +831,13 @@ Type py_buffer_type = {
     .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type py_int64_type = {
-    .name = "int64", .kind = OBJ_INT64,
-    .add = py_int64_add, .sub = py_int64_sub, .mul = py_int64_mul, .div = py_int64_div, .mod = py_int64_mod,
-    .neg = py_int64_neg, .cmp = py_int64_cmp,
-    .getitem = py_int64_getitem, .setitem = py_int64_setitem,
-    .getattr = py_int64_getattr, .setattr = py_int64_setattr,
-    .call = py_int64_call, .tostring = py_int64_tostring, .hash = py_int64_hash, .len = py_int64_len
+Type py_bigint_type = {
+    .name = "int", .kind = OBJ_BIGINT,
+    .add = py_bigint_add, .sub = py_bigint_sub, .mul = py_bigint_mul, .div = py_bigint_div, .mod = py_bigint_mod,
+    .neg = py_bigint_neg, .cmp = py_bigint_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_bigint_tostring, .hash = py_bigint_hash, .len = py_bigint_len
 };
 
 Type py_userdata_type = {
@@ -923,7 +881,7 @@ Type *py_types[] = {
     [OBJ_BOUND_METHOD] = &py_bound_method_type,
     [OBJ_MODULE]       = &py_module_type,
     [OBJ_BUFFER]       = &py_buffer_type,
-    [OBJ_INT64]        = &py_int64_type,
+    [OBJ_BIGINT]       = &py_bigint_type,
     [OBJ_USERDATA]     = &py_userdata_type,
     [OBJ_VECTOR]       = &py_vector_type,
     [OBJ_MATRIX]       = &py_matrix_type,
@@ -1304,10 +1262,7 @@ uint32_t hash_value(Value v) {
         int32_t i = AS_INT(v);
         return (uint32_t)(i ^ (i >> 16));
     }
-    if (IS_INT64(v)) {
-        uint64_t x = ((ObjInt64*)AS_OBJ(v))->value;
-        return (uint32_t)(x ^ (x >> 32));
-    }
+    if (IS_BIGINT(v)) return bigint_hash((ObjBigInt *)AS_OBJ(v));
     if (IS_DOUBLE(v)) {
         uint64_t u;
         memcpy(&u, &v, sizeof(u));
@@ -1437,7 +1392,7 @@ void value_free_intern_table(void) {
 
 
 
-static void init_object(Object *obj, ObjType type, size_t size) {
+void py_init_object(Object *obj, ObjType type, size_t size) {
     obj->type = py_types[type];
     obj->gc_color = GC_COLOR_WHITE;
     obj->size = size;
@@ -1460,7 +1415,7 @@ ObjString *new_string(const char *chars, int length) {
 
     ObjString *s = malloc(sizeof(ObjString));
     if (!s) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)s, OBJ_STRING, sizeof(ObjString) + length + 1);
+    py_init_object((Object*)s, OBJ_STRING, sizeof(ObjString) + length + 1);
     s->chars = malloc(length + 1);
     if (!s->chars) { fprintf(stderr, "OOM\n"); exit(1); }
     memcpy(s->chars, chars, length);
@@ -1474,7 +1429,7 @@ ObjString *new_string(const char *chars, int length) {
 ObjList *new_list(int capacity) {
     ObjList *l = malloc(sizeof(ObjList));
     if (!l) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)l, OBJ_LIST, sizeof(ObjList) + (capacity > 4 ? capacity * sizeof(Value) : 0));
+    py_init_object((Object*)l, OBJ_LIST, sizeof(ObjList) + (capacity > 4 ? capacity * sizeof(Value) : 0));
     l->count = 0;
     if (capacity > 4) {
         l->capacity = capacity;
@@ -1490,7 +1445,7 @@ ObjList *new_list(int capacity) {
 ObjDict *new_dict(void) {
     ObjDict *d = malloc(sizeof(ObjDict));
     if (!d) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)d, OBJ_DICT, sizeof(ObjDict));
+    py_init_object((Object*)d, OBJ_DICT, sizeof(ObjDict));
     d->entries = NULL;
     d->order = NULL;
     d->capacity = 0;
@@ -1529,7 +1484,7 @@ ObjClass *new_class(const char *name, const char *base_name) {
     (void)base_name;
     ObjClass *cls = malloc(sizeof(ObjClass));
     if (!cls) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)cls, OBJ_CLASS, sizeof(ObjClass));
+    py_init_object((Object*)cls, OBJ_CLASS, sizeof(ObjClass));
     cls->name = strdup(name);
     cls->base = NULL;
     cls->prototype = NULL;
@@ -1546,7 +1501,7 @@ ObjClass *new_class(const char *name, const char *base_name) {
 ObjInstance *new_instance(ObjClass *klass, int cap) {
     ObjInstance *inst = malloc(sizeof(ObjInstance));
     if (!inst) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)inst, OBJ_INSTANCE, sizeof(ObjInstance) + sizeof(Value) * cap);
+    py_init_object((Object*)inst, OBJ_INSTANCE, sizeof(ObjInstance) + sizeof(Value) * cap);
     inst->class_name    = strdup(klass->name);
     inst->klass         = klass;
     inst->field_capacity = cap > 0 ? cap : 4;
@@ -1574,7 +1529,7 @@ ObjInstance *new_instance(ObjClass *klass, int cap) {
 ObjFunction *new_function(const char *name) {
     ObjFunction *f = malloc(sizeof(ObjFunction));
     if (!f) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)f, OBJ_FUNCTION, sizeof(ObjFunction));
+    py_init_object((Object*)f, OBJ_FUNCTION, sizeof(ObjFunction));
     f->name        = strdup(name ? name : "<fn>");
     f->chunk       = NULL;
     f->param_names = NULL;
@@ -1605,7 +1560,7 @@ ObjFunction *new_native_function(const char *name, NativeFn fn) {
 ObjUserdata *new_userdata_tagged(const char *tag, void *data, UserdataFinalizer finalizer) {
     ObjUserdata *ud = malloc(sizeof(ObjUserdata));
     if (!ud) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)ud, OBJ_USERDATA, sizeof(ObjUserdata));
+    py_init_object((Object*)ud, OBJ_USERDATA, sizeof(ObjUserdata));
     ud->tag = strdup(tag ? tag : "userdata");
     ud->data = data;
     ud->finalizer = finalizer;
@@ -1619,7 +1574,7 @@ ObjUserdata *new_userdata_tagged(const char *tag, void *data, UserdataFinalizer 
 ObjUpvalue *new_upvalue(int stack_index) {
     ObjUpvalue *uv = malloc(sizeof(ObjUpvalue));
     if (!uv) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)uv, OBJ_UPVALUE, sizeof(ObjUpvalue));
+    py_init_object((Object*)uv, OBJ_UPVALUE, sizeof(ObjUpvalue));
     uv->stack_index = stack_index;
     uv->is_open     = true;
     uv->closed      = make_null();
@@ -1631,7 +1586,7 @@ ObjUpvalue *new_upvalue(int stack_index) {
 ObjClosure *new_closure(ObjFunction *function) {
     ObjClosure *cl = malloc(sizeof(ObjClosure));
     if (!cl) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)cl, OBJ_CLOSURE, sizeof(ObjClosure) + sizeof(ObjUpvalue*) * function->upvalue_count);
+    py_init_object((Object*)cl, OBJ_CLOSURE, sizeof(ObjClosure) + sizeof(ObjUpvalue*) * function->upvalue_count);
     cl->function = function;
     cl->upvalue_count = function->upvalue_count;
     cl->upvalues = cl->upvalue_count > 0
@@ -1643,7 +1598,7 @@ ObjClosure *new_closure(ObjFunction *function) {
 ObjBoundMethod *new_bound_method(Value self, ObjFunction *fn) {
     ObjBoundMethod *bm = malloc(sizeof(ObjBoundMethod));
     if (!bm) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)bm, OBJ_BOUND_METHOD, sizeof(ObjBoundMethod));
+    py_init_object((Object*)bm, OBJ_BOUND_METHOD, sizeof(ObjBoundMethod));
     bm->self = self;
     bm->fn = fn;
     return bm;
@@ -1652,7 +1607,7 @@ ObjBoundMethod *new_bound_method(Value self, ObjFunction *fn) {
 ObjEnum *new_enum(const char *name, int count) {
     ObjEnum *e = malloc(sizeof(ObjEnum));
     if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)e, OBJ_ENUM, sizeof(ObjEnum));
+    py_init_object((Object*)e, OBJ_ENUM, sizeof(ObjEnum));
     e->name   = strdup(name);
     e->count  = count;
     e->names  = count > 0 ? calloc(count, sizeof(char*)) : NULL;
@@ -1663,7 +1618,7 @@ ObjEnum *new_enum(const char *name, int count) {
 ObjModule *new_module(const char *name) {
     ObjModule *mod = malloc(sizeof(ObjModule));
     if (!mod) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)mod, OBJ_MODULE, sizeof(ObjModule));
+    py_init_object((Object*)mod, OBJ_MODULE, sizeof(ObjModule));
     mod->name = new_string(name, (int)strlen(name));
     mod->exports = new_dict();
     return mod;
@@ -1672,7 +1627,7 @@ ObjModule *new_module(const char *name) {
 ObjBuffer *new_buffer(size_t capacity) {
     ObjBuffer *buf = malloc(sizeof(ObjBuffer));
     if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)buf, OBJ_BUFFER, sizeof(ObjBuffer) + capacity);
+    py_init_object((Object*)buf, OBJ_BUFFER, sizeof(ObjBuffer) + capacity);
     buf->size = 0;
     buf->capacity = capacity;
     buf->cursor = 0;
@@ -1681,18 +1636,10 @@ ObjBuffer *new_buffer(size_t capacity) {
     return buf;
 }
 
-ObjInt64 *new_int64(int64_t value) {
-    ObjInt64 *obj = malloc(sizeof(ObjInt64));
-    if (!obj) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)obj, OBJ_INT64, sizeof(ObjInt64));
-    obj->value = (uint64_t)value;
-    return obj;
-}
-
 ObjVector *new_vector(float x, float y, float z, float w) {
     ObjVector *obj = malloc(sizeof(ObjVector));
     if (!obj) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)obj, OBJ_VECTOR, sizeof(ObjVector));
+    py_init_object((Object*)obj, OBJ_VECTOR, sizeof(ObjVector));
     obj->data[0] = x;
     obj->data[1] = y;
     obj->data[2] = z;
@@ -1703,7 +1650,7 @@ ObjVector *new_vector(float x, float y, float z, float w) {
 ObjMatrix *new_matrix(void) {
     ObjMatrix *obj = malloc(sizeof(ObjMatrix));
     if (!obj) { fprintf(stderr, "OOM\n"); exit(1); }
-    init_object((Object*)obj, OBJ_MATRIX, sizeof(ObjMatrix));
+    py_init_object((Object*)obj, OBJ_MATRIX, sizeof(ObjMatrix));
     for (int i = 0; i < 16; i++) obj->m[i] = 0.0f;
     obj->m[0] = obj->m[5] = obj->m[10] = obj->m[15] = 1.0f;
     return obj;
@@ -1816,7 +1763,7 @@ bool is_truthy(Value v) {
     if (IS_NIL(v)) return false;
     if (IS_BOOL(v)) return AS_BOOL(v);
     if (IS_INT(v)) return AS_INT(v) != 0;
-    if (IS_INT64(v)) return ((ObjInt64*)AS_OBJ(v))->value != 0;
+    if (IS_BIGINT(v)) return ((ObjBigInt *)AS_OBJ(v))->sign != 0;
     if (IS_DOUBLE(v)) return AS_DOUBLE(v) != 0.0;
     if (IS_OBJ(v)) return AS_OBJ(v) != NULL;
     return false;
@@ -1824,12 +1771,24 @@ bool is_truthy(Value v) {
 
 bool values_equal(Value a, Value b) {
     if (a == b) return true;
-    /* Exact 64-bit integer equality: doubles lose precision above 2^53,
-       so two distinct ObjInt64 (e.g. 2^54 and 2^54+1) must not collapse. */
-    if (IS_INT64(a) && IS_INT64(b)) {
-        return ((ObjInt64*)AS_OBJ(a))->value == ((ObjInt64*)AS_OBJ(b))->value;
-    }
-    if ((IS_DOUBLE(a) || IS_INT(a) || IS_INT64(a)) && (IS_DOUBLE(b) || IS_INT(b) || IS_INT64(b))) {
+    /* Exact numeric equality across int32 / bigint / double. Heap bigints
+       never duplicate an int32 (normalized at construction), but bigints can
+       meet doubles, and doubles lose precision above 2^53, so those paths
+       compare exactly instead of through rounded doubles. */
+    bool a_num = IS_INT(a) || IS_BIGINT(a) || IS_DOUBLE(a);
+    bool b_num = IS_INT(b) || IS_BIGINT(b) || IS_DOUBLE(b);
+    if (a_num && b_num) {
+        if (IS_BIGINT(a) && IS_BIGINT(b))
+            return bigint_cmp((ObjBigInt *)AS_OBJ(a), (ObjBigInt *)AS_OBJ(b)) == 0;
+        if (IS_BIGINT(a) && IS_DOUBLE(b))
+            return bigint_cmp_f64((ObjBigInt *)AS_OBJ(a), AS_DOUBLE(b)) == 0;
+        if (IS_BIGINT(b) && IS_DOUBLE(a))
+            return bigint_cmp_f64((ObjBigInt *)AS_OBJ(b), AS_DOUBLE(a)) == 0;
+        if (IS_BIGINT(a))
+            return bigint_cmp_value((ObjBigInt *)AS_OBJ(a), b) == 0;
+        if (IS_BIGINT(b))
+            return bigint_cmp_value((ObjBigInt *)AS_OBJ(b), a) == 0;
+        /* int32 vs int32/double: floats are exact over the int32 range. */
         return as_double(a) == as_double(b);
     }
     /* Heap objects: route through the type's eq vtable. The default impl is
@@ -1847,7 +1806,7 @@ char *value_to_string(Value v) {
     if (IS_NIL(v)) return strdup("null");
     if (IS_BOOL(v)) return strdup(AS_BOOL(v) ? "true" : "false");
     if (IS_INT(v)) { snprintf(buf, sizeof(buf), "%d", AS_INT(v)); return strdup(buf); }
-    if (IS_INT64(v)) { snprintf(buf, sizeof(buf), "%" PRId64, (int64_t)((ObjInt64*)AS_OBJ(v))->value); return strdup(buf); }
+    if (IS_BIGINT(v)) return bigint_to_decimal((ObjBigInt*)AS_OBJ(v));
     if (IS_DOUBLE(v)) { snprintf(buf, sizeof(buf), "%g", AS_DOUBLE(v)); return strdup(buf); }
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
@@ -1913,7 +1872,7 @@ Value buffer_read_long(const ObjBuffer *buf, size_t offset) {
     for (size_t i = 0; i < 8; i++) {
         raw |= ((uint64_t)buf->data[offset + i]) << (i * 8);
     }
-    return make_int64((int64_t)raw);
+    return bigint_from_i64_value((int64_t)raw);
 }
 
 /* ============================================================ */
@@ -2292,6 +2251,7 @@ struct ObjClass *get_class(VM *vm, Value val) {
         case OBJ_CLASS:        return py_fe(vm)->class_class;
         case OBJ_MODULE:       return py_fe(vm)->module_class;
         case OBJ_USERDATA:     return py_fe(vm)->userdata_class;
+        case OBJ_BIGINT:       return py_fe(vm)->int_class;
         case OBJ_INSTANCE:     return ((ObjInstance*)AS_OBJ(val))->klass;
         default:               return NULL;
     }

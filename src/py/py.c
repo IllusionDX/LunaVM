@@ -33,6 +33,7 @@ void py_mark_roots(VM *vm) {
         fe->module_cache, fe->exception_class, fe->type_error_class,
         fe->key_error_class, fe->index_error_class, fe->attribute_error_class,
         fe->value_error_class, fe->runtime_error_class, fe->argument_error_class,
+        fe->overflow_error_class,
         fe->string_class, fe->list_class, fe->dict_class, fe->enum_class,
         fe->buffer_class, fe->vector_class, fe->matrix_class, fe->function_class,
         fe->closure_class, fe->bound_method_class, fe->class_class,
@@ -52,17 +53,19 @@ void py_mark_roots(VM *vm) {
 
 static double py_to_f64(Value v) {
     if (IS_INT(v)) return (double)AS_INT(v);
-    if (IS_INT64(v)) return (double)((ObjInt64 *)AS_OBJ(v))->value;
+    if (IS_BIGINT(v)) return bigint_to_f64((ObjBigInt *)AS_OBJ(v));
     return IS_DOUBLE(v) ? AS_DOUBLE(v) : 0.0;
 }
 
-static int64_t py_to_i64(Value v) {
-    if (IS_INT(v)) return (int64_t)AS_INT(v);
-    if (IS_INT64(v)) return ((ObjInt64 *)AS_OBJ(v))->value;
-    return IS_DOUBLE(v) ? (int64_t)AS_DOUBLE(v) : 0;
+/* Exact int64 view of an integer value; false when it does not fit.
+ * Doubles are excluded (they are handled with their own truncation policy). */
+static bool py_to_i64_exact(Value v, int64_t *out) {
+    if (IS_INT(v)) { *out = AS_INT(v); return true; }
+    if (IS_BIGINT(v)) return bigint_get_i64((ObjBigInt *)AS_OBJ(v), out);
+    return false;
 }
 
-static bool py_value_is_integer(Value v) { return IS_INT(v) || IS_INT64(v); }
+static bool py_value_is_integer(Value v) { return IS_INT(v) || IS_BIGINT(v); }
 
 /* Exact int64 overflow check for `a * b` (avoids signed-overflow UB). */
 static bool py_i64_mul_overflows(int64_t a, int64_t b) {
@@ -75,10 +78,7 @@ static bool py_i64_mul_overflows(int64_t a, int64_t b) {
     return a < INT64_MAX / b;
 }
 
-static Value py_integer_result(int64_t value) {
-    return value >= INT32_MIN && value <= INT32_MAX
-        ? make_int((int32_t)value) : make_int64(value);
-}
+static Value py_integer_result(int64_t value) { return bigint_from_i64_value(value); }
 
 static MOP_Bin py_binary_method(Value self, VMOperation op) {
     if (!IS_OBJ(self) || !AS_OBJ(self) || !AS_OBJ(self)->type) return NULL;
@@ -97,21 +97,25 @@ static bool py_unary_operation(VM *vm, VMOperation op, Value operand, Value *out
     if (op == VM_OP_NEG && IS_OBJ(operand) && AS_OBJ(operand)->type &&
         AS_OBJ(operand)->type->neg) {
         *out = AS_OBJ(operand)->type->neg(vm, operand);
-        return true;
+        if (!IS_NIL(*out)) return true;
     }
-    if (op == VM_OP_NEG && py_value_is_integer(operand)) {
-        *out = py_integer_result(-py_to_i64(operand));
-        return true;
+    if ((op == VM_OP_NEG || op == VM_OP_BNOT) && py_value_is_integer(operand)) {
+        *out = bigint_unary_value(vm, op, operand);
+        return !IS_NIL(*out);
     }
     if (op == VM_OP_NEG && IS_DOUBLE(operand)) {
         *out = make_double(-AS_DOUBLE(operand));
         return true;
     }
-    if (op == VM_OP_BNOT && py_value_is_integer(operand)) {
-        *out = py_integer_result(~py_to_i64(operand));
-        return true;
-    }
     return false;
+}
+
+/* Integer-only ops where at least one operand is a heap bigint. Doubles are
+ * coerced by bigint_binary_value for the arithmetic ops; int-only ops
+ * (shifts/bitwise with a float operand) reject with a generic error. */
+static bool py_bigint_binary(VM *vm, VMOperation op, Value left, Value right, Value *out) {
+    *out = bigint_binary_value(vm, op, left, right);
+    return !IS_NIL(*out);
 }
 
 static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right, Value *out) {
@@ -121,9 +125,12 @@ static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right,
         *out = method(vm, right, left);
         return !IS_NIL(*out);
     }
+    if (IS_BIGINT(left) || IS_BIGINT(right)) {
+        return py_bigint_binary(vm, op, left, right, out);
+    }
     if (!IS_NUMBER(left) || !IS_NUMBER(right)) return false;
-    if (py_value_is_integer(left) && py_value_is_integer(right)) {
-        int64_t a = py_to_i64(left), b = py_to_i64(right);
+    if (IS_INT(left) && IS_INT(right)) {
+        int64_t a = AS_INT(left), b = AS_INT(right);
         switch (op) {
             case VM_OP_ADD: *out = py_integer_result(a + b); return true;
             case VM_OP_SUB: *out = py_integer_result(a - b); return true;
@@ -134,12 +141,17 @@ static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right,
                 vm->last_exception = make_exception_instance(vm, py_fe(vm)->runtime_error_class, "division by zero");
                 return false;
             case VM_OP_MOD:
-                if (b) { *out = py_integer_result(a % b); return true; }
+                /* Python modulo: result takes the divisor's sign. */
+                if (b) {
+                    int64_t r = a % b;
+                    if (r != 0 && ((r < 0) != (b < 0))) r += b;
+                    *out = py_integer_result(r);
+                    return true;
+                }
                 vm->last_exception = make_exception_instance(vm, py_fe(vm)->exception_class, "mod/0");
                 return false;
             case VM_OP_IDIV: {
                 if (b) {
-                    if (a == INT64_MIN && b == -1) { *out = make_double(9223372036854775808.0); return true; }
                     int64_t q = a / b;
                     int64_t r = a % b;
                     if (r != 0 && ((r < 0) != (b < 0))) q -= 1;  /* floor, not truncate */
@@ -158,15 +170,27 @@ static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right,
                     exp >>= 1;
                     if (exp && !overflow) { if (py_i64_mul_overflows(base, base)) overflow = true; else base *= base; }
                 }
-                if (overflow) { *out = make_double(pow(py_to_f64(left), py_to_f64(right))); return true; }
+                if (overflow) { *out = bigint_binary_value(vm, VM_OP_POW, left, right); return !IS_NIL(*out); }
                 *out = py_integer_result(res);
                 return true;
             }
             case VM_OP_BAND: *out = py_integer_result(a & b); return true;
             case VM_OP_BOR:  *out = py_integer_result(a | b); return true;
             case VM_OP_BXOR: *out = py_integer_result(a ^ b); return true;
-            case VM_OP_SHL:  *out = py_integer_result(a << b); return true;
-            case VM_OP_SHR:  *out = py_integer_result(a >> b); return true;
+            case VM_OP_SHL:
+            case VM_OP_SHR:
+                if (b < 0 || (op == VM_OP_SHL ? b > 32 : b > 63)) {
+                    /* Route to the bigint path (negative shift raises; huge
+                     * shifts need the arbitrary-precision machinery). */
+                    *out = bigint_binary_value(vm, op, left, right);
+                    return !IS_NIL(*out);
+                }
+                if (op == VM_OP_SHL) *out = py_integer_result(a << b);
+                else {
+                    int64_t r = a >> b;
+                    *out = py_integer_result(r);
+                }
+                return true;
             default: break;
         }
     }
@@ -188,15 +212,42 @@ static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right,
 static bool py_compare_operation(VM *vm, VMOperation op, Value left, Value right, Value *out) {
     (void)vm;
     if (py_value_is_integer(left) && py_value_is_integer(right)) {
-        int64_t a = py_to_i64(left), b = py_to_i64(right);
+        int c;
+        if (IS_INT(left) && IS_INT(right)) {
+            int64_t a = AS_INT(left), b = AS_INT(right);
+            c = (a < b) ? -1 : (a > b) ? 1 : 0;
+        } else if (IS_BIGINT(left) && IS_BIGINT(right)) {
+            c = bigint_cmp((ObjBigInt *)AS_OBJ(left), (ObjBigInt *)AS_OBJ(right));
+        } else {
+            c = IS_BIGINT(left)
+                ? bigint_cmp_value((ObjBigInt *)AS_OBJ(left), right)
+                : -bigint_cmp_value((ObjBigInt *)AS_OBJ(right), left);
+        }
         switch (op) {
-            case VM_OP_EQ: *out = make_bool(a == b); return true;
-            case VM_OP_NE: *out = make_bool(a != b); return true;
-            case VM_OP_LT: *out = make_bool(a < b); return true;
-            case VM_OP_LE: *out = make_bool(a <= b); return true;
-            case VM_OP_GT: *out = make_bool(a > b); return true;
-            case VM_OP_GE: *out = make_bool(a >= b); return true;
+            case VM_OP_EQ: *out = make_bool(c == 0); return true;
+            case VM_OP_NE: *out = make_bool(c != 0); return true;
+            case VM_OP_LT: *out = make_bool(c < 0); return true;
+            case VM_OP_LE: *out = make_bool(c <= 0); return true;
+            case VM_OP_GT: *out = make_bool(c > 0); return true;
+            case VM_OP_GE: *out = make_bool(c >= 0); return true;
             default: break;
+        }
+    }
+    if (IS_BIGINT(left) || IS_BIGINT(right)) {
+        /* bigint vs double (or other): exact ordering; EQ/NE go through
+         * values_equal below. */
+        int c;
+        if (IS_BIGINT(left) && IS_DOUBLE(right)) c = bigint_cmp_f64((ObjBigInt *)AS_OBJ(left), AS_DOUBLE(right));
+        else if (IS_BIGINT(right) && IS_DOUBLE(left)) c = -bigint_cmp_f64((ObjBigInt *)AS_OBJ(right), AS_DOUBLE(left));
+        else c = 2;
+        if (c != 2) {
+            switch (op) {
+                case VM_OP_LT: *out = make_bool(c < 0); return true;
+                case VM_OP_LE: *out = make_bool(c <= 0); return true;
+                case VM_OP_GT: *out = make_bool(c > 0); return true;
+                case VM_OP_GE: *out = make_bool(c >= 0); return true;
+                default: break;
+            }
         }
     }
     if (IS_NUMBER(left) && IS_NUMBER(right)) {
@@ -224,6 +275,19 @@ static bool py_compare_operation(VM *vm, VMOperation op, Value left, Value right
     return false;
 }
 
+/* Extract an index-sized integer; raises OverflowError when a bigint does
+ * not fit an int64 (CPython: "Python int too large to convert to C ssize_t"). */
+static bool py_index_to_i64(VM *vm, Value v, int64_t *out) {
+    if (IS_INT(v)) { *out = AS_INT(v); return true; }
+    if (IS_BIGINT(v) && bigint_get_i64((ObjBigInt *)AS_OBJ(v), out)) return true;
+    if (IS_BIGINT(v)) {
+        vm->last_exception = make_exception_instance(vm, py_fe(vm)->overflow_error_class,
+            "Python int too large to convert to C ssize_t");
+        return false;
+    }
+    return false;
+}
+
 static bool py_index_get(VM *vm, Value object, Value key, bool safe, Value *out) {
     if (!IS_OBJ(object) || !AS_OBJ(object)) {
         if (safe) { *out = make_null(); return true; }
@@ -236,14 +300,12 @@ static bool py_index_get(VM *vm, Value object, Value key, bool safe, Value *out)
         vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, "value is not indexable");
         return false;
     }
-    if (IS_LIST(object) && !IS_INT(key)) {
+    if ((IS_LIST(object) || IS_STRING(object)) && !IS_INT(key) && !IS_BIGINT(key)) {
         if (safe) { *out = make_null(); return true; }
-        vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, "list index must be integer");
-        return false;
-    }
-    if (IS_STRING(object) && !IS_INT(key)) {
-        if (safe) { *out = make_null(); return true; }
-        vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, "string index must be integer");
+        const char *what = IS_LIST(object) ? "list" : "string";
+        char msg[64];
+        snprintf(msg, sizeof(msg), "%s index must be integer", what);
+        vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, msg);
         return false;
     }
     *out = type->getitem(vm, object, key);
@@ -255,19 +317,18 @@ static bool py_index_get(VM *vm, Value object, Value key, bool safe, Value *out)
         vm->last_exception = make_exception_instance(vm, py_fe(vm)->key_error_class, message);
         return false;
     }
-    if (!safe && IS_LIST(object)) {
-        ObjList *list = (ObjList *)AS_OBJ(object);
-        int index = AS_INT(key); if (index < 0) index += list->count;
-        if (index < 0 || index >= list->count) {
-            vm->last_exception = make_exception_instance(vm, py_fe(vm)->index_error_class, "list index out of bounds");
-            return false;
-        }
-    }
-    if (!safe && IS_STRING(object)) {
-        ObjString *string = (ObjString *)AS_OBJ(object);
-        int index = AS_INT(key); if (index < 0) index += string->length;
-        if (index < 0 || index >= string->length) {
-            vm->last_exception = make_exception_instance(vm, py_fe(vm)->index_error_class, "string index out of bounds");
+    if (!safe && (IS_LIST(object) || IS_STRING(object))) {
+        int64_t index;
+        if (!py_index_to_i64(vm, key, &index)) return false;   /* OverflowError */
+        int64_t count = IS_LIST(object)
+            ? ((ObjList *)AS_OBJ(object))->count
+            : (int64_t)((ObjString *)AS_OBJ(object))->length;
+        if (index < 0) index += count;
+        if (index < 0 || index >= count) {
+            const char *what = IS_LIST(object) ? "list" : "string";
+            char msg[96];
+            snprintf(msg, sizeof(msg), "%s index out of bounds", what);
+            vm->last_exception = make_exception_instance(vm, py_fe(vm)->index_error_class, msg);
             return false;
         }
     }
@@ -280,17 +341,19 @@ static bool py_index_set(VM *vm, Value object, Value key, Value value) {
         vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, "invalid index assignment");
         return false;
     }
-    if (IS_LIST(object) && !IS_INT(key)) {
+    if (IS_LIST(object) && !IS_INT(key) && !IS_BIGINT(key)) {
         vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, "list index must be integer");
         return false;
     }
     if (IS_LIST(object)) {
         ObjList *list = (ObjList *)AS_OBJ(object);
-        int index = AS_INT(key);
+        int64_t index;
+        if (!py_index_to_i64(vm, key, &index)) return false;   /* OverflowError */
         if (index < 0) index += list->count;
         if (index < 0 || index >= list->count) {
             char message[128];
-            snprintf(message, sizeof(message), "list index out of bounds (index: %d, size: %d)", index, list->count);
+            snprintf(message, sizeof(message), "list index out of bounds (index: %lld, size: %d)",
+                     (long long)index, list->count);
             vm->last_exception = make_exception_instance(vm, py_fe(vm)->index_error_class, message);
             return false;
         }
@@ -302,6 +365,25 @@ static bool py_index_set(VM *vm, Value object, Value key, Value value) {
 /* Slicing semantics live in the frontend: the core only knows the neutral
  * OP_SLICE opcode. Non-indexable objects (including null)
  * yield null, matching the previous core behaviour. */
+/* Slice bounds: bigints beyond int64 raise OverflowError (CPython raises
+ * "Python int too large to convert to C ssize_t" for slices too); bigints
+ * that fit are clamped into the int32 range, where the existing start/stop
+ * clamp logic reduces them to the correct endpoint. */
+static bool py_slice_bound(VM *vm, Value *v) {
+    if (IS_BIGINT(*v)) {
+        int64_t x;
+        if (!bigint_get_i64((ObjBigInt *)AS_OBJ(*v), &x)) {
+            vm->last_exception = make_exception_instance(vm, py_fe(vm)->overflow_error_class,
+                "Python int too large to convert to C ssize_t");
+            return false;
+        }
+        if (x > INT32_MAX) x = INT32_MAX;
+        else if (x < INT32_MIN) x = INT32_MIN;
+        *v = make_int((int32_t)x);
+    }
+    return true;
+}
+
 static bool py_slice(VM *vm, Value object, Value start_val, Value stop_val,
                        Value step_val, bool safe, Value *out) {
     (void)vm; (void)safe;
@@ -309,6 +391,9 @@ static bool py_slice(VM *vm, Value object, Value start_val, Value stop_val,
         *out = make_null();
         return true;
     }
+    if (!py_slice_bound(vm, &start_val)) return false;
+    if (!py_slice_bound(vm, &stop_val)) return false;
+    if (!py_slice_bound(vm, &step_val)) return false;
     int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
     if (IS_LIST(object)) {
         ObjList *lst = (ObjList *)AS_OBJ(object);
@@ -1179,6 +1264,7 @@ void py_init_vm(VM *vm) {
     fe->index_error_class = py_register_exception(vm, "IndexError", fe->exception_class);
     fe->attribute_error_class = py_register_exception(vm, "AttributeError", fe->exception_class);
     fe->value_error_class = py_register_exception(vm, "ValueError", fe->exception_class);
+    fe->overflow_error_class = py_register_exception(vm, "OverflowError", fe->exception_class);
     fe->runtime_error_class = py_register_exception(vm, "RuntimeError", fe->exception_class);
     fe->argument_error_class = py_register_exception(vm, "ArgumentError", fe->exception_class);
 
@@ -1214,7 +1300,7 @@ static int py_type_of(Value v) {
     if (IS_NIL(v)) return LUNA_TNIL;
     if (IS_BOOL(v)) return LUNA_TBOOLEAN;
     if (IS_INT(v)) return LUNA_TINTEGER;
-    if (IS_INT64(v)) return LUNA_TINTEGER;
+    if (IS_BIGINT(v)) return LUNA_TINTEGER;
     if (IS_DOUBLE(v)) return LUNA_TNUMBER;
 
     Object *obj = AS_OBJ(v);
@@ -1230,7 +1316,7 @@ static int py_type_of(Value v) {
         case OBJ_VECTOR:   return LUNA_TVECTOR;
         case OBJ_MATRIX:   return LUNA_TMATRIX;
         case OBJ_BUFFER:   return LUNA_TBUFFER;
-        case OBJ_INT64:    return LUNA_TINTEGER;
+        case OBJ_BIGINT:   return LUNA_TINTEGER;
         default:           return LUNA_TNIL;
     }
 }
@@ -1267,12 +1353,18 @@ static const char *py_userdata_tag(Value v) {
     return ((ObjUserdata *)AS_OBJ(v))->tag;
 }
 
-static int64_t py_int64_value(Value v) {
-    return ((ObjInt64 *)AS_OBJ(v))->value;
+/* Exact int64_t view of a py integer; false when a bigint does not fit. */
+static bool py_integer_value(Value v, int64_t *out) {
+    if (IS_INT(v)) { *out = AS_INT(v); return true; }
+    if (IS_BIGINT(v)) return bigint_get_i64((ObjBigInt *)AS_OBJ(v), out);
+    return false;
 }
 
-static Value py_make_int64(int64_t n) {
-    return make_int64(n);
+/* Build py's own integer representation of a C int64_t: a core int32
+ * immediate when it fits (the canonical small-int form), else a heap bigint.
+ * Keeps the invariant that heap ints never duplicate an int32 value. */
+static Value py_make_integer(int64_t n) {
+    return bigint_from_i64_value(n);
 }
 
 static const FrontendObject py_frontend_object = {
@@ -1283,8 +1375,8 @@ static const FrontendObject py_frontend_object = {
     .new_userdata = py_new_userdata,
     .userdata_data = py_userdata_data,
     .userdata_tag = py_userdata_tag,
-    .int64_value = py_int64_value,
-    .make_int64 = py_make_int64,
+    .integer_value = py_integer_value,
+    .make_integer = py_make_integer,
 };
 
 static const char *py_compile_source(VM *vm, const char *source, const char *path, bool is_repl, Value *out_fn) {

@@ -134,24 +134,27 @@
             SET_REG(RA, result);
             DECODE; goto *op_labels[OP(instr)];
         }
-        char buf[128];
-        snprintf(buf, sizeof(buf), "bad operand type for unary -: '%s'", val_type_name(v));
-        _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
+        _exc = vm->last_exception;
+        if (IS_NIL(_exc)) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "bad operand type for unary -: '%s'", val_type_name(v));
+            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
+        }
         goto op_throw;
     }
 
     /* 13. OP_BAND */
-    op_band: { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BAND); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise and");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_band: { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BAND); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise and");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 14. OP_BOR */
-    op_bor:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BOR); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise or");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_bor:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BOR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise or");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 15. OP_BXOR */
-    op_bxor: { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BXOR); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise xor");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_bxor: { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BXOR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise xor");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 16. OP_BNOT */
-    op_bnot: { Value _v=make_null(); if(!vm_unary(vm,VM_OP_BNOT,REG(RB),&_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise not");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_bnot: { Value _v=make_null(); if(!vm_unary(vm,VM_OP_BNOT,REG(RB),&_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise not");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 17. OP_SHL */
-    op_shl:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_SHL); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift left");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_shl:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_SHL); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift left");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 18. OP_SHR */
-    op_shr:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_SHR); if(IS_NIL(_v)){_exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift right");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_shr:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_SHR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift right");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
 
     /* ---- Arithmetic with constant pool operand ---- */
     /* OP_ADDK */

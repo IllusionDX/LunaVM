@@ -145,8 +145,14 @@ typedef struct FrontendObject {
     Value (*new_userdata)(void *data, const char *tag, void (*finalizer)(void*));
     void *(*userdata_data)(Value v);
     const char *(*userdata_tag)(Value v);
-    int64_t (*int64_value)(Value v);
-    Value (*make_int64)(int64_t n);
+    /* Exact int64_t view of a frontend integer. Returns false when the value
+     * is an integer that cannot be represented in an int64_t (e.g. an
+     * arbitrary-precision int). The core never assumes every language's
+     * integers fit — each frontend decides what its integers are. */
+    bool (*integer_value)(Value v, int64_t *out);
+    /* Build the frontend's own integer representation of a C int64_t.
+     * The frontend chooses the representation (immediate, boxed, bigint). */
+    Value (*make_integer)(int64_t n);
 } FrontendObject;
 
 typedef struct FrontendDef {

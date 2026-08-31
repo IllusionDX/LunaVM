@@ -17,10 +17,13 @@ static Value buffer_new(VM *vm, Value *args, int n) {
     }
     size_t capacity = 0;
     if (n == 1) {
-        if (!IS_INT(args[0]) && !IS_INT64(args[0])) {
+        if (!IS_INT(args[0]) && !IS_BIGINT(args[0])) {
             luna_throw(vm, py_fe(vm)->type_error_class, "buffer.new() capacity must be an integer");
         }
-        int64_t cap = as_int64(args[0]);
+        int64_t cap;
+        if (!int64_exact(args[0], &cap)) {
+            luna_throw(vm, py_fe(vm)->overflow_error_class, "buffer.new() capacity too large");
+        }
         if (cap < 0) {
             luna_throw(vm, py_fe(vm)->value_error_class, "buffer.new() capacity must be non-negative");
         }

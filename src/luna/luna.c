@@ -1143,12 +1143,14 @@ static const char *luna_userdata_tag(Value v) {
     return ((ObjUserdata *)AS_OBJ(v))->tag;
 }
 
-static int64_t luna_int64_value(Value v) {
-    return ((ObjInt64 *)AS_OBJ(v))->value;
+static bool luna_integer_value(Value v, int64_t *out) {
+    if (IS_INT(v)) { *out = AS_INT(v); return true; }
+    if (IS_INT64(v)) { *out = (int64_t)((ObjInt64 *)AS_OBJ(v))->value; return true; }
+    return false;
 }
 
-static Value luna_make_int64(int64_t n) {
-    return make_int64(n);
+static Value luna_make_integer(int64_t n) {
+    return make_int64(n); /* luna unchanged: boxed int64 for out-of-int32 values */
 }
 
 static const FrontendObject luna_frontend_object = {
@@ -1159,8 +1161,8 @@ static const FrontendObject luna_frontend_object = {
     .new_userdata = luna_new_userdata,
     .userdata_data = luna_userdata_data,
     .userdata_tag = luna_userdata_tag,
-    .int64_value = luna_int64_value,
-    .make_int64 = luna_make_int64,
+    .integer_value = luna_integer_value,
+    .make_integer = luna_make_integer,
 };
 
 static const char *luna_compile_source(VM *vm, const char *source, const char *path, bool is_repl, Value *out_fn) {

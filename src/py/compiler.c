@@ -265,6 +265,42 @@ static void emit_move(Compiler *c, uint8_t dst, uint8_t src) {
     emit_ABC(c, OP_MOVE, dst, src, 0);
 }
 
+/* ---- Integer literal helpers (arbitrary precision) ---- */
+
+/* Parse a literal into its exact int64 view; INT64_MIN when it is a bigint
+ * beyond int64 (disables the fused int8 paths it feeds). */
+static int64_t compile_int_literal_i64(const char *s) {
+    Value v;
+    if (!bigint_from_decimal(s, strlen(s), &v)) return 0;
+    if (IS_INT(v)) return AS_INT(v);
+    int64_t r;
+    if (bigint_get_i64((ObjBigInt *)AS_OBJ(v), &r)) return r;
+    return INT64_MIN;
+}
+
+/* Parse a literal into its correctly-rounded double view. */
+static double compile_int_literal_f64(const char *s) {
+    Value v;
+    if (!bigint_from_decimal(s, strlen(s), &v)) return 0.0;
+    if (IS_INT(v)) return (double)AS_INT(v);
+    return bigint_to_f64((ObjBigInt *)AS_OBJ(v));
+}
+
+/* Emit an integer constant Value: int32 immediates via the fast load
+ * opcodes, anything bigger as a chunk constant (a heap bigint). */
+static void emit_int_const(Compiler *c, int target, Value v) {
+    if (IS_INT(v)) {
+        int32_t i = AS_INT(v);
+        if (i >= -32767 && i <= 32768)
+            emit_AsBx(c, OP_LOADI, (uint8_t)target, i);
+        else
+            emit_loadi(c, (uint8_t)target, i);
+        return;
+    }
+    int k = chunk_add_const(c->chunk, v);
+    emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+}
+
 /* ============================================================ */
 /* Loop helpers                                                 */
 /* ============================================================ */
@@ -466,13 +502,9 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     switch (expr->kind) {
 
     case EXPR_INTEGER: {
-        int64_t v = atoll(expr->data.integer.value);
-        if (v >= INT32_MIN && v <= INT32_MAX) {
-            emit_loadi(c, (uint8_t)target, (int32_t)v);
-        } else {
-            int k = chunk_add_const(c->chunk, make_int64(v));
-            emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
-        }
+        Value v;
+        bigint_from_decimal(expr->data.integer.value, strlen(expr->data.integer.value), &v);
+        emit_int_const(c, (uint8_t)target, v);
         break;
     }
 
@@ -567,35 +599,54 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             Expr *r = expr->data.binary.right;
             bool folded = false;
 
-            /* int op int */
+            /* int op int — exact arbitrary-precision folding */
             if (l->kind == EXPR_INTEGER && r->kind == EXPR_INTEGER) {
-                int64_t li = (int64_t)atoll(l->data.integer.value);
-                int64_t ri = (int64_t)atoll(r->data.integer.value);
-                int64_t result = 0;
-                bool valid = true;
+                Value lv, rv;
+                bigint_from_decimal(l->data.integer.value, strlen(l->data.integer.value), &lv);
+                bigint_from_decimal(r->data.integer.value, strlen(r->data.integer.value), &rv);
+                bool rzero = (IS_INT(rv) && AS_INT(rv) == 0) ||
+                             (IS_BIGINT(rv) && bigint_is_zero((ObjBigInt *)AS_OBJ(rv)));
 
-                if (strcmp(op_str, "+") == 0) result = li + ri;
-                else if (strcmp(op_str, "-") == 0) result = li - ri;
-                else if (strcmp(op_str, "*") == 0) result = li * ri;
-                else if (strcmp(op_str, "/") == 0) valid = false; /* float / → true division, kept for runtime */
-                else if (strcmp(op_str, "%") == 0) { if (ri == 0) valid = false; else result = li % ri; }
-                else if (strcmp(op_str, "<")  == 0) { emit_loadbool(c, (uint8_t)target, li <  ri); folded = true; }
-                else if (strcmp(op_str, "<=") == 0) { emit_loadbool(c, (uint8_t)target, li <= ri); folded = true; }
-                else if (strcmp(op_str, ">")  == 0) { emit_loadbool(c, (uint8_t)target, li >  ri); folded = true; }
-                else if (strcmp(op_str, ">=") == 0) { emit_loadbool(c, (uint8_t)target, li >= ri); folded = true; }
-                else if (strcmp(op_str, "==") == 0) { emit_loadbool(c, (uint8_t)target, li == ri); folded = true; }
-                else if (strcmp(op_str, "!=") == 0) { emit_loadbool(c, (uint8_t)target, li != ri); folded = true; }
-                else valid = false;
-
-                if (!folded && valid) {
-                    if (result >= -32767 && result <= 32768)
-                        emit_AsBx(c, OP_LOADI, (uint8_t)target, (int32_t)result);
-                    else if (result >= INT32_MIN && result <= INT32_MAX)
-                        emit_loadi(c, (uint8_t)target, (int32_t)result);
-                    else {
-                        int k = chunk_add_const(c->chunk, make_int64(result));
-                        emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
+                if (strcmp(op_str, "+") == 0 || strcmp(op_str, "-") == 0 ||
+                    strcmp(op_str, "*") == 0) {
+                    VMOperation op = strcmp(op_str, "+") == 0 ? VM_OP_ADD
+                                 : strcmp(op_str, "-") == 0 ? VM_OP_SUB : VM_OP_MUL;
+                    Value res = bigint_binary_value(c->vm, op, lv, rv);
+                    if (!IS_NIL(res)) {
+                        emit_int_const(c, (uint8_t)target, res);
+                        folded = true;
                     }
+                }
+                else if (strcmp(op_str, "/") == 0) {
+                    /* float / → true division, kept for runtime */
+                }
+                else if (strcmp(op_str, "%") == 0 && !rzero) {
+                    Value res = bigint_binary_value(c->vm, VM_OP_MOD, lv, rv);
+                    if (!IS_NIL(res)) {
+                        emit_int_const(c, (uint8_t)target, res);
+                        folded = true;
+                    }
+                }
+                else if (strcmp(op_str, "<") == 0 || strcmp(op_str, "<=") == 0 ||
+                         strcmp(op_str, ">") == 0 || strcmp(op_str, ">=") == 0 ||
+                         strcmp(op_str, "==") == 0 || strcmp(op_str, "!=") == 0) {
+                    int cmp;
+                    if (IS_INT(lv) && IS_INT(rv)) {
+                        int64_t li = AS_INT(lv), ri = AS_INT(rv);
+                        cmp = (li < ri) ? -1 : (li > ri) ? 1 : 0;
+                    } else if (IS_BIGINT(lv) && IS_BIGINT(rv)) {
+                        cmp = bigint_cmp((ObjBigInt *)AS_OBJ(lv), (ObjBigInt *)AS_OBJ(rv));
+                    } else {
+                        cmp = IS_BIGINT(lv)
+                            ? bigint_cmp_value((ObjBigInt *)AS_OBJ(lv), rv)
+                            : -bigint_cmp_value((ObjBigInt *)AS_OBJ(rv), lv);
+                    }
+                    if (strcmp(op_str, "<") == 0) emit_loadbool(c, (uint8_t)target, cmp < 0);
+                    else if (strcmp(op_str, "<=") == 0) emit_loadbool(c, (uint8_t)target, cmp <= 0);
+                    else if (strcmp(op_str, ">") == 0) emit_loadbool(c, (uint8_t)target, cmp > 0);
+                    else if (strcmp(op_str, ">=") == 0) emit_loadbool(c, (uint8_t)target, cmp >= 0);
+                    else if (strcmp(op_str, "==") == 0) emit_loadbool(c, (uint8_t)target, cmp == 0);
+                    else emit_loadbool(c, (uint8_t)target, cmp != 0);
                     folded = true;
                 }
             }
@@ -604,9 +655,9 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
                      (r->kind == EXPR_FLOAT || r->kind == EXPR_INTEGER) &&
                      (l->kind == EXPR_FLOAT || r->kind == EXPR_FLOAT)) {
                 double ld = (l->kind == EXPR_FLOAT) ? atof(l->data.float_lit.value)
-                                                    : (double)atoll(l->data.integer.value);
+                                                    : compile_int_literal_f64(l->data.integer.value);
                 double rd = (r->kind == EXPR_FLOAT) ? atof(r->data.float_lit.value)
-                                                    : (double)atoll(r->data.integer.value);
+                                                    : compile_int_literal_f64(r->data.integer.value);
                 double result = 0.0;
                 bool valid = true;
 
@@ -662,7 +713,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
            no temp register needed. Range -128..127 fits in the B byte field. */
         if ((strcmp(op_str, "+") == 0 || strcmp(op_str, "-") == 0) &&
             expr->data.binary.right->kind == EXPR_INTEGER) {
-            int64_t imm = atoll(expr->data.binary.right->data.integer.value);
+            int64_t imm = compile_int_literal_i64(expr->data.binary.right->data.integer.value);
             if (imm >= -128 && imm <= 127) {
                 /* ADDI_FROM/SUBI_FROM: skip MOVE when left is a local in a different reg */
                 if (expr->data.binary.left->kind == EXPR_IDENTIFIER) {
@@ -687,7 +738,8 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
              expr->data.binary.right->kind == EXPR_FLOAT)) {
             Value cv;
             if (expr->data.binary.right->kind == EXPR_INTEGER) {
-                cv = make_int((int64_t)atoll(expr->data.binary.right->data.integer.value));
+                bigint_from_decimal(expr->data.binary.right->data.integer.value,
+                                    strlen(expr->data.binary.right->data.integer.value), &cv);
             } else {
                 cv = make_double(atof(expr->data.binary.right->data.float_lit.value));
             }
@@ -746,18 +798,14 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         const char *op_str = expr->data.unary.operator;
         Expr *operand = expr->data.unary.operand;
 
-        /* Constant folding for unary minus on integers */
-        if (strcmp(op_str, "-") == 0 && operand->kind == EXPR_INTEGER) {
-            int64_t v = (int64_t)atoll(operand->data.integer.value);
-            v = -v;
-            if (v >= -32767 && v <= 32768)
-                emit_AsBx(c, OP_LOADI, (uint8_t)target, (int32_t)v);
-            else if (v >= INT32_MIN && v <= INT32_MAX)
-                emit_loadi(c, (uint8_t)target, (int32_t)v);
-            else {
-                int k = chunk_add_const(c->chunk, make_int64(v));
-                emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
-            }
+        /* Constant folding for unary minus / bitwise NOT on integers (exact) */
+        if ((strcmp(op_str, "-") == 0 || strcmp(op_str, "~") == 0) &&
+            operand->kind == EXPR_INTEGER) {
+            Value v;
+            bigint_from_decimal(operand->data.integer.value,
+                                strlen(operand->data.integer.value), &v);
+            Value res = bigint_unary_value(c->vm, op_str[0] == '-' ? VM_OP_NEG : VM_OP_BNOT, v);
+            emit_int_const(c, (uint8_t)target, res);
             break;
         }
         /* Constant folding for unary minus on floats */
@@ -770,19 +818,6 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         /* Constant folding for logical NOT on booleans */
         if (strcmp(op_str, "!") == 0 && operand->kind == EXPR_BOOL) {
             emit_loadbool(c, (uint8_t)target, !operand->data.boolean.value);
-            break;
-        }
-        /* Constant folding for bitwise NOT on integers */
-        if (strcmp(op_str, "~") == 0 && operand->kind == EXPR_INTEGER) {
-            int64_t v = ~((int64_t)atoll(operand->data.integer.value));
-            if (v >= -32767 && v <= 32768)
-                emit_AsBx(c, OP_LOADI, (uint8_t)target, (int32_t)v);
-            else if (v >= INT32_MIN && v <= INT32_MAX)
-                emit_loadi(c, (uint8_t)target, (int32_t)v);
-            else {
-                int k = chunk_add_const(c->chunk, make_int64(v));
-                emit_ABx(c, OP_LOADK, (uint8_t)target, (uint16_t)k);
-            }
             break;
         }
 
@@ -979,6 +1014,8 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
          * slice hook; a null/non-indexable obj yields null, so the optional
          * (?.) form needs no separate opcode. */
         compile_expr_into(c, expr->data.slice.obj, target);
+        int saved_base = c->temp_base;
+        c->temp_base = target + 1;   /* runtime reads object + bounds from RB..RB+3 */
         int start_reg = alloc_reg(c);
         int stop_reg  = alloc_reg(c);
         int step_reg  = alloc_reg(c);
@@ -998,6 +1035,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         free_reg(c);
         free_reg(c);
         free_reg(c);
+        c->temp_base = saved_base;
         break;
     }
 
@@ -1611,7 +1649,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                 Expr *l = cond->data.binary.left;
                 Expr *r = cond->data.binary.right;
                 if (r->kind == EXPR_INTEGER) {
-                    int64_t imm = atoll(r->data.integer.value);
+                    int64_t imm = compile_int_literal_i64(r->data.integer.value);
                     if (imm >= -128 && imm <= 127) {
                         int reg = alloc_reg(c);
                         compile_expr_into(c, l, reg);
@@ -1620,7 +1658,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                         fused = true;
                     }
                 } else if (l->kind == EXPR_INTEGER) {
-                    int64_t imm = atoll(l->data.integer.value);
+                    int64_t imm = compile_int_literal_i64(l->data.integer.value);
                     if (imm >= -128 && imm <= 127) {
                         int reg = alloc_reg(c);
                         compile_expr_into(c, r, reg);
@@ -1703,7 +1741,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                 Expr *l = cond->data.binary.left;
                 Expr *r = cond->data.binary.right;
                 if (r->kind == EXPR_INTEGER) {
-                    int64_t imm = atoll(r->data.integer.value);
+                    int64_t imm = compile_int_literal_i64(r->data.integer.value);
                     if (imm >= -128 && imm <= 127) {
                         int reg = alloc_reg(c);
                         compile_expr_into(c, l, reg);
@@ -1712,7 +1750,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                         fused = true;
                     }
                 } else if (l->kind == EXPR_INTEGER) {
-                    int64_t imm = atoll(l->data.integer.value);
+                    int64_t imm = compile_int_literal_i64(l->data.integer.value);
                     if (imm >= -128 && imm <= 127) {
                         int reg = alloc_reg(c);
                         compile_expr_into(c, r, reg);

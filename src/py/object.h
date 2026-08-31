@@ -2,6 +2,7 @@
 #define LUNA_OBJECT_H
 
 #include "value.h"
+#include "bigint.h"
 
 struct py_State; /* forward decl: the py frontend's API state (see py.h) */
 struct APIState; /* embeddable C API state (see api.h) */
@@ -30,7 +31,7 @@ typedef enum {
     OBJ_BOUND_METHOD,
     OBJ_MODULE,
     OBJ_BUFFER = 12,
-    OBJ_INT64 = 13,
+    OBJ_BIGINT = 13,  /* arbitrary-precision int (PyLong-style, base 2^30) */
     OBJ_USERDATA,
     OBJ_VECTOR = 15,
     OBJ_MATRIX = 16
@@ -57,7 +58,7 @@ typedef enum {
 #define IS_USERDATA(v)     IS_OBJ_KIND(v, OBJ_USERDATA)
 #define IS_VECTOR(v)       IS_OBJ_KIND(v, OBJ_VECTOR)
 #define IS_MATRIX(v)       IS_OBJ_KIND(v, OBJ_MATRIX)
-#define IS_INT64(v)    IS_OBJ_KIND(v, OBJ_INT64)
+#define IS_BIGINT(v)   IS_OBJ_KIND(v, OBJ_BIGINT)
 
 /* MOP typedefs and the `Type` vtable struct are defined in the core value
  * model (src/value.h). Luna fills the vtable instances in luna/object.c. */
@@ -145,11 +146,6 @@ typedef struct ObjBuffer {
     size_t  capacity;
     size_t  cursor;
 } ObjBuffer;
-
-typedef struct ObjInt64 {
-    Object   obj;
-    uint64_t value;
-} ObjInt64;
 
 typedef void (*UserdataFinalizer)(void *data);
 
@@ -251,10 +247,8 @@ ObjClosure  *new_closure(ObjFunction *function);
 ObjEnum     *new_enum(const char *name, int count);
 ObjBoundMethod *new_bound_method(Value self, struct ObjFunction *fn);
 ObjModule     *new_module(const char *name);
-ObjInt64      *new_int64(int64_t value);
 ObjVector      *new_vector(float x, float y, float z, float w);
 ObjMatrix      *new_matrix(void);
-static inline Value make_int64(int64_t value) { return make_obj((Object*)new_int64(value)); }
 Value          buffer_read_byte(const ObjBuffer *buf, size_t offset);
 Value          buffer_read_short(const ObjBuffer *buf, size_t offset);
 Value          buffer_read_int(const ObjBuffer *buf, size_t offset);
@@ -267,19 +261,38 @@ void           buffer_append_data(ObjBuffer *buf, const uint8_t *data, size_t le
 
 static inline double as_double(Value v) {
     if (IS_DOUBLE(v)) return AS_DOUBLE(v);
-    if (IS_INT64(v)) return (double)((int64_t)((ObjInt64*)AS_OBJ(v))->value);
+    if (IS_BIGINT(v)) return bigint_to_f64((ObjBigInt*)AS_OBJ(v));
     return (double)AS_INT(v);
 }
+
+/* Exact int64 view of an integer value (int32 immediate or bigint).
+ * Returns false when the bigint does not fit; doubles are excluded so callers
+ * that accept floats keep their own truncation policy. */
+static inline bool int64_exact(Value v, int64_t *out) {
+    if (IS_INT(v)) { *out = AS_INT(v); return true; }
+    if (IS_BIGINT(v)) return bigint_get_i64((ObjBigInt*)AS_OBJ(v), out);
+    return false;
+}
+
+/* Truncating int64 view (doubles truncate toward zero). Only safe for the
+ * call sites audited to hold small values; use int64_exact for input paths. */
 static inline int64_t as_int64(Value v) {
     if (IS_INT(v)) return (int64_t)AS_INT(v);
-    if (IS_INT64(v)) return (int64_t)((ObjInt64*)AS_OBJ(v))->value;
+    if (IS_BIGINT(v)) {
+        int64_t out = 0;
+        bigint_get_i64((ObjBigInt*)AS_OBJ(v), &out);
+        return out;
+    }
     return (int64_t)AS_DOUBLE(v);
 }
 static inline double value_to_double(Value v) {
     if (IS_INT(v)) return (double)AS_INT(v);
-    if (IS_INT64(v)) return (double)((int64_t)((ObjInt64*)AS_OBJ(v))->value);
+    if (IS_BIGINT(v)) return bigint_to_f64((ObjBigInt*)AS_OBJ(v));
     return AS_DOUBLE(v);
 }
+
+/* GC entry point used by frontend object constructors (see object.c). */
+void py_init_object(Object *obj, ObjType type, size_t size);
 
 /* List operations */
 void  list_add(ObjList *list, Value value);
