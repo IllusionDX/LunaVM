@@ -802,9 +802,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_mulk,          // 20 OP_MULK
         &&op_addi,          // 21 OP_ADDI
         &&op_subi,          // 22 OP_SUBI
-        &&op_addi_from,     // 23 OP_ADDI_FROM
-        &&op_subi_from,     // 24 OP_SUBI_FROM
-        &&op_eq,            // 25 OP_EQ
+        &&op_eq,            // 23 OP_EQ
         &&op_ne,            // 26 OP_NE
         &&op_lt,            // 27 OP_LT
         &&op_le,            // 28 OP_LE
@@ -818,8 +816,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_jnil,          // 36 OP_JNIL
         &&op_call,          // 37 OP_CALL
         &&op_ret,           // 38 OP_RET
-        &&op_enter,         // 39 OP_ENTER
-        &&op_leave,         // 40 OP_LEAVE
+        &&op_leave,         // 39 OP_LEAVE
         &&op_closure,       // 41 OP_CLOSURE
         &&op_getglobal,     // 42 OP_GETGLOBAL
         &&op_setglobal,     // 43 OP_SETGLOBAL

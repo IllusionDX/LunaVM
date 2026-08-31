@@ -210,51 +210,9 @@
         CHECK_GC; DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* ---- Integer-immediate arithmetic (ABC: A = A op (int8_t)B) ---- */
+    /* ---- Integer-immediate arithmetic (ABC: A = B op (int8_t)C) ---- */
     /* 19. OP_ADDI */
     op_addi: {
-        Value v = REG(RA);
-        if (LUNA_LIKELY(IS_INT(v))) {
-            int64_t res = (int64_t)AS_INT(v) + (int8_t)RB;
-            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
-                REG(RA) = INT_VAL((int32_t)res);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-        }
-        Value _v = do_arith(vm, v, make_int((int8_t)RB), OP_ADD);
-        if (IS_NIL(_v)) {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and 'int'", val_type_name(v));
-            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
-            goto op_throw;
-        }
-        REG(RA) = _v;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* 20. OP_SUBI */
-    op_subi: {
-        Value v = REG(RA);
-        if (LUNA_LIKELY(IS_INT(v))) {
-            int64_t res = (int64_t)AS_INT(v) - (int8_t)RB;
-            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
-                REG(RA) = INT_VAL((int32_t)res);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-        }
-        Value _v = do_arith(vm, v, make_int((int8_t)RB), OP_SUB);
-        if (IS_NIL(_v)) {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "unsupported operand type(s) for -: '%s' and 'int'", val_type_name(v));
-            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
-            goto op_throw;
-        }
-        REG(RA) = _v;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* OP_ADDI_FROM */
-    op_addi_from: {
         Value v = REG(RB);
         if (LUNA_LIKELY(IS_INT(v))) {
             int64_t res = (int64_t)AS_INT(v) + (int8_t)C;
@@ -278,8 +236,8 @@
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* OP_SUBI_FROM */
-    op_subi_from: {
+    /* 20. OP_SUBI */
+    op_subi: {
         Value v = REG(RB);
         if (LUNA_LIKELY(IS_INT(v))) {
             int64_t res = (int64_t)AS_INT(v) - (int8_t)C;
@@ -649,12 +607,7 @@
         goto *op_labels[OP(instr)];
     }
 
-    /* 34. OP_ENTER */
-    op_enter:
-        /* Stack is pre-allocated by vm_run_chunk based on max_registers */
-        DECODE; goto *op_labels[OP(instr)];
-
-    /* 35. OP_LEAVE */
+    /* 34. OP_LEAVE */
     op_leave:
         close_upvalues(vm, vm->frame_count);
         DECODE; goto *op_labels[OP(instr)];

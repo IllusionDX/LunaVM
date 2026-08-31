@@ -84,11 +84,9 @@ typedef enum {
     OP_ADDK,        /* ABC  : A = B + constants[C]                         */
     OP_MULK,        /* ABC  : A = B * constants[C]                         */
 
-    /* ---- Integer-immediate arithmetic (ABC: A = A op (int8_t)B, C unused) ---- */
-    OP_ADDI,        /* ABC  : A = A + (int8_t)B  (arithmetic fast path)  */
-    OP_SUBI,        /* ABC  : A = A - (int8_t)B  (arithmetic fast path)  */
-    OP_ADDI_FROM,   /* ABC  : A = B + (int8_t)C  (separate dest)         */
-    OP_SUBI_FROM,   /* ABC  : A = B - (int8_t)C  (separate dest)         */
+    /* ---- Integer-immediate arithmetic (ABC: A = B op (int8_t)C) ---- */
+    OP_ADDI,        /* ABC  : A = B + (int8_t)C  (arithmetic fast path)  */
+    OP_SUBI,        /* ABC  : A = B - (int8_t)C  (arithmetic fast path)  */
 
     /* ---- Comparison (ABC: A = B cmp C, result is bool) ---- */
     OP_EQ,          /* ABC  : A = (B == C)                                 */
@@ -111,7 +109,6 @@ typedef enum {
     /* ---- Functions ---- */
     OP_CALL,        /* ABC  : A = call B(args B+1..B+C)                   */
     OP_RET,         /* ABC  : return A (B, C unused)                     */
-    OP_ENTER,       /* ABx  : allocate Bx local slots (hint)              */
     OP_LEAVE,       /* ABC  : deallocate locals, restore frame (A,B,C unused) */
     OP_CLOSURE,     /* ABx  : A = closure(constants[Bx])                  */
 

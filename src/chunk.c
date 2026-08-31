@@ -152,11 +152,11 @@ static const char *op_mnemonics[] = {
     "BAND",    "BOR",      "BXOR",      "BNOT",
     "SHL",     "SHR",
     "ADDK",    "MULK",
-    "ADDI",    "SUBI",    "ADDI_FROM","SUBI_FROM",
+    "ADDI",    "SUBI",
     "EQ",      "NE",       "LT",        "LE",
     "GT",      "GE",       "IN",        "NOT",
     "JMP",     "JZ",       "JNZ",       "JNIL",
-    "CALL",    "RET",      "ENTER",     "LEAVE",
+    "CALL",    "RET",      "LEAVE",
     "CLOSURE", "GETGLOBAL","SETGLOBAL",
     "GETUPVAL","SETUPVAL",
     "NEW",     "NEWDICT",  "NEWLIST",   "LISTAPPEND",
@@ -192,14 +192,12 @@ static OpFormat op_formats[] = {
     /* BNOT */     FMT_ABC, /* SHL */ FMT_ABC, /* SHR */ FMT_ABC,
     /* ADDK */     FMT_ABC, /* MULK */ FMT_ABC,
     /* ADDI */     FMT_ABC, /* SUBI */ FMT_ABC,
-    /* ADDI_FROM */ FMT_ABC, /* SUBI_FROM */ FMT_ABC,
     /* EQ */       FMT_ABC, /* NE */ FMT_ABC, /* LT */ FMT_ABC,
     /* LE */       FMT_ABC, /* GT */ FMT_ABC, /* GE */ FMT_ABC,
     /* IN */       FMT_ABC, /* NOT */ FMT_ABC,
     /* JMP */      FMT_AsBx,/* JZ */ FMT_AsBx, /* JNZ */ FMT_AsBx, /* JNIL */ FMT_AsBx,
     /* CALL */     FMT_ABC,
     /* RET */      FMT_ABC,
-    /* ENTER */    FMT_ABx,
     /* LEAVE */    FMT_ABC,
     /* CLOSURE */  FMT_ABx,
     /* GETGLOBAL */FMT_ABx,
@@ -272,14 +270,10 @@ void chunk_disassemble(Chunk *chunk) {
         for (int d = 0; d < depth; d++) printf("  ");
         printf("  %4d  %-15s", i, mnem);
 
-        /* Special: ADDI / SUBI use B as immediate, not register */
+        /* Special: ADDI / SUBI use C as immediate, B as source register */
         if (opcode == OP_ADDI) {
-            printf(" R%d %+d", a, (int8_t)b);
-        } else if (opcode == OP_SUBI) {
-            printf(" R%d %+d", a, -(int8_t)b);
-        } else if (opcode == OP_ADDI_FROM) {
             printf(" R%d R%d %+d", a, b, (int8_t)c);
-        } else if (opcode == OP_SUBI_FROM) {
+        } else if (opcode == OP_SUBI) {
             printf(" R%d R%d %+d", a, b, -(int8_t)c);
         } else if (opcode == OP_ADDK) {
             Value cv = chunk->constants[c];
