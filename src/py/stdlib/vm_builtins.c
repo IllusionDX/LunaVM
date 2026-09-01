@@ -219,6 +219,38 @@ static Value bn_str(VM *vm, Value *args, int n) {
     free(s); return v;
 }
 
+static Value bn_repr(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (!n) return make_obj((Object *)new_string("", 0));
+    if (IS_STRING(args[0])) {
+        ObjString *s = (ObjString *)AS_OBJ(args[0]);
+        char *out = malloc((size_t)s->length * 4 + 3);
+        if (!out) { fprintf(stderr, "OOM\n"); exit(1); }
+        int pos = 0;
+        out[pos++] = '\'';
+        for (int i = 0; i < s->length; i++) {
+            char c = s->chars[i];
+            switch (c) {
+                case '\'': out[pos++] = '\\'; out[pos++] = '\''; break;
+                case '\\': out[pos++] = '\\'; out[pos++] = '\\'; break;
+                case '\n': out[pos++] = '\\'; out[pos++] = 'n'; break;
+                case '\t': out[pos++] = '\\'; out[pos++] = 't'; break;
+                case '\r': out[pos++] = '\\'; out[pos++] = 'r'; break;
+                default: out[pos++] = c; break;
+            }
+        }
+        out[pos++] = '\'';
+        out[pos] = '\0';
+        Value v = make_obj((Object *)new_string(out, pos));
+        free(out);
+        return v;
+    }
+    char *s = value_to_string(args[0]);
+    Value v = make_obj((Object *)new_string(s, (int)strlen(s)));
+    free(s);
+    return v;
+}
+
 static Value bn_int(VM *vm, Value *args, int n) {
     if (!n) return make_int(0);
     Value v = args[0];
@@ -649,6 +681,7 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);
     vm_define_native(vm, "input", bn_input);
     vm_define_native(vm, "range", bn_range);
+    vm_define_native(vm, "repr",  bn_repr);
     vm_define_native(vm, "len",   bn_len);
     vm_define_native(vm, "type",  bn_type);
     vm_define_native(vm, "clock", bn_clock);
