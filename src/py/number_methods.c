@@ -121,4 +121,6 @@ void py_register_number_methods(VM *vm) {
 
     py_fe(vm)->int_class = int_cls;
     py_fe(vm)->float_class = flt_cls;
+    vm_set_global(vm, "int",   make_obj((Object*)int_cls), false);
+    vm_set_global(vm, "float", make_obj((Object*)flt_cls), false);
 }

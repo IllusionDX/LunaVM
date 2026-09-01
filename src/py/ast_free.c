@@ -84,6 +84,13 @@ void free_expr(Expr *expr) {
         free(expr->data.list_literal.elements);
         break;
 
+    case EXPR_TUPLE_LITERAL:
+        for (int i = 0; i < expr->data.tuple_literal.element_count; i++) {
+            free_expr(expr->data.tuple_literal.elements[i]);
+        }
+        free(expr->data.tuple_literal.elements);
+        break;
+
     case EXPR_DICT_LITERAL:
         for (int i = 0; i < expr->data.dict_literal.entry_count; i++) {
             free_expr(expr->data.dict_literal.entries[i].key);

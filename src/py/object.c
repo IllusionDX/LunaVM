@@ -418,6 +418,82 @@ static uint32_t py_list_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(se
 static int py_list_len(struct VM *vm, Value self) { (void)vm; return ((ObjList*)AS_OBJ(self))->count; }
 
 /* ============================================================
+ * Tuple operations (vtable) — immutable, fixed-size
+ * ============================================================ */
+static Value py_tuple_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_tuple_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_tuple_mul(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_tuple_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_tuple_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
+static Value py_tuple_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
+static int py_tuple_cmp(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return 2; }
+
+static Value py_tuple_getitem(struct VM *vm, Value self, Value key) {
+    (void)vm;
+    if (!IS_TUPLE(self) || !IS_INT(key)) return make_null();
+    ObjTuple *t = (ObjTuple*)AS_OBJ(self);
+    int idx = (int)AS_INT(key);
+    int len = t->count;
+    if (idx < 0) idx += len;
+    if (idx < 0 || idx >= len) return make_null();
+    return t->items[idx];
+}
+
+static void py_tuple_setitem(struct VM *vm, Value self, Value key, Value val) {
+    (void)vm; (void)self; (void)key; (void)val;
+    /* tuples are immutable */
+}
+
+static Value py_tuple_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
+static int py_tuple_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
+static Value py_tuple_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_tuple_tostring(struct VM *vm, Value self) { (void)vm; return self; }
+
+static uint32_t py_tuple_hash(Value self) {
+    ObjTuple *t = (ObjTuple*)AS_OBJ(self);
+    if (t->hash != 0) return t->hash;
+    uint32_t mult = 1000003u;
+    uint32_t x = 0x345678u;
+    for (int i = 0; i < t->count; i++) {
+        uint32_t y = hash_value(t->items[i]);
+        x = (x ^ y) * mult;
+        mult += 82520u + (uint32_t)(i * 2);
+    }
+    x += 97531u;
+    if (x == 0) x = 1;
+    t->hash = x;
+    return x;
+}
+
+static int py_tuple_len(struct VM *vm, Value self) { (void)vm; return ((ObjTuple*)AS_OBJ(self))->count; }
+
+/* lifecycle */
+static void py_tuple_free(Object *obj) { free(obj); }
+static void py_tuple_mark(struct VM *vm, Object *obj) {
+    ObjTuple *t = (ObjTuple*)obj;
+    for (int i = 0; i < t->count; i++) vm_mark_value(vm, t->items[i]);
+}
+static char* py_tuple_to_cstr(Value self) {
+    ObjTuple *t = (ObjTuple*)AS_OBJ(self);
+    int cap = 32; char *out = malloc(cap); int pos = 0;
+    out[pos++] = '(';
+    for (int i = 0; i < t->count; i++) {
+        char *e = value_to_string(t->items[i]);
+        bool is_str = IS_STRING(t->items[i]);
+        int need = pos + (int)strlen(e) + (is_str ? 2 : 0) + 4;
+        if (need >= cap) { cap = need * 2; out = realloc(out, cap); }
+        if (i > 0) { out[pos++] = ','; out[pos++] = ' '; }
+        if (is_str) out[pos++] = '"';
+        int el = (int)strlen(e); memcpy(out + pos, e, el); pos += el;
+        if (is_str) out[pos++] = '"';
+        free(e);
+    }
+    if (pos + 2 >= cap) { cap = pos + 4; out = realloc(out, cap); }
+    out[pos++] = ')'; out[pos] = '\0';
+    char *r = strdup(out); free(out); return r;
+}
+
+/* ============================================================
  * Dict operations (vtable)
  * ============================================================ */
 static Value py_dict_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
@@ -528,6 +604,104 @@ static int py_instance_len(struct VM *vm, Value self) { (void)vm; (void)self; re
 static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
     if (!IS_CLASS(self)) return make_null();
     ObjClass *cls = (ObjClass*)AS_OBJ(self);
+
+    /* Builtin type classes are callable as conversions (Python style). */
+    if (cls == py_fe(vm)->int_class) {
+        if (!argc) return make_int(0);
+        Value v = args[0];
+        if (IS_INT(v) || IS_BIGINT(v)) return v;
+        if (IS_BOOL(v)) return make_int(AS_BOOL(v) ? 1 : 0);
+        if (IS_DOUBLE(v)) {
+            Value out;
+            if (bigint_from_f64(AS_DOUBLE(v), &out)) return out;
+            luna_throw(vm, py_fe(vm)->value_error_class,
+                isnan(AS_DOUBLE(v)) ? "cannot convert float NaN to integer"
+                                    : "cannot convert float infinity to integer");
+            return make_int(0);
+        }
+        if (IS_STRING(v)) {
+            ObjString *s = (ObjString *)AS_OBJ(v);
+            Value out;
+            if (bigint_from_decimal(s->chars, (size_t)s->length, &out)) return out;
+            char msg[128];
+            snprintf(msg, sizeof(msg), "invalid literal for int() with base 10: '%.64s'", s->chars);
+            luna_throw(vm, py_fe(vm)->value_error_class, msg);
+            return make_int(0);
+        }
+        luna_throw(vm, py_fe(vm)->type_error_class,
+            "int() argument must be a string, a bytes-like object or a real number");
+        return make_int(0);
+    }
+    if (cls == py_fe(vm)->float_class) {
+        if (!argc) return make_double(0.0);
+        Value v = args[0];
+        if (IS_DOUBLE(v)) return v;
+        if (IS_INT(v)) return make_double((double)AS_INT(v));
+        if (IS_BIGINT(v)) return make_double(bigint_to_f64((ObjBigInt *)AS_OBJ(v)));
+        if (IS_BOOL(v)) return make_double(AS_BOOL(v) ? 1.0 : 0.0);
+        if (IS_STRING(v)) {
+            char *end = NULL;
+            double d = strtod(((ObjString *)AS_OBJ(v))->chars, &end);
+            if (end && *end == '\0') return make_double(d);
+            luna_throw(vm, py_fe(vm)->value_error_class, "could not convert string to float");
+            return make_double(0.0);
+        }
+        luna_throw(vm, py_fe(vm)->type_error_class, "float() argument must be a string or a number");
+        return make_double(0.0);
+    }
+    if (cls == py_fe(vm)->string_class) {
+        if (!argc) return make_obj((Object *)new_string("", 0));
+        char *s = value_to_string(args[0]);
+        Value v = make_obj((Object *)new_string(s, (int)strlen(s)));
+        free(s);
+        return v;
+    }
+    if (cls == py_fe(vm)->tuple_class) {
+        if (argc < 1) return make_obj((Object *)new_tuple(0));
+        Value v = args[0];
+        if (IS_TUPLE(v)) return v;
+        if (IS_LIST(v)) {
+            ObjList *l = (ObjList *)AS_OBJ(v);
+            ObjTuple *t = new_tuple(l->count);
+            for (int i = 0; i < l->count; i++)
+                t->items[i] = l->items ? l->items[i] : l->inline_items[i];
+            return make_obj((Object *)t);
+        }
+        if (IS_STRING(v)) {
+            ObjString *s = (ObjString *)AS_OBJ(v);
+            ObjTuple *t = new_tuple(s->length);
+            for (int i = 0; i < s->length; i++) {
+                char buf[2] = {s->chars[i], '\0'};
+                t->items[i] = make_obj((Object *)new_string(buf, 1));
+            }
+            return make_obj((Object *)t);
+        }
+        luna_throw(vm, py_fe(vm)->type_error_class, "tuple() argument must be an iterable");
+        return make_obj((Object *)new_tuple(0));
+    }
+    if (cls == py_fe(vm)->list_class) {
+        if (argc < 1) return make_obj((Object *)new_list(0));
+        Value v = args[0];
+        if (IS_LIST(v)) return v;
+        if (IS_TUPLE(v)) {
+            ObjTuple *t = (ObjTuple *)AS_OBJ(v);
+            ObjList *l = new_list(t->count);
+            for (int i = 0; i < t->count; i++) list_add(l, t->items[i]);
+            return make_obj((Object *)l);
+        }
+        if (IS_STRING(v)) {
+            ObjString *s = (ObjString *)AS_OBJ(v);
+            ObjList *l = new_list(s->length);
+            for (int i = 0; i < s->length; i++) {
+                char buf[2] = {s->chars[i], '\0'};
+                list_add(l, make_obj((Object *)new_string(buf, 1)));
+            }
+            return make_obj((Object *)l);
+        }
+        luna_throw(vm, py_fe(vm)->type_error_class, "list() argument must be an iterable");
+        return make_obj((Object *)new_list(0));
+    }
+
     ObjInstance *inst = new_instance(cls, 4);
     ObjFunction *fn = NULL;
     for (int i = cls->method_count - 1; i >= 0; i--)
@@ -553,112 +727,6 @@ static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
     }
     return make_obj((Object*)inst);
 }
-
-/* ============================================================
- * Vector operations (vtable)
- * ============================================================ */
-static Value py_vector_add(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (!IS_VECTOR(a) || !IS_VECTOR(b)) return make_null();
-    ObjVector *av = (ObjVector*)AS_OBJ(a), *bv = (ObjVector*)AS_OBJ(b);
-    return make_obj((Object*)new_vector(av->data[0]+bv->data[0], av->data[1]+bv->data[1], av->data[2]+bv->data[2], av->data[3]+bv->data[3]));
-}
-static Value py_vector_sub(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (!IS_VECTOR(a) || !IS_VECTOR(b)) return make_null();
-    ObjVector *av = (ObjVector*)AS_OBJ(a), *bv = (ObjVector*)AS_OBJ(b);
-    return make_obj((Object*)new_vector(av->data[0]-bv->data[0], av->data[1]-bv->data[1], av->data[2]-bv->data[2], av->data[3]-bv->data[3]));
-}
-static Value py_vector_mul(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    /* Component-wise or scalar mul (current behavior in do_arith) */
-    if (IS_VECTOR(a) && IS_VECTOR(b)) {
-        ObjVector *av = (ObjVector*)AS_OBJ(a), *bv = (ObjVector*)AS_OBJ(b);
-        return make_obj((Object*)new_vector(av->data[0]*bv->data[0], av->data[1]*bv->data[1], av->data[2]*bv->data[2], av->data[3]*bv->data[3]));
-    }
-    if (IS_VECTOR(a) && IS_NUMBER(b)) {
-        ObjVector *av = (ObjVector*)AS_OBJ(a);
-        float s = (float)value_to_double(b);
-        return make_obj((Object*)new_vector(av->data[0]*s, av->data[1]*s, av->data[2]*s, av->data[3]*s));
-    }
-    if (IS_NUMBER(a) && IS_VECTOR(b)) {
-        return py_vector_mul(vm, b, a);
-    }
-    return make_null();
-}
-static Value py_vector_div(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (IS_VECTOR(a) && IS_NUMBER(b)) {
-        ObjVector *av = (ObjVector*)AS_OBJ(a);
-        float s = (float)value_to_double(b);
-        return make_obj((Object*)new_vector(av->data[0]/s, av->data[1]/s, av->data[2]/s, av->data[3]/s));
-    }
-    return make_null();
-}
-static Value py_vector_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value py_vector_neg(struct VM *vm, Value a) {
-    (void)vm;
-    if (!IS_VECTOR(a)) return make_null();
-    ObjVector *v = (ObjVector*)AS_OBJ(a);
-    return make_obj((Object*)new_vector(-v->data[0], -v->data[1], -v->data[2], -v->data[3]));
-}
-static int py_vector_cmp(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (!IS_VECTOR(a) || !IS_VECTOR(b)) return 2;
-    return a == b ? 0 : 1;
-}
-
-static Value py_vector_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
-static void py_vector_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
-static Value py_vector_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int py_vector_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value py_vector_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value py_vector_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t py_vector_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int py_vector_len(struct VM *vm, Value self) { (void)vm; return 4; }
-
-/* ============================================================
- * Matrix operations (vtable)
- * ============================================================ */
-static Value py_matrix_add(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value py_matrix_sub(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value py_matrix_mul(struct VM *vm, Value a, Value b) {
-    (void)vm;
-    if (IS_MATRIX(a) && IS_MATRIX(b)) {
-        ObjMatrix *ma = (ObjMatrix*)AS_OBJ(a), *mb = (ObjMatrix*)AS_OBJ(b);
-        ObjMatrix *res = new_matrix();
-        for (int col = 0; col < 4; col++) for (int row = 0; row < 4; row++) {
-            float sum = 0.0f; for (int k = 0; k < 4; k++) sum += ma->m[row + k*4] * mb->m[k + col*4];
-            res->m[row + col*4] = sum; }
-        return make_obj((Object*)res);
-    }
-    if (IS_MATRIX(a) && IS_VECTOR(b)) {
-        ObjMatrix *m = (ObjMatrix*)AS_OBJ(a); ObjVector *v = (ObjVector*)AS_OBJ(b);
-        float rx = m->m[0]*v->data[0] + m->m[4]*v->data[1] + m->m[8]*v->data[2] + m->m[12]*v->data[3];
-        float ry = m->m[1]*v->data[0] + m->m[5]*v->data[1] + m->m[9]*v->data[2] + m->m[13]*v->data[3];
-        float rz = m->m[2]*v->data[0] + m->m[6]*v->data[1] + m->m[10]*v->data[2] + m->m[14]*v->data[3];
-        float rw = m->m[3]*v->data[0] + m->m[7]*v->data[1] + m->m[11]*v->data[2] + m->m[15]*v->data[3];
-        return make_obj((Object*)new_vector(rx, ry, rz, rw));
-    }
-    if (IS_MATRIX(a) && IS_NUMBER(b)) {
-        ObjMatrix *m = (ObjMatrix*)AS_OBJ(a); float s = (float)value_to_double(b); ObjMatrix *res = new_matrix();
-        for (int i = 0; i < 16; i++) res->m[i] = m->m[i] * s; return make_obj((Object*)res);
-    }
-    return make_null();
-}
-static Value py_matrix_div(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value py_matrix_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return make_null(); }
-static Value py_matrix_neg(struct VM *vm, Value a) { (void)vm; (void)a; return make_null(); }
-static int py_matrix_cmp(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (void)b; return 2; }
-
-static Value py_matrix_getitem(struct VM *vm, Value self, Value key) { (void)vm; (void)self; (void)key; return make_null(); }
-static void py_matrix_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
-static Value py_matrix_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
-static int py_matrix_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value py_matrix_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
-static Value py_matrix_tostring(struct VM *vm, Value self) { (void)vm; return self; }
-static uint32_t py_matrix_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
-static int py_matrix_len(struct VM *vm, Value self) { (void)vm; return 16; }
 
 /* ============================================================
  * BigInt numeric arithmetic (arbitrary precision, PyLong-style).
@@ -729,6 +797,15 @@ Type py_list_type = {
     .getitem = py_list_getitem, .setitem = py_list_setitem,
     .getattr = py_list_getattr, .setattr = py_list_setattr,
     .call = py_list_call, .tostring = py_list_tostring, .hash = py_list_hash, .len = py_list_len
+};
+
+Type py_tuple_type = {
+    .name = "tuple", .kind = OBJ_TUPLE,
+    .add = py_tuple_add, .sub = py_tuple_sub, .mul = py_tuple_mul, .div = py_tuple_div, .mod = py_tuple_mod,
+    .neg = py_tuple_neg, .cmp = py_tuple_cmp,
+    .getitem = py_tuple_getitem, .setitem = py_tuple_setitem,
+    .getattr = py_tuple_getattr, .setattr = py_tuple_setattr,
+    .call = py_tuple_call, .tostring = py_tuple_tostring, .hash = py_tuple_hash, .len = py_tuple_len
 };
 
 Type py_dict_type = {
@@ -849,28 +926,11 @@ Type py_userdata_type = {
     .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type py_vector_type = {
-    .name = "vector", .kind = OBJ_VECTOR,
-    .add = py_vector_add, .sub = py_vector_sub, .mul = py_vector_mul, .div = py_vector_div, .mod = py_vector_mod,
-    .neg = py_vector_neg, .cmp = py_vector_cmp,
-    .getitem = py_vector_getitem, .setitem = py_vector_setitem,
-    .getattr = py_vector_getattr, .setattr = py_vector_setattr,
-    .call = py_vector_call, .tostring = py_vector_tostring, .hash = py_vector_hash, .len = py_vector_len
-};
-
-Type py_matrix_type = {
-    .name = "matrix", .kind = OBJ_MATRIX,
-    .add = py_matrix_add, .sub = py_matrix_sub, .mul = py_matrix_mul, .div = py_matrix_div, .mod = py_matrix_mod,
-    .neg = py_matrix_neg, .cmp = py_matrix_cmp,
-    .getitem = py_matrix_getitem, .setitem = py_matrix_setitem,
-    .getattr = py_matrix_getattr, .setattr = py_matrix_setattr,
-    .call = py_matrix_call, .tostring = py_matrix_tostring, .hash = py_matrix_hash, .len = py_matrix_len
-};
-
 /* Indexed by ObjType. */
 Type *py_types[] = {
     [OBJ_STRING]       = &py_string_type,
     [OBJ_LIST]         = &py_list_type,
+    [OBJ_TUPLE]        = &py_tuple_type,
     [OBJ_DICT]         = &py_dict_type,
     [OBJ_INSTANCE]     = &py_instance_type,
     [OBJ_FUNCTION]     = &py_function_type,
@@ -883,8 +943,6 @@ Type *py_types[] = {
     [OBJ_BUFFER]       = &py_buffer_type,
     [OBJ_BIGINT]       = &py_bigint_type,
     [OBJ_USERDATA]     = &py_userdata_type,
-    [OBJ_VECTOR]       = &py_vector_type,
-    [OBJ_MATRIX]       = &py_matrix_type,
 };
 
 /* ============================================================
@@ -1203,7 +1261,7 @@ static void py_userdata_free(Object *obj) {
 
 /* One-time wiring: the frontend owns this kind switch; the core stays generic. */
 void py_wire_lifecycle(void) {
-    for (int k = 0; k <= OBJ_MATRIX; k++) {
+    for (int k = 0; k <= OBJ_USERDATA; k++) {
         Type *t = py_types[k];
         /* ObjType intentionally has reserved values; there is no Type for
          * those slots in py_types[]. */
@@ -1218,6 +1276,8 @@ void py_wire_lifecycle(void) {
                 t->string_chars = py_string_chars; break;
             case OBJ_LIST:
                 t->free = py_list_free; t->mark = py_list_mark; t->to_cstr = py_list_to_cstr; break;
+            case OBJ_TUPLE:
+                t->free = py_tuple_free; t->mark = py_tuple_mark; t->to_cstr = py_tuple_to_cstr; break;
             case OBJ_DICT:
                 t->free = py_dict_free; t->mark = py_dict_mark; t->to_cstr = py_dict_to_cstr; break;
             case OBJ_INSTANCE:
@@ -1442,6 +1502,17 @@ ObjList *new_list(int capacity) {
     return l;
 }
 
+ObjTuple *new_tuple(int count) {
+    size_t size = sizeof(ObjTuple) + (size_t)count * sizeof(Value);
+    ObjTuple *t = malloc(size);
+    if (!t) { fprintf(stderr, "OOM\n"); exit(1); }
+    py_init_object((Object*)t, OBJ_TUPLE, size);
+    t->count = count;
+    t->hash = 0;
+    for (int i = 0; i < count; i++) t->items[i] = make_null();
+    return t;
+}
+
 ObjDict *new_dict(void) {
     ObjDict *d = malloc(sizeof(ObjDict));
     if (!d) { fprintf(stderr, "OOM\n"); exit(1); }
@@ -1634,26 +1705,6 @@ ObjBuffer *new_buffer(size_t capacity) {
     buf->data = capacity ? malloc(capacity) : NULL;
     if (capacity && !buf->data) { fprintf(stderr, "OOM\n"); exit(1); }
     return buf;
-}
-
-ObjVector *new_vector(float x, float y, float z, float w) {
-    ObjVector *obj = malloc(sizeof(ObjVector));
-    if (!obj) { fprintf(stderr, "OOM\n"); exit(1); }
-    py_init_object((Object*)obj, OBJ_VECTOR, sizeof(ObjVector));
-    obj->data[0] = x;
-    obj->data[1] = y;
-    obj->data[2] = z;
-    obj->data[3] = w;
-    return obj;
-}
-
-ObjMatrix *new_matrix(void) {
-    ObjMatrix *obj = malloc(sizeof(ObjMatrix));
-    if (!obj) { fprintf(stderr, "OOM\n"); exit(1); }
-    py_init_object((Object*)obj, OBJ_MATRIX, sizeof(ObjMatrix));
-    for (int i = 0; i < 16; i++) obj->m[i] = 0.0f;
-    obj->m[0] = obj->m[5] = obj->m[10] = obj->m[15] = 1.0f;
-    return obj;
 }
 
 void buffer_reserve(ObjBuffer *buf, size_t capacity) {
@@ -2240,11 +2291,10 @@ struct ObjClass *get_class(VM *vm, Value val) {
     switch (AS_OBJ(val)->type->kind) {
         case OBJ_STRING:       return py_fe(vm)->string_class;
         case OBJ_LIST:         return py_fe(vm)->list_class;
+        case OBJ_TUPLE:        return py_fe(vm)->tuple_class;
         case OBJ_DICT:         return py_fe(vm)->dict_class;
         case OBJ_ENUM:         return py_fe(vm)->enum_class;
         case OBJ_BUFFER:       return py_fe(vm)->buffer_class;
-        case OBJ_VECTOR:       return py_fe(vm)->vector_class;
-        case OBJ_MATRIX:       return py_fe(vm)->matrix_class;
         case OBJ_FUNCTION:     return py_fe(vm)->function_class;
         case OBJ_CLOSURE:      return py_fe(vm)->closure_class;
         case OBJ_BOUND_METHOD: return py_fe(vm)->bound_method_class;

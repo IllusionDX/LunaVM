@@ -35,6 +35,7 @@ typedef enum {
     EXPR_COMPOUND_ASSIGN,
     EXPR_TERNARY,
     EXPR_LIST_LITERAL,
+    EXPR_TUPLE_LITERAL,
     EXPR_DICT_LITERAL,
     EXPR_NEW,
     EXPR_FUNCTION,
@@ -111,6 +112,10 @@ typedef struct Expr {
             Expr **elements;
             int element_count;
         } list_literal;
+        struct {
+            Expr **elements;
+            int element_count;
+        } tuple_literal;
         struct {
             DictEntry *entries;
             int entry_count;

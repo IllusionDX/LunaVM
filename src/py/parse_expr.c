@@ -301,61 +301,40 @@ static Expr *parse_primary(Parser *parser) {
     case TOK_LPAREN: {
         advance(parser);
 
-        /* Lookahead for lambda: (params) => expr */
-        int offset = 0;
-        Token *t = peek_ahead(parser, offset);
-        int is_lambda = 0;
-
-        /* Empty params: () => expr */
-        if (t && t->type == TOK_RPAREN) {
-            Token *after = peek_ahead(parser, offset + 1);
-            if (after && after->type == TOK_LAMBDA) is_lambda = 1;
-        } else if (t && t->type == TOK_IDENTIFIER) {
-            /* Try: id (, id)* ) => */
-            is_lambda = 1;
-            offset++;
-            t = peek_ahead(parser, offset);
-            while (t && t->type != TOK_RPAREN && t->type != TOK_EOF) {
-                if (t->type == TOK_COMMA) {
-                    offset++;
-                    t = peek_ahead(parser, offset);
-                    if (!t || t->type != TOK_IDENTIFIER) { is_lambda = 0; break; }
-                    offset++;
-                    t = peek_ahead(parser, offset);
-                } else {
-                    is_lambda = 0;
-                    break;
-                }
-            }
-            if (is_lambda && t && t->type == TOK_RPAREN) {
-                Token *after = peek_ahead(parser, offset + 1);
-                if (!after || after->type != TOK_LAMBDA) is_lambda = 0;
-            } else {
-                is_lambda = 0;
-            }
-        }
-
-        if (is_lambda) {
-            int param_count = 0;
-            FunctionParam *params = parse_parameters(parser, &param_count);
-            expect(parser, TOK_RPAREN, "Expected ')' after lambda parameters");
-            advance(parser); /* consume => */
-            Expr *body_expr = parse_expression(parser);
-            Stmt *ret = make_stmt(STMT_RETURN, peek(parser)->line);
-            ret->data.return_stmt.value = body_expr;
-            Expr *expr = make_expr(EXPR_FUNCTION, peek(parser)->line);
-            expr->data.function.name = NULL;
-            expr->data.function.params = params;
-            expr->data.function.param_count = param_count;
-            expr->data.function.body = malloc(sizeof(Stmt *));
-            expr->data.function.body[0] = ret;
-            expr->data.function.body_count = 1;
+        /* Empty tuple: () */
+        if (match(parser, TOK_RPAREN)) {
+            advance(parser);
+            Expr *expr = make_expr(EXPR_TUPLE_LITERAL, peek(parser)->line);
+            expr->data.tuple_literal.elements = NULL;
+            expr->data.tuple_literal.element_count = 0;
             return expr;
         }
 
-        Expr *expr = parse_expression(parser);
+        Expr *first = parse_expression(parser);
+
+        /* Tuple literal: (a, b, ...) */
+        if (match(parser, TOK_COMMA)) {
+            advance(parser);
+            int capacity = 4;
+            Expr **elements = (Expr **)malloc(capacity * sizeof(Expr *));
+            int count = 0;
+            elements[count++] = first;
+            while (!match(parser, TOK_RPAREN) && !match(parser, TOK_EOF)) {
+                if (count >= capacity) { capacity *= 2; elements = realloc(elements, capacity * sizeof(Expr *)); }
+                elements[count++] = parse_expression(parser);
+                if (match(parser, TOK_COMMA)) advance(parser);
+                else break;
+            }
+            expect(parser, TOK_RPAREN, "Expected ')' after tuple elements");
+            Expr *expr = make_expr(EXPR_TUPLE_LITERAL, peek(parser)->line);
+            expr->data.tuple_literal.elements = elements;
+            expr->data.tuple_literal.element_count = count;
+            return expr;
+        }
+
+        /* Parenthesized expression: (expr) */
         expect(parser, TOK_RPAREN, "Expected ')' after expression");
-        return expr;
+        return first;
     }
 
     case TOK_LBRACKET:

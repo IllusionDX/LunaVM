@@ -1293,6 +1293,21 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         break;
     }
 
+    case EXPR_TUPLE_LITERAL: {
+        /* Build via native helper: _build_tuple(args...) -> tuple.
+         * Keeps the core language-agnostic (no tuple-specific opcode). */
+        int k = chunk_add_string(c->vm, c->chunk, "_build_tuple");
+        emit_ABx(c, OP_GETGLOBAL, (uint8_t)target, (uint16_t)k);
+        int saved_base = c->temp_base;
+        c->temp_base = target + 1 + expr->data.tuple_literal.element_count;
+        for (int i = 0; i < expr->data.tuple_literal.element_count; i++) {
+            compile_expr_into(c, expr->data.tuple_literal.elements[i], target + 1 + i);
+        }
+        c->temp_base = saved_base;
+        emit_ABC(c, OP_CALL, (uint8_t)target, (uint8_t)target, (uint8_t)expr->data.tuple_literal.element_count);
+        break;
+    }
+
     case EXPR_LIST_COMPREHENSION: {
         emit_ABC(c, OP_NEWLIST, (uint8_t)target, 0, 0);
 
@@ -1408,6 +1423,25 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     case EXPR_MULTI_ASSIGN: {
         int n = expr->data.multi_assign.target_count;
         int m = expr->data.multi_assign.value_count;
+
+        /* Unpacking: a, b, ... = <tuple|list|string expr> */
+        if (m == 1 && n > 1) {
+            int src = alloc_reg(c);
+            compile_expr_into(c, expr->data.multi_assign.values[0], src);
+            for (int i = 0; i < n; i++) {
+                int idx_reg = alloc_reg(c);
+                int k = chunk_add_const(c->chunk, make_int(i));
+                emit_ABx(c, OP_LOADK, (uint8_t)idx_reg, (uint16_t)k);
+                int val = alloc_reg(c);
+                emit_ABC(c, OP_INDEXGET, (uint8_t)val, (uint8_t)src, (uint8_t)idx_reg);
+                compile_single_assignment(c, expr->data.multi_assign.targets[i], val);
+                free_reg(c);
+                free_reg(c);
+            }
+            free_reg(c);
+            emit_loadnull(c, (uint8_t)target);
+            break;
+        }
 
         /* Optimisation: detect a, b = b, a where both are local variables */
         if (n == 2 && m == 2) {

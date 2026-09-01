@@ -308,6 +308,38 @@ static Value bn_isinf(VM *vm, Value *args, int n) {
     return make_bool(IS_INF(args[0]));
 }
 
+static bool bn_isinstance_class(VM *vm, Value obj, ObjClass *target) {
+    ObjClass *c = get_class(vm, obj);
+    if (!c) return false;
+    while (c) {
+        if (c == target) return true;
+        c = c->base;
+    }
+    return false;
+}
+
+static Value bn_isinstance(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (n < 2) return make_bool(false);
+    Value obj = args[0];
+    Value cls = args[1];
+    if (IS_LIST(cls)) {
+        ObjList *l = (ObjList *)AS_OBJ(cls);
+        for (int i = 0; i < l->count; i++) {
+            Value c = l->items ? l->items[i] : l->inline_items[i];
+            if (IS_OBJ(c) && AS_OBJ(c)->type->kind == OBJ_CLASS &&
+                bn_isinstance_class(vm, obj, (ObjClass *)AS_OBJ(c))) {
+                return make_bool(true);
+            }
+        }
+        return make_bool(false);
+    }
+    if (IS_OBJ(cls) && AS_OBJ(cls) && AS_OBJ(cls)->type->kind == OBJ_CLASS) {
+        return make_bool(bn_isinstance_class(vm, obj, (ObjClass *)AS_OBJ(cls)));
+    }
+    return make_bool(false);
+}
+
 static Value bn_chr(VM *vm, Value *args, int n) {
     (void)vm;
     if (n != 1) {
@@ -760,6 +792,7 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "gc", bn_gc);
     vm_define_native(vm, "isnan", bn_isnan);
     vm_define_native(vm, "isinf", bn_isinf);
+    vm_define_native(vm, "isinstance", bn_isinstance);
     vm_define_native(vm, "ord",   bn_ord);
     vm_define_native(vm, "chr",   bn_chr);
     vm_define_native(vm, "vec2",  bn_vec2);

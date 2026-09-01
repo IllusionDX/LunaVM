@@ -17,15 +17,6 @@
 #include "py/frontend_state.h"
 #include "chunk.h"
 
-/* Extern declarations for static mat4 helpers in vm.c */
-extern void mat4_mul_translate(float *m, float x, float y, float z);
-extern void mat4_mul_rotate_x(float *m, float angle);
-extern void mat4_mul_rotate_y(float *m, float angle);
-extern void mat4_mul_rotate_z(float *m, float angle);
-extern void mat4_mul_scale(float *m, float sx, float sy, float sz);
-extern void mat4_transpose(const float *src, float *dst);
-extern int  mat4_invert(float *m, float *out);
-
 /* ============================================================ */
 /* Global variable table                                         */
 /* ============================================================ */
@@ -182,6 +173,44 @@ static Value bn_range(VM *vm, Value *args, int n) {
     return make_obj((Object *)l);
 }
 
+static Value bn_build_tuple(VM *vm, Value *args, int n) {
+    (void)vm;
+    ObjTuple *t = new_tuple(n);
+    for (int i = 0; i < n; i++) t->items[i] = args[i];
+    return make_obj((Object *)t);
+}
+
+static bool bn_isinstance_class(VM *vm, Value obj, ObjClass *target) {
+    ObjClass *c = get_class(vm, obj);
+    if (!c) return false;
+    while (c) {
+        if (c == target) return true;
+        c = c->base;
+    }
+    return false;
+}
+
+static Value bn_isinstance(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (n < 2) return make_bool(false);
+    Value obj = args[0];
+    Value cls = args[1];
+    if (IS_TUPLE(cls)) {
+        ObjTuple *t = (ObjTuple *)AS_OBJ(cls);
+        for (int i = 0; i < t->count; i++) {
+            if (IS_OBJ(t->items[i]) && AS_OBJ(t->items[i])->type->kind == OBJ_CLASS &&
+                bn_isinstance_class(vm, obj, (ObjClass *)AS_OBJ(t->items[i]))) {
+                return make_bool(true);
+            }
+        }
+        return make_bool(false);
+    }
+    if (IS_OBJ(cls) && AS_OBJ(cls) && AS_OBJ(cls)->type->kind == OBJ_CLASS) {
+        return make_bool(bn_isinstance_class(vm, obj, (ObjClass *)AS_OBJ(cls)));
+    }
+    return make_bool(false);
+}
+
 static Value bn_str(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n) return make_obj((Object *)new_string("",0));
@@ -249,6 +278,7 @@ static Value bn_len(VM *vm, Value *args, int n) {
             return make_int(utf8_code_point_count(s->chars, s->length));
         }
         case OBJ_LIST:    return make_int(((ObjList*)  AS_OBJ(args[0]))->count);
+        case OBJ_TUPLE:   return make_int(((ObjTuple*) AS_OBJ(args[0]))->count);
         case OBJ_DICT:    return make_int(((ObjDict*)  AS_OBJ(args[0]))->entry_count);
         default:          return make_int(0);
     }
@@ -413,57 +443,6 @@ static Value bn_ord(VM *vm, Value *args, int n) {
         luna_throw(vm, py_fe(vm)->value_error_class, "ord(): invalid UTF-8");
     }
     return bigint_from_i64_value(cp);   /* codepoints fit int32; normalizes */
-}
-
-/* ============================================================ */
-/* Vector constructors — global vec2, vec3, vec4                */
-/* ============================================================ */
-
-static Value bn_vec2(VM *vm, Value *args, int n) {
-    if (n != 2) {
-        luna_throw(vm, py_fe(vm)->argument_error_class, "vec2() expects exactly 2 arguments (x, y)");
-    }
-    if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1])) {
-        luna_throw(vm, py_fe(vm)->type_error_class, "vec2() arguments must be numeric");
-    }
-    float x = (float)value_to_double(args[0]);
-    float y = (float)value_to_double(args[1]);
-    return make_obj((Object*)new_vector(x, y, 0.0f, 0.0f));
-}
-
-static Value bn_vec3(VM *vm, Value *args, int n) {
-    if (n != 3) {
-        luna_throw(vm, py_fe(vm)->argument_error_class, "vec3() expects exactly 3 arguments (x, y, z)");
-    }
-    if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1]) || !IS_NUMBER(args[2])) {
-        luna_throw(vm, py_fe(vm)->type_error_class, "vec3() arguments must be numeric");
-    }
-    float x = (float)value_to_double(args[0]);
-    float y = (float)value_to_double(args[1]);
-    float z = (float)value_to_double(args[2]);
-    return make_obj((Object*)new_vector(x, y, z, 0.0f));
-}
-
-static Value bn_vec4(VM *vm, Value *args, int n) {
-    if (n != 4) {
-        luna_throw(vm, py_fe(vm)->argument_error_class, "vec4() expects exactly 4 arguments (x, y, z, w)");
-    }
-    if (!IS_NUMBER(args[0]) || !IS_NUMBER(args[1]) || !IS_NUMBER(args[2]) || !IS_NUMBER(args[3])) {
-        luna_throw(vm, py_fe(vm)->type_error_class, "vec4() arguments must be numeric");
-    }
-    float x = (float)value_to_double(args[0]);
-    float y = (float)value_to_double(args[1]);
-    float z = (float)value_to_double(args[2]);
-    float w = (float)value_to_double(args[3]);
-    return make_obj((Object*)new_vector(x, y, z, w));
-}
-
-static Value bn_mat4(VM *vm, Value *args, int n) {
-    (void)args;
-    if (n != 0) {
-        luna_throw(vm, py_fe(vm)->argument_error_class, "mat4() takes no arguments");
-    }
-    return make_obj((Object*)new_matrix());
 }
 
 /* ============================================================ */
@@ -667,138 +646,10 @@ static Value buffer_method_read_long(VM *vm, Value *args, int nargs) {
     return result;
 }
 
-/* ============================================================ */
-/* Vector method native functions — args[0] = vector (self)    */
-/* ============================================================ */
-
-static Value vector_method_add(VM *vm, Value *args, int nargs) {
-    (void)vm;
-    if (nargs < 2 || !IS_VECTOR(args[0]) || !IS_VECTOR(args[1])) return make_null();
-    ObjVector *vec = (ObjVector*)AS_OBJ(args[0]);
-    ObjVector *other = (ObjVector*)AS_OBJ(args[1]);
-    float s = 1.0f;
-    if (nargs >= 3) {
-        if (!IS_NUMBER(args[2])) {
-            luna_throw(vm, py_fe(vm)->type_error_class, "vector.add() scalar must be numeric");
-            return make_null();
-        }
-        s = (float)value_to_double(args[2]);
-    }
-    vec->data[0] += other->data[0] * s;
-    vec->data[1] += other->data[1] * s;
-    vec->data[2] += other->data[2] * s;
-    vec->data[3] += other->data[3] * s;
-    return args[0];
-}
-static Value vector_method_sub(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_VECTOR(args[0]) || !IS_VECTOR(args[1])) return make_null();
-    ObjVector *vec = (ObjVector*)AS_OBJ(args[0]);
-    ObjVector *other = (ObjVector*)AS_OBJ(args[1]);
-    vec->data[0] -= other->data[0];
-    vec->data[1] -= other->data[1];
-    vec->data[2] -= other->data[2];
-    vec->data[3] -= other->data[3];
-    return args[0];
-}
-static Value vector_method_mul(VM *vm, Value *args, int nargs) {
-    (void)vm;
-    if (nargs < 2 || !IS_VECTOR(args[0]) || !IS_NUMBER(args[1])) return make_null();
-    ObjVector *vec = (ObjVector*)AS_OBJ(args[0]);
-    float s = (float)value_to_double(args[1]);
-    vec->data[0] *= s;
-    vec->data[1] *= s;
-    vec->data[2] *= s;
-    vec->data[3] *= s;
-    return args[0];
-}
-static Value vector_method_copy(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_VECTOR(args[0])) return make_null();
-    ObjVector *vec = (ObjVector*)AS_OBJ(args[0]);
-    return make_obj((Object*)new_vector(vec->data[0], vec->data[1], vec->data[2], vec->data[3]));
-}
-
-/* ============================================================ */
-/* Matrix method native functions — args[0] = matrix (self)    */
-/* ============================================================ */
-
-static Value matrix_method_translate(VM *vm, Value *args, int nargs) {
-    (void)vm;
-    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_VECTOR(args[1])) return make_null();
-    ObjVector *v = (ObjVector*)AS_OBJ(args[1]);
-    mat4_mul_translate(((ObjMatrix*)AS_OBJ(args[0]))->m, v->data[0], v->data[1], v->data[2]);
-    return args[0];
-}
-static Value matrix_method_rotate_x(VM *vm, Value *args, int nargs) {
-    (void)vm;
-    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_NUMBER(args[1])) return make_null();
-    mat4_mul_rotate_x(((ObjMatrix*)AS_OBJ(args[0]))->m, (float)(value_to_double(args[1]) * 3.141592653589793 / 180.0));
-    return args[0];
-}
-static Value matrix_method_rotate_y(VM *vm, Value *args, int nargs) {
-    (void)vm;
-    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_NUMBER(args[1])) return make_null();
-    mat4_mul_rotate_y(((ObjMatrix*)AS_OBJ(args[0]))->m, (float)(value_to_double(args[1]) * 3.141592653589793 / 180.0));
-    return args[0];
-}
-static Value matrix_method_rotate_z(VM *vm, Value *args, int nargs) {
-    (void)vm;
-    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_NUMBER(args[1])) return make_null();
-    mat4_mul_rotate_z(((ObjMatrix*)AS_OBJ(args[0]))->m, (float)(value_to_double(args[1]) * 3.141592653589793 / 180.0));
-    return args[0];
-}
-static Value matrix_method_scale(VM *vm, Value *args, int nargs) {
-    (void)vm;
-    if (nargs < 2 || !IS_MATRIX(args[0]) || !IS_VECTOR(args[1])) return make_null();
-    ObjVector *v = (ObjVector*)AS_OBJ(args[1]);
-    mat4_mul_scale(((ObjMatrix*)AS_OBJ(args[0]))->m, v->data[0], v->data[1], v->data[2]);
-    return args[0];
-}
-static Value matrix_method_transpose(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_MATRIX(args[0])) return make_null();
-    ObjMatrix *mat = (ObjMatrix*)AS_OBJ(args[0]);
-    mat4_transpose(mat->m, mat->m);
-    return args[0];
-}
-static Value matrix_method_transposed(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_MATRIX(args[0])) return make_null();
-    ObjMatrix *out = new_matrix();
-    mat4_transpose(((ObjMatrix*)AS_OBJ(args[0]))->m, out->m);
-    return make_obj((Object*)out);
-}
-static Value matrix_method_invert(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_MATRIX(args[0])) return make_null();
-    ObjMatrix *mat = (ObjMatrix*)AS_OBJ(args[0]);
-    ObjMatrix *tmp = new_matrix();
-    if (!mat4_invert(mat->m, tmp->m)) {
-        luna_throw(vm, py_fe(vm)->value_error_class, "mat4.invert(): matrix is singular");
-        return make_null();
-    }
-    for (int i = 0; i < 16; i++) mat->m[i] = tmp->m[i];
-    return args[0];
-}
-static Value matrix_method_inverted(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_MATRIX(args[0])) return make_null();
-    ObjMatrix *out = new_matrix();
-    if (!mat4_invert(((ObjMatrix*)AS_OBJ(args[0]))->m, out->m)) {
-        luna_throw(vm, py_fe(vm)->value_error_class, "mat4.inverted(): matrix is singular");
-        return make_null();
-    }
-    return make_obj((Object*)out);
-}
-
 void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);
     vm_define_native(vm, "input", bn_input);
     vm_define_native(vm, "range", bn_range);
-    vm_define_native(vm, "str",   bn_str);
-    vm_define_native(vm, "int",   bn_int);
-    vm_define_native(vm, "float", bn_float);
     vm_define_native(vm, "len",   bn_len);
     vm_define_native(vm, "type",  bn_type);
     vm_define_native(vm, "clock", bn_clock);
@@ -809,10 +660,8 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "abs",   bn_abs);
     vm_define_native(vm, "ord",   bn_ord);
     vm_define_native(vm, "chr",   bn_chr);
-    vm_define_native(vm, "vec2",  bn_vec2);
-    vm_define_native(vm, "vec3",  bn_vec3);
-    vm_define_native(vm, "vec4",  bn_vec4);
-    vm_define_native(vm, "mat4",  bn_mat4);
+    vm_define_native(vm, "_build_tuple", bn_build_tuple);
+    vm_define_native(vm, "isinstance", bn_isinstance);
 }
 
 /* ============================================================ */
@@ -820,6 +669,11 @@ void vm_register_builtins(VM *vm) {
 /* ============================================================ */
 
 void vm_register_canonical_classes(VM *vm) {
+    /* Python-style builtin type classes (exposed as globals).
+     * int/float are created and registered by py_register_number_methods. */
+    py_fe(vm)->tuple_class = new_class("tuple", NULL);
+    vm_set_global(vm, "tuple", make_obj((Object*)py_fe(vm)->tuple_class), false);
+
     /* String canonical class */
     py_fe(vm)->string_class = new_class("String", NULL);
     class_add_native_method(py_fe(vm)->string_class, "to_buffer", string_method_to_buffer);
@@ -827,6 +681,7 @@ void vm_register_canonical_classes(VM *vm) {
     class_add_native_method(py_fe(vm)->string_class, "length", string_method_length);
     class_add_native_method(py_fe(vm)->string_class, "size", string_method_size);
     class_add_native_method(py_fe(vm)->string_class, "reverse", string_method_reverse);
+    vm_set_global(vm, "str", make_obj((Object*)py_fe(vm)->string_class), false);
 
     /* List canonical class */
     py_fe(vm)->list_class = new_class("List", NULL);
@@ -838,6 +693,7 @@ void vm_register_canonical_classes(VM *vm) {
     class_add_native_method(py_fe(vm)->list_class, "clear", list_method_clear);
     class_add_native_method(py_fe(vm)->list_class, "length", list_method_length);
     class_add_native_method(py_fe(vm)->list_class, "size", list_method_length);
+    vm_set_global(vm, "list", make_obj((Object*)py_fe(vm)->list_class), false);
 
     /* Dict canonical class */
     py_fe(vm)->dict_class = new_class("Dict", NULL);
@@ -847,6 +703,7 @@ void vm_register_canonical_classes(VM *vm) {
     class_add_native_method(py_fe(vm)->dict_class, "values", dict_method_values);
     class_add_native_method(py_fe(vm)->dict_class, "clear", dict_method_clear);
     class_add_native_method(py_fe(vm)->dict_class, "length", dict_method_length);
+    vm_set_global(vm, "dict", make_obj((Object*)py_fe(vm)->dict_class), false);
 
     /* Enum canonical class */
     py_fe(vm)->enum_class = new_class("Enum", NULL);
@@ -863,24 +720,6 @@ void vm_register_canonical_classes(VM *vm) {
     class_add_native_method(py_fe(vm)->buffer_class, "read_int", buffer_method_read_int);
     class_add_native_method(py_fe(vm)->buffer_class, "read_long", buffer_method_read_long);
 
-    /* Vector canonical class */
-    py_fe(vm)->vector_class = new_class("Vector", NULL);
-    class_add_native_method(py_fe(vm)->vector_class, "add", vector_method_add);
-    class_add_native_method(py_fe(vm)->vector_class, "sub", vector_method_sub);
-    class_add_native_method(py_fe(vm)->vector_class, "mul", vector_method_mul);
-    class_add_native_method(py_fe(vm)->vector_class, "copy", vector_method_copy);
-
-    /* Matrix canonical class */
-    py_fe(vm)->matrix_class = new_class("Matrix", NULL);
-    class_add_native_method(py_fe(vm)->matrix_class, "translate", matrix_method_translate);
-    class_add_native_method(py_fe(vm)->matrix_class, "rotate_x", matrix_method_rotate_x);
-    class_add_native_method(py_fe(vm)->matrix_class, "rotate_y", matrix_method_rotate_y);
-    class_add_native_method(py_fe(vm)->matrix_class, "rotate_z", matrix_method_rotate_z);
-    class_add_native_method(py_fe(vm)->matrix_class, "scale", matrix_method_scale);
-    class_add_native_method(py_fe(vm)->matrix_class, "transpose", matrix_method_transpose);
-    class_add_native_method(py_fe(vm)->matrix_class, "transposed", matrix_method_transposed);
-    class_add_native_method(py_fe(vm)->matrix_class, "invert", matrix_method_invert);
-    class_add_native_method(py_fe(vm)->matrix_class, "inverted", matrix_method_inverted);
     py_fe(vm)->function_class = new_class("Function", NULL);
     py_fe(vm)->closure_class = new_class("Closure", NULL);
     py_fe(vm)->bound_method_class = new_class("BoundMethod", NULL);

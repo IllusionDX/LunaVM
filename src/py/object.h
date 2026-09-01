@@ -21,6 +21,7 @@ struct APIState; /* embeddable C API state (see api.h) */
 typedef enum {
     OBJ_STRING,
     OBJ_LIST,
+    OBJ_TUPLE,
     OBJ_DICT,
     OBJ_INSTANCE,
     OBJ_FUNCTION,  /* native flag lives in is_native field, not a separate type */
@@ -33,8 +34,6 @@ typedef enum {
     OBJ_BUFFER = 12,
     OBJ_BIGINT = 13,  /* arbitrary-precision int (PyLong-style, base 2^30) */
     OBJ_USERDATA,
-    OBJ_VECTOR = 15,
-    OBJ_MATRIX = 16
 } ObjType;
 
 /* Object and Type are defined in the core value model (src/value.h).
@@ -46,6 +45,7 @@ typedef enum {
 #define IS_OBJ_KIND(v, t) (IS_OBJ(v) && AS_OBJ(v)->type == py_types[(t)])
 #define IS_STRING(v)   IS_OBJ_KIND(v, OBJ_STRING)
 #define IS_LIST(v)     IS_OBJ_KIND(v, OBJ_LIST)
+#define IS_TUPLE(v)    IS_OBJ_KIND(v, OBJ_TUPLE)
 #define IS_DICT(v)     IS_OBJ_KIND(v, OBJ_DICT)
 #define IS_INSTANCE(v) IS_OBJ_KIND(v, OBJ_INSTANCE)
 #define IS_FUNCTION(v) IS_OBJ_KIND(v, OBJ_FUNCTION)
@@ -56,8 +56,6 @@ typedef enum {
 #define IS_MODULE(v)       IS_OBJ_KIND(v, OBJ_MODULE)
 #define IS_BUFFER(v)       IS_OBJ_KIND(v, OBJ_BUFFER)
 #define IS_USERDATA(v)     IS_OBJ_KIND(v, OBJ_USERDATA)
-#define IS_VECTOR(v)       IS_OBJ_KIND(v, OBJ_VECTOR)
-#define IS_MATRIX(v)       IS_OBJ_KIND(v, OBJ_MATRIX)
 #define IS_BIGINT(v)   IS_OBJ_KIND(v, OBJ_BIGINT)
 
 /* MOP typedefs and the `Type` vtable struct are defined in the core value
@@ -93,6 +91,14 @@ typedef struct {
     int     capacity;
     Value   inline_items[4];
 } ObjList;
+
+/* Tuple — immutable, fixed-size, contiguous array (Single Allocation). */
+typedef struct {
+    Object  obj;
+    int     count;
+    uint32_t hash;
+    Value   items[];
+} ObjTuple;
 
 typedef struct {
     uint32_t hash;
@@ -156,16 +162,6 @@ typedef struct ObjUserdata {
     UserdataFinalizer finalizer;
     bool             finalized;
 } ObjUserdata;
-
-typedef struct ObjVector {
-    Object obj;
-    float  data[4];
-} ObjVector;
-
-typedef struct ObjMatrix {
-    Object obj;
-    float  m[16];
-} ObjMatrix;
 
 typedef struct ObjInstance {
     Object              obj;
@@ -233,6 +229,7 @@ typedef struct {
 /* Object constructors / operations (defined in value.c, temporarily). */
 ObjString   *new_string(const char *chars, int length);
 ObjList     *new_list(int capacity);
+ObjTuple    *new_tuple(int count);
 ObjDict     *new_dict(void);
 ObjInstance *new_instance(struct ObjClass *klass, int field_capacity);
 ObjClass    *new_class(const char *name, const char *base_name);
@@ -247,8 +244,6 @@ ObjClosure  *new_closure(ObjFunction *function);
 ObjEnum     *new_enum(const char *name, int count);
 ObjBoundMethod *new_bound_method(Value self, struct ObjFunction *fn);
 ObjModule     *new_module(const char *name);
-ObjVector      *new_vector(float x, float y, float z, float w);
-ObjMatrix      *new_matrix(void);
 Value          buffer_read_byte(const ObjBuffer *buf, size_t offset);
 Value          buffer_read_short(const ObjBuffer *buf, size_t offset);
 Value          buffer_read_int(const ObjBuffer *buf, size_t offset);

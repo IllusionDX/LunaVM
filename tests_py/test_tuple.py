@@ -1,0 +1,13 @@
+t = (1, 2, 3)
+print(t)
+print(len(t))
+print(t[0], t[1], t[-1])
+a, b = (10, 20)
+print(a, b)
+e = ()
+print(len(e))
+x = (1)
+print(x)
+d = {("key", 1): "value"}
+print(len(d))
+print(t[1:3])

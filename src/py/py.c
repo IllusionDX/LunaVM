@@ -35,7 +35,7 @@ void py_mark_roots(VM *vm) {
         fe->value_error_class, fe->runtime_error_class, fe->argument_error_class,
         fe->overflow_error_class,
         fe->string_class, fe->list_class, fe->dict_class, fe->enum_class,
-        fe->buffer_class, fe->vector_class, fe->matrix_class, fe->function_class,
+        fe->buffer_class, fe->function_class,
         fe->closure_class, fe->bound_method_class, fe->class_class,
         fe->module_class, fe->userdata_class, fe->int_class, fe->float_class
     };
@@ -387,7 +387,7 @@ static bool py_slice_bound(VM *vm, Value *v) {
 static bool py_slice(VM *vm, Value object, Value start_val, Value stop_val,
                        Value step_val, bool safe, Value *out) {
     (void)vm; (void)safe;
-    if (!IS_LIST(object) && !IS_STRING(object)) {
+    if (!IS_LIST(object) && !IS_STRING(object) && !IS_TUPLE(object)) {
         *out = make_null();
         return true;
     }
@@ -423,6 +423,40 @@ static bool py_slice(VM *vm, Value object, Value start_val, Value stop_val,
             for (int i = start; i > stop; i += step) {
                 Value v = lst->items ? lst->items[i] : lst->inline_items[i];
                 list_add(result, v);
+            }
+        }
+        *out = make_obj((Object *)result);
+        return true;
+    }
+    if (IS_TUPLE(object)) {
+        ObjTuple *t = (ObjTuple *)AS_OBJ(object);
+        int len = t->count;
+        int start, stop;
+        if (IS_NIL(start_val)) start = (step < 0) ? len - 1 : 0;
+        else if (IS_INT(start_val)) {
+            start = AS_INT(start_val);
+            if (start < 0) start += len;
+            if (start < 0) start = (step < 0) ? -1 : 0;
+            if (start > len) start = len;
+        } else start = (step < 0) ? len - 1 : 0;
+        if (IS_NIL(stop_val)) stop = (step < 0) ? -1 : len;
+        else if (IS_INT(stop_val)) {
+            stop = AS_INT(stop_val);
+            if (stop < 0) stop += len;
+            if (stop < 0) stop = -1;
+            if (stop > len) stop = len;
+        } else stop = (step < 0) ? -1 : len;
+        int cap = (step > 0) ? (stop > start ? (stop - start + step - 1) / step : 0)
+                             : (start > stop ? (start - stop - step - 1) / (-step) : 0);
+        ObjTuple *result = new_tuple(cap);
+        int ri = 0;
+        if (step > 0) {
+            for (int i = start; i < stop; i += step) {
+                result->items[ri++] = t->items[i];
+            }
+        } else if (step < 0) {
+            for (int i = start; i > stop; i += step) {
+                result->items[ri++] = t->items[i];
             }
         }
         *out = make_obj((Object *)result);
@@ -521,7 +555,7 @@ static bool py_iterate(VM *vm, Value object, Value *iter, Value *state) {
             }
         }
         *iter = make_obj((Object *)keys);
-    } else if (IS_LIST(object) || IS_STRING(object)) {
+    } else if (IS_LIST(object) || IS_STRING(object) || IS_TUPLE(object)) {
         *iter = object;
     } else if (IS_OBJ(object) && AS_OBJ(object)) {
         vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, "object is not iterable");
@@ -542,6 +576,13 @@ static bool py_iter_next(VM *vm, Value iter, Value *state, Value *elem) {
         ObjList *lst = (ObjList *)AS_OBJ(iter);
         if (idx >= lst->count) return false;
         *elem = lst->items ? lst->items[idx] : lst->inline_items[idx];
+        *state = make_int(idx + 1);
+        return true;
+    }
+    if (IS_TUPLE(iter)) {
+        ObjTuple *t = (ObjTuple *)AS_OBJ(iter);
+        if (idx >= t->count) return false;
+        *elem = t->items[idx];
         *state = make_int(idx + 1);
         return true;
     }
@@ -950,21 +991,6 @@ static bool py_member_get(VM *vm, Value object, Value name, bool safe, Value *ou
             snprintf(buf, sizeof(buf), "class '%s' has no field '%s'", cls->name, chars);
             return member_miss(vm, safe, py_fe(vm)->attribute_error_class, buf, out);
         }
-        case OBJ_VECTOR: {
-            ObjVector *vec = (ObjVector *)AS_OBJ(object);
-            if (((ObjString *)AS_OBJ(name))->length == 1) {
-                float v = 0.0f;
-                char c = chars[0];
-                if (c == 'x') v = vec->data[0];
-                else if (c == 'y') v = vec->data[1];
-                else if (c == 'z') v = vec->data[2];
-                else if (c == 'w') v = vec->data[3];
-                else return member_miss(vm, safe, py_fe(vm)->attribute_error_class, "vector has no field", out);
-                *out = make_double((double)v);
-                return true;
-            }
-            return member_miss(vm, safe, py_fe(vm)->attribute_error_class, "vector has no field", out);
-        }
         default:
             return member_miss(vm, safe, py_fe(vm)->attribute_error_class, "value has no fields", out);
     }
@@ -988,24 +1014,6 @@ static bool py_member_set(VM *vm, Value object, Value name, Value value) {
         if (fi >= 0) { inst->fields[fi] = value; return true; }
         instance_set_field(inst, chars, value);
         return true;
-    }
-    if (IS_VECTOR(object)) {
-        ObjVector *vec = (ObjVector *)AS_OBJ(object);
-        float v = (float)value_to_double(value);
-        if (((ObjString *)AS_OBJ(name))->length == 1) {
-            char c = chars[0];
-            if (c == 'x') vec->data[0] = v;
-            else if (c == 'y') vec->data[1] = v;
-            else if (c == 'z') vec->data[2] = v;
-            else if (c == 'w') vec->data[3] = v;
-            else {
-                vm->last_exception = make_exception_instance(vm, py_fe(vm)->attribute_error_class, "vector has no field");
-                return false;
-            }
-            return true;
-        }
-        vm->last_exception = make_exception_instance(vm, py_fe(vm)->attribute_error_class, "vector has no field");
-        return false;
     }
     vm->last_exception = make_exception_instance(vm, py_fe(vm)->attribute_error_class, "cannot set field on this type");
     return false;
@@ -1313,8 +1321,6 @@ static int py_type_of(Value v) {
         case OBJ_DICT:     return LUNA_TTABLE;
         case OBJ_LIST:     return LUNA_TTABLE;
         case OBJ_USERDATA: return LUNA_TUSERDATA;
-        case OBJ_VECTOR:   return LUNA_TVECTOR;
-        case OBJ_MATRIX:   return LUNA_TMATRIX;
         case OBJ_BUFFER:   return LUNA_TBUFFER;
         case OBJ_BIGINT:   return LUNA_TINTEGER;
         default:           return LUNA_TNIL;

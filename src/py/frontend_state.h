@@ -24,11 +24,10 @@ typedef struct PyFrontend {
     /* Canonical classes for built-in types */
     ObjClass *string_class;
     ObjClass *list_class;
+    ObjClass *tuple_class;
     ObjClass *dict_class;
     ObjClass *enum_class;
     ObjClass *buffer_class;
-    ObjClass *vector_class;
-    ObjClass *matrix_class;
     ObjClass *function_class;
     ObjClass *closure_class;
     ObjClass *bound_method_class;
@@ -44,5 +43,7 @@ typedef struct PyFrontend {
 static inline PyFrontend *py_fe(VM *vm) {
     return (PyFrontend *)vm->frontend_data;
 }
+
+void vm_set_global(VM *vm, const char *name, Value value, bool is_const);
 
 #endif /* LUNA_PY_FRONTEND_STATE_H */
