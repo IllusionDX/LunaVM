@@ -36,7 +36,6 @@ typedef enum {
     TOK_ELIF,
     TOK_IS,
     TOK_RAISE,
-    TOK_ENUM,
     TOK_SWITCH,
     TOK_CASE,
     TOK_DEFAULT,

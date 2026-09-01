@@ -1,5 +1,5 @@
 /* Declaration parsing for Luna interpreter.
- * Functions for parsing function, class, enum, and import declarations.
+ * Functions for parsing function, class, and import declarations.
  */
 
 #include <stdio.h>
@@ -128,7 +128,11 @@ static Decl *parse_class_declaration(Parser *parser) {
             if (match(parser, TOK_VAR)) advance(parser);
             Token *fname = expect(parser, TOK_IDENTIFIER, "Expected field name");
             fields[field_count].name = strdup(fname ? fname->value : "");
-            if (match(parser, TOK_COLON)) {
+            fields[field_count].value = NULL;
+            if (match(parser, TOK_ASSIGN)) {
+                advance(parser);
+                fields[field_count].value = parse_expression(parser);
+            } else if (match(parser, TOK_COLON)) {
                 advance(parser);
                 skip_type_hint(parser);
             }
@@ -156,49 +160,6 @@ static Decl *parse_class_declaration(Parser *parser) {
     decl->data.class_decl.field_count = field_count;
     decl->data.class_decl.methods = methods;
     decl->data.class_decl.method_count = method_count;
-    return decl;
-}
-
-/* ============== Enum declaration ============== */
-
-static Decl *parse_enum_declaration(Parser *parser) {
-    expect(parser, TOK_ENUM, "Expected 'enum'");
-    Token *name = expect(parser, TOK_IDENTIFIER, "Expected enum name");
-    expect(parser, TOK_COLON, "Expected ':'");
-    expect_newline(parser);
-    expect(parser, TOK_INDENT, "Expected indentation in enum");
-
-    int capacity = 4;
-    EnumVariant *variants = (EnumVariant *)malloc(capacity * sizeof(EnumVariant));
-    int variant_count = 0;
-    int auto_value = 0;
-
-    while (!match2(parser, TOK_DEDENT, TOK_EOF)) {
-        if (match_eol(parser)) { advance(parser); continue; }
-        if (variant_count >= capacity) { capacity *= 2; variants = realloc(variants, capacity * sizeof(EnumVariant)); }
-
-        Token *vname = expect(parser, TOK_IDENTIFIER, "Expected variant name");
-        variants[variant_count].name = strdup(vname ? vname->value : "");
-
-        if (match(parser, TOK_ASSIGN)) {
-            advance(parser);
-            Token *val = expect(parser, TOK_INTEGER_LITERAL, "Expected integer value");
-            variants[variant_count].value = val ? atoi(val->value) : 0;
-            auto_value = variants[variant_count].value + 1;
-            variants[variant_count].has_value = true;
-        } else {
-            variants[variant_count].value = auto_value++;
-            variants[variant_count].has_value = false;
-        }
-        variant_count++;
-        expect_newline(parser);
-    }
-    expect(parser, TOK_DEDENT, "Expected dedent after enum");
-
-    Decl *decl = make_decl(DECL_ENUM, name ? name->line : 0);
-    decl->data.enum_decl.name = strdup(name ? name->value : "");
-    decl->data.enum_decl.variants = variants;
-    decl->data.enum_decl.variant_count = variant_count;
     return decl;
 }
 
@@ -251,13 +212,12 @@ static Decl *parse_import_declaration(Parser *parser) {
 bool is_declaration_start(Parser *parser) {
     TokenType t = peek(parser)->type;
     return t == TOK_DEF || t == TOK_CLASS ||
-           t == TOK_IMPORT || t == TOK_FROM || t == TOK_ENUM;
+           t == TOK_IMPORT || t == TOK_FROM;
 }
 
 Decl *parse_declaration(Parser *parser) {
     if (match(parser, TOK_DEF)) return parse_function_declaration(parser);
     if (match(parser, TOK_CLASS)) return parse_class_declaration(parser);
-    if (match(parser, TOK_ENUM)) return parse_enum_declaration(parser);
     if (match(parser, TOK_IMPORT) || match(parser, TOK_FROM))
         return parse_import_declaration(parser);
     return NULL;

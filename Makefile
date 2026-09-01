@@ -7,7 +7,7 @@
 #   make FRONTENDS=py     # build only the Python-subset CLI
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto -Isrc -Isrc/luna -Isrc/luna/stdlib
+CFLAGS = -Wall -Wextra -std=c99 -O3 -DNDEBUG -flto -Isrc -Isrc/luna -Isrc/luna/stdlib -Isrc/py -Isrc/common/regex
 LDFLAGS = -lm -flto
 
 # Platform detection
@@ -29,7 +29,8 @@ else
 endif
 
 # Language-agnostic core: bytecode VM + embeddable C API
-CORE_SOURCES = src/value.c src/chunk.c src/vm.c src/api.c
+CORE_SOURCES = src/value.c src/chunk.c src/vm.c src/api.c \
+    src/common/regex/regex_compile.c src/common/regex/regex_match.c
 CORE_OBJECTS = $(CORE_SOURCES:.c=.o)
 
 # Unified CLI driver (language chosen at link time via g_frontend)
@@ -53,10 +54,12 @@ PY_SOURCES = src/py/bigint.c src/py/object.c src/py/py.c src/py/range.c src/py/s
     src/py/lexer.c src/py/parser.c src/py/compiler.c \
     src/py/parse_expr.c src/py/parse_stmt.c src/py/parse_decl.c \
     src/py/fstring.c src/py/module.c src/py/ast_free.c \
-    src/py/stdlib/stdlib_math.c src/py/stdlib/stdlib_random.c src/py/stdlib/stdlib_noise.c \
+    src/py/stdlib/stdlib_math.c src/py/stdlib/stdlib_random.c \
     src/py/stdlib/stdlib_io.c src/py/stdlib/stdlib_time.c src/py/stdlib/stdlib_os.c \
-    src/py/stdlib/stdlib_buffer.c src/py/stdlib/stdlib_string.c \
-    src/py/stdlib/stdlib_net.c src/py/stdlib/stdlib_json.c \
+    src/py/stdlib/stdlib_string.c \
+    src/py/stdlib/stdlib_socket.c src/py/stdlib/stdlib_json.c \
+    src/py/stdlib/stdlib_enum.c \
+    src/py/stdlib/stdlib_re.c \
     src/py/stdlib/vm_builtins.c
 
 PY_OBJECTS = $(PY_SOURCES:.c=.o)

@@ -885,15 +885,6 @@ Type py_upvalue_type = {
     .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
-Type py_enum_type = {
-    .name = "enum", .kind = OBJ_ENUM,
-    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
-    .neg = py_default_neg, .cmp = py_default_cmp,
-    .getitem = py_default_getitem, .setitem = py_default_setitem,
-    .getattr = py_default_getattr, .setattr = py_default_setattr,
-    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
-};
-
 Type py_class_type = {
     .name = "class", .kind = OBJ_CLASS,
     .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
@@ -982,7 +973,6 @@ Type *py_types[] = {
     [OBJ_FUNCTION]     = &py_function_type,
     [OBJ_UPVALUE]      = &py_upvalue_type,
     [OBJ_CLOSURE]      = &py_closure_type,
-    [OBJ_ENUM]         = &py_enum_type,
     [OBJ_CLASS]        = &py_class_type,
     [OBJ_BOUND_METHOD] = &py_bound_method_type,
     [OBJ_MODULE]       = &py_module_type,
@@ -1220,23 +1210,6 @@ static void py_closure_mark(struct VM *vm, Object *obj) {
     }
 }
 
-/* enum */
-static void py_enum_free(Object *obj) {
-    ObjEnum *e = (ObjEnum*)obj;
-    free(e->name);
-    for (int i = 0; i < e->count; i++) free(e->names[i]);
-    free(e->names);
-    free(e->values);
-    free(e);
-}
-static char* py_enum_to_cstr(Value self) {
-    ObjEnum *e = (ObjEnum*)AS_OBJ(self);
-    char *out = malloc(64);
-    int n = snprintf(out, 64, "<enum %s (%d variants)>", e->name, e->count);
-    if (n >= 64) { out = realloc(out, (size_t)n + 1); snprintf(out, (size_t)n + 1, "<enum %s (%d variants)>", e->name, e->count); }
-    char *r = strdup(out); free(out); return r;
-}
-
 /* class */
 static void py_class_free(Object *obj) {
     ObjClass *cls = (ObjClass*)obj;
@@ -1346,8 +1319,6 @@ void py_wire_lifecycle(void) {
                 t->mark = py_upvalue_mark; break;
             case OBJ_CLOSURE:
                 t->free = py_closure_free; t->mark = py_closure_mark; break;
-            case OBJ_ENUM:
-                t->free = py_enum_free; t->to_cstr = py_enum_to_cstr; break;
             case OBJ_CLASS:
                 t->free = py_class_free; t->mark = py_class_mark; break;
             case OBJ_BOUND_METHOD:
@@ -1721,17 +1692,6 @@ ObjBoundMethod *new_bound_method(Value self, ObjFunction *fn) {
     bm->self = self;
     bm->fn = fn;
     return bm;
-}
-
-ObjEnum *new_enum(const char *name, int count) {
-    ObjEnum *e = malloc(sizeof(ObjEnum));
-    if (!e) { fprintf(stderr, "OOM\n"); exit(1); }
-    py_init_object((Object*)e, OBJ_ENUM, sizeof(ObjEnum));
-    e->name   = strdup(name);
-    e->count  = count;
-    e->names  = count > 0 ? calloc(count, sizeof(char*)) : NULL;
-    e->values = count > 0 ? calloc(count, sizeof(int64_t)) : NULL;
-    return e;
 }
 
 ObjModule *new_module(const char *name) {
@@ -2323,7 +2283,6 @@ struct ObjClass *get_class(VM *vm, Value val) {
         case OBJ_LIST:         return py_fe(vm)->list_class;
         case OBJ_TUPLE:        return py_fe(vm)->tuple_class;
         case OBJ_DICT:         return py_fe(vm)->dict_class;
-        case OBJ_ENUM:         return py_fe(vm)->enum_class;
         case OBJ_BUFFER:       return py_fe(vm)->buffer_class;
         case OBJ_FUNCTION:     return py_fe(vm)->function_class;
         case OBJ_CLOSURE:      return py_fe(vm)->closure_class;

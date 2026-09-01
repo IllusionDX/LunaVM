@@ -26,7 +26,6 @@ typedef struct PyFrontend {
     ObjClass *list_class;
     ObjClass *tuple_class;
     ObjClass *dict_class;
-    ObjClass *enum_class;
     ObjClass *buffer_class;
     ObjClass *function_class;
     ObjClass *closure_class;

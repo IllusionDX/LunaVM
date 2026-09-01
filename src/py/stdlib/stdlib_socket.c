@@ -28,7 +28,7 @@
 #include <stdio.h>
 #include <errno.h>
 
-#include "stdlib_net.h"
+#include "stdlib_socket.h"
 #include "value.h"
 #include "py/object.h"
 #include "py/frontend_state.h"

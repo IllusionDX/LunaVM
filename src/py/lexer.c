@@ -651,7 +651,6 @@ const char *token_type_name(TokenType type) {
         case TOK_PASS: return "PASS";
         case TOK_ELSE: return "ELSE";
         case TOK_ELIF: return "ELIF";
-        case TOK_ENUM: return "ENUM";
         case TOK_SWITCH: return "SWITCH";
         case TOK_CASE: return "CASE";
         case TOK_DEFAULT: return "DEFAULT";

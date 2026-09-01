@@ -27,7 +27,6 @@ typedef enum {
     OBJ_FUNCTION,  /* native flag lives in is_native field, not a separate type */
     OBJ_UPVALUE,
     OBJ_CLOSURE,
-    OBJ_ENUM,
     OBJ_CLASS,
     OBJ_BOUND_METHOD,
     OBJ_MODULE,
@@ -52,7 +51,6 @@ typedef enum {
 #define IS_INSTANCE(v) IS_OBJ_KIND(v, OBJ_INSTANCE)
 #define IS_FUNCTION(v) IS_OBJ_KIND(v, OBJ_FUNCTION)
 #define IS_CLOSURE(v)  IS_OBJ_KIND(v, OBJ_CLOSURE)
-#define IS_ENUM(v)     IS_OBJ_KIND(v, OBJ_ENUM)
 #define IS_CLASS(v)    IS_OBJ_KIND(v, OBJ_CLASS)
 #define IS_BOUND_METHOD(v) IS_OBJ_KIND(v, OBJ_BOUND_METHOD)
 #define IS_MODULE(v)       IS_OBJ_KIND(v, OBJ_MODULE)
@@ -238,14 +236,6 @@ typedef struct {
     int           upvalue_count;
 } ObjClosure;
 
-typedef struct {
-    Object   obj;
-    char    *name;
-    char   **names;
-    int64_t *values;
-    int      count;
-} ObjEnum;
-
 /* Object constructors / operations (defined in value.c, temporarily). */
 ObjString   *new_string(const char *chars, int length);
 ObjList     *new_list(int capacity);
@@ -259,7 +249,6 @@ Value make_exception_instance(struct VM *vm, void *cls, const char *message);
 
 ObjUpvalue  *new_upvalue(int stack_index);
 ObjClosure  *new_closure(ObjFunction *function);
-ObjEnum     *new_enum(const char *name, int count);
 ObjBoundMethod *new_bound_method(Value self, struct ObjFunction *fn);
 ObjModule     *new_module(const char *name);
 Value          buffer_read_byte(const ObjBuffer *buf, size_t offset);

@@ -295,7 +295,6 @@ static Value bn_type(VM *vm, Value *args, int n) {
                 }
                 case OBJ_FUNCTION:   t = "function";   break;
                 case OBJ_CLOSURE:    t = "closure";    break;
-                case OBJ_ENUM:       t = "enum";       break;
                 case OBJ_CLASS:      t = "class";      break;
                 case OBJ_RANGE:      t = "range";      break;
                 default:             t = "object";     break;
@@ -500,30 +499,6 @@ static Value list_method_length(VM *vm, Value *args, int nargs) {
 }
 
 /* ============================================================ */
-/* Enum method native functions — args[0] = enum (self)        */
-/* ============================================================ */
-
-static Value enum_method_values(VM *vm, Value *args, int nargs) {
-    (void)vm; if (nargs < 1 || !IS_ENUM(args[0])) return make_null();
-    ObjEnum *e = (ObjEnum*)AS_OBJ(args[0]);
-    ObjList *lst = new_list(e->count);
-    for (int i = 0; i < e->count; i++) list_add(lst, make_int(e->values[i]));
-    return make_obj((Object*)lst);
-}
-static Value enum_method_keys(VM *vm, Value *args, int nargs) {
-    (void)vm; if (nargs < 1 || !IS_ENUM(args[0])) return make_null();
-    ObjEnum *e = (ObjEnum*)AS_OBJ(args[0]);
-    ObjList *lst = new_list(e->count);
-    for (int i = 0; i < e->count; i++)
-        list_add(lst, make_obj((Object*)new_string(e->names[i], (int)strlen(e->names[i]))));
-    return make_obj((Object*)lst);
-}
-static Value enum_method_count(VM *vm, Value *args, int nargs) {
-    (void)vm; if (nargs < 1 || !IS_ENUM(args[0])) return make_null();
-    return make_int(((ObjEnum*)AS_OBJ(args[0]))->count);
-}
-
-/* ============================================================ */
 /* String method native functions — args[0] = string (self)    */
 /* ============================================================ */
 
@@ -593,43 +568,6 @@ static Value string_method_reverse(VM *vm, Value *args, int nargs) {
     return make_obj((Object*)result);
 }
 
-/* ============================================================ */
-/* Buffer method native functions — args[0] = buffer (self)    */
-/* ============================================================ */
-
-static Value buffer_method_read_byte(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_BUFFER(args[0])) return make_null();
-    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(args[0]);
-    Value result = buffer_read_byte(buf, buf->cursor);
-    if (!IS_NIL(result)) buf->cursor += 1;
-    return result;
-}
-static Value buffer_method_read_short(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_BUFFER(args[0])) return make_null();
-    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(args[0]);
-    Value result = buffer_read_short(buf, buf->cursor);
-    if (!IS_NIL(result)) buf->cursor += 2;
-    return result;
-}
-static Value buffer_method_read_int(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_BUFFER(args[0])) return make_null();
-    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(args[0]);
-    Value result = buffer_read_int(buf, buf->cursor);
-    if (!IS_NIL(result)) buf->cursor += 4;
-    return result;
-}
-static Value buffer_method_read_long(VM *vm, Value *args, int nargs) {
-    (void)vm; (void)nargs;
-    if (!IS_BUFFER(args[0])) return make_null();
-    ObjBuffer *buf = (ObjBuffer*)AS_OBJ(args[0]);
-    Value result = buffer_read_long(buf, buf->cursor);
-    if (!IS_NIL(result)) buf->cursor += 8;
-    return result;
-}
-
 void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "print", bn_print);
     vm_define_native(vm, "input", bn_input);
@@ -690,21 +628,6 @@ void vm_register_canonical_classes(VM *vm) {
     class_add_native_method(py_fe(vm)->dict_class, "clear", dict_method_clear);
     class_add_native_method(py_fe(vm)->dict_class, "length", dict_method_length);
     vm_set_global(vm, "dict", make_obj((Object*)py_fe(vm)->dict_class), false);
-
-    /* Enum canonical class */
-    py_fe(vm)->enum_class = new_class("Enum", NULL);
-    class_add_native_method(py_fe(vm)->enum_class, "values", enum_method_values);
-    class_add_native_method(py_fe(vm)->enum_class, "keys", enum_method_keys);
-    class_add_native_method(py_fe(vm)->enum_class, "count", enum_method_count);
-    class_add_native_method(py_fe(vm)->enum_class, "length", enum_method_count);
-    class_add_native_method(py_fe(vm)->enum_class, "size", enum_method_count);
-
-    /* Buffer canonical class */
-    py_fe(vm)->buffer_class = new_class("Buffer", NULL);
-    class_add_native_method(py_fe(vm)->buffer_class, "read_byte", buffer_method_read_byte);
-    class_add_native_method(py_fe(vm)->buffer_class, "read_short", buffer_method_read_short);
-    class_add_native_method(py_fe(vm)->buffer_class, "read_int", buffer_method_read_int);
-    class_add_native_method(py_fe(vm)->buffer_class, "read_long", buffer_method_read_long);
 
     py_fe(vm)->function_class = new_class("Function", NULL);
     py_fe(vm)->closure_class = new_class("Closure", NULL);

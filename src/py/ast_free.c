@@ -293,20 +293,14 @@ void free_decl(Decl *decl) {
         }
         for (int i = 0; i < decl->data.class_decl.field_count; i++) {
             free(decl->data.class_decl.fields[i].name);
+            if (decl->data.class_decl.fields[i].value)
+                free_expr(decl->data.class_decl.fields[i].value);
         }
         free(decl->data.class_decl.fields);
         for (int i = 0; i < decl->data.class_decl.method_count; i++) {
             free_decl(decl->data.class_decl.methods[i]);
         }
         free(decl->data.class_decl.methods);
-        break;
-
-    case DECL_ENUM:
-        free(decl->data.enum_decl.name);
-        for (int i = 0; i < decl->data.enum_decl.variant_count; i++) {
-            free(decl->data.enum_decl.variants[i].name);
-        }
-        free(decl->data.enum_decl.variants);
         break;
 
     case DECL_IMPORT:

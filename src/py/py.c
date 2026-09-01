@@ -35,7 +35,7 @@ void py_mark_roots(VM *vm) {
         fe->key_error_class, fe->index_error_class, fe->attribute_error_class,
         fe->value_error_class, fe->runtime_error_class, fe->argument_error_class,
         fe->overflow_error_class,
-        fe->string_class, fe->list_class, fe->dict_class, fe->enum_class,
+        fe->string_class, fe->list_class, fe->dict_class,
         fe->buffer_class, fe->function_class,
         fe->closure_class, fe->bound_method_class, fe->class_class,
         fe->module_class, fe->int_class, fe->float_class
@@ -799,16 +799,6 @@ static bool py_member_get(VM *vm, Value object, Value name, bool safe, Value *ou
             snprintf(buf, sizeof(buf), "%s has no field '%s'", type->name, chars);
             return member_miss(vm, safe, py_fe(vm)->attribute_error_class, buf, out);
         }
-        case OBJ_ENUM: {
-            ObjEnum *e = (ObjEnum *)AS_OBJ(object);
-            int fi = -1;
-            for (int i = 0; i < e->count; i++)
-                if (strcmp(e->names[i], chars) == 0) { fi = i; break; }
-            if (fi >= 0) { *out = make_int(e->values[fi]); return true; }
-            char buf[256];
-            snprintf(buf, sizeof(buf), "enum has no variant '%s'", chars);
-            return member_miss(vm, safe, py_fe(vm)->attribute_error_class, buf, out);
-        }
         case OBJ_CLASS: {
             ObjClass *cls = (ObjClass *)AS_OBJ(object);
             if (strcmp(chars, "name") == 0) {
@@ -1050,14 +1040,14 @@ extern void vm_register_builtins(VM *vm);
 extern void vm_register_canonical_classes(VM *vm);
 extern void vm_register_math_module(VM *vm);
 extern void vm_register_random_module(VM *vm);
-extern void vm_register_noise_module(VM *vm);
 extern void vm_register_io_module(VM *vm);
 extern void vm_register_time_module(VM *vm);
 extern void vm_register_os_module(VM *vm);
-extern void vm_register_buffer_module(VM *vm);
 extern void vm_register_string_module(VM *vm);
 extern void vm_register_socket_module(VM *vm);
 extern void vm_register_json_module(VM *vm);
+extern void vm_register_enum_module(VM *vm);
+extern void vm_register_re_module(VM *vm);
 extern uint64_t py_time_monotonic_us(void);
 
 static ObjClass *py_register_exception(VM *vm, const char *name, ObjClass *base) {
@@ -1125,14 +1115,14 @@ void py_init_vm(VM *vm) {
     fe->module_cache = new_dict();
     vm_register_math_module(vm);
     vm_register_random_module(vm);
-    vm_register_noise_module(vm);
     vm_register_io_module(vm);
     vm_register_time_module(vm);
     vm_register_os_module(vm);
-    vm_register_buffer_module(vm);
     vm_register_string_module(vm);
     vm_register_socket_module(vm);
     vm_register_json_module(vm);
+    vm_register_enum_module(vm);
+    vm_register_re_module(vm);
 }
 
 /* ============================================================ */

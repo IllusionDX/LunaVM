@@ -9,6 +9,7 @@
 #include "opcode.h"
 #include "value.h"
 #include "py/object.h"
+#include "stdlib/stdlib_enum.h"
 
 /* ---- Scope / Locals ---- */
 
@@ -2168,14 +2169,12 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
 
 static void compile_function(Compiler *c, Decl *decl);
 static void compile_class(Compiler *c, Decl *decl);
-static void compile_enum(Compiler *c, Decl *decl);
 
 static void compile_decl(Compiler *c, Decl *decl) {
     c->line = decl->line;
     switch (decl->kind) {
     case DECL_FUNCTION: compile_function(c, decl); break;
     case DECL_CLASS:    compile_class(c, decl);    break;
-    case DECL_ENUM:     compile_enum(c, decl);     break;
     case DECL_IMPORT: {
         int mod_reg = alloc_reg(c);
         int mod_k = chunk_add_string(c->vm, c->chunk, decl->data.import_decl.module_name);
@@ -2380,6 +2379,44 @@ static void compile_function(Compiler *c, Decl *decl) {
     }
 }
 
+/* ============================================================ */
+/* Enum member value evaluation at compile time                 */
+/* ============================================================ */
+
+static Value compile_constant_expr(Compiler *c, Expr *expr) {
+    switch (expr->kind) {
+    case EXPR_INTEGER:
+        return make_int((int32_t)atol(expr->data.integer.value));
+    case EXPR_FLOAT:
+        return make_double(atof(expr->data.float_lit.value));
+    case EXPR_STRING:
+        return make_obj((Object*)new_string(expr->data.string.value, expr->data.string.length));
+    case EXPR_BOOL:
+        return make_bool(expr->data.boolean.value);
+    case EXPR_NULL:
+        return make_null();
+    case EXPR_UNARY:
+        if (strcmp(expr->data.unary.operator, "-") == 0) {
+            Value inner = compile_constant_expr(c, expr->data.unary.operand);
+            if (IS_INT(inner))  return make_int(-AS_INT(inner));
+            if (IS_DOUBLE(inner)) return make_double(-AS_DOUBLE(inner));
+        }
+        break;
+    case EXPR_CALL: {
+        Expr *callee = expr->data.call.callee;
+        if (callee->kind == EXPR_IDENTIFIER &&
+            strcmp(callee->data.identifier.name, "auto") == 0) {
+            return enum_get_auto_value();
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    /* Fallback for complex expressions */
+    return compile_default_thunk(c, expr);
+}
+
 static void compile_class(Compiler *c, Decl *decl) {
     const char *name = decl->data.class_decl.name;
     ObjClass *cls = new_class(name, decl->data.class_decl.base_class);
@@ -2523,23 +2560,35 @@ op == OP_CLOSURE) {
         chunk_add_const(c->chunk, make_obj((Object*)mf));
     }
 
+    /* If this is an Enum subclass, register fields with values as enum members */
+    bool is_enum = (decl->data.class_decl.base_class &&
+                    strcmp(decl->data.class_decl.base_class, "Enum") == 0);
+    if (is_enum) {
+        int member_count = 0;
+        for (int i = 0; i < decl->data.class_decl.field_count; i++) {
+            if (decl->data.class_decl.fields[i].value) member_count++;
+        }
+        if (member_count > 0) {
+            char **names  = malloc(sizeof(char*) * member_count);
+            Value *values = malloc(sizeof(Value) * member_count);
+            int idx = 0;
+            enum_reset_auto();
+            for (int i = 0; i < decl->data.class_decl.field_count; i++) {
+                ClassField *f = &decl->data.class_decl.fields[i];
+                if (!f->value) continue;
+                names[idx] = strdup(f->name);
+                values[idx] = compile_constant_expr(c, f->value);
+                idx++;
+            }
+            enum_register_members(cls, (const char**)names, values, member_count);
+            for (int i = 0; i < member_count; i++) free(names[i]);
+            free(names);
+            free(values);
+        }
+    }
+
     Value cls_val = make_obj((Object*)cls);
     vm_set_global(c->vm, name, cls_val, false);
-}
-
-static void compile_enum(Compiler *c, Decl *decl) {
-    const char *name = decl->data.enum_decl.name;
-    int count = decl->data.enum_decl.variant_count;
-    ObjEnum *e = new_enum(name, count);
-    int64_t next_val = 0;
-    for (int i = 0; i < count; i++) {
-        EnumVariant *v = &decl->data.enum_decl.variants[i];
-        int64_t val = v->has_value ? v->value : next_val;
-        next_val = val + 1;
-        e->names[i]  = strdup(v->name);
-        e->values[i] = val;
-    }
-    vm_set_global(c->vm, name, make_obj((Object*)e), false);
 }
 
 /* ============================================================ */

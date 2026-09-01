@@ -246,19 +246,13 @@ typedef struct Stmt {
 typedef enum {
     DECL_FUNCTION,
     DECL_CLASS,
-    DECL_ENUM,
     DECL_IMPORT
 } DeclKind;
 
 typedef struct ClassField {
     char *name;
+    struct Expr *value;  /* NULL for plain fields, set for enum members */
 } ClassField;
-
-typedef struct EnumVariant {
-    char *name;
-    int value;
-    bool has_value;
-} EnumVariant;
 
 typedef struct Decl {
     DeclKind kind;
@@ -279,11 +273,6 @@ typedef struct Decl {
             Decl **methods;
             int method_count;
         } class_decl;
-        struct {
-            char *name;
-            EnumVariant *variants;
-            int variant_count;
-        } enum_decl;
         struct {
             char *module_name;
             char **items;
