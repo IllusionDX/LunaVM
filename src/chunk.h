@@ -62,6 +62,8 @@ int  chunk_add_string_len(struct VM *vm, Chunk *chunk, const char *chars, int le
 
 /* ---- Patch helpers (for back-patching jump targets) ---- */
 void chunk_patch_sBx(Chunk *chunk, int at, int32_t sbx);
+/* Patch the 9-bit C field of a fused compare-and-branch (forward 0..511) */
+void chunk_patch_jump_c(Chunk *chunk, int at, int32_t offset);
 
 /* ---- Disassembly ---- */
 void chunk_disassemble(Chunk *chunk);

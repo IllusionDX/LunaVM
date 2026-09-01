@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include "chunk.h"
 #include "value.h"
 #include "vm.h"
@@ -136,6 +137,16 @@ void chunk_patch_sBx(Chunk *chunk, int at, int32_t sbx) {
     uint32_t preserved = inst & 0x00007FFF;  /* low 15 bits: opcode + A */
     uint32_t new_bx = (uint32_t)(uint32_t)((sbx) + SBIAS);
     chunk->code[at] = preserved | (new_bx << 15);
+}
+
+/* Patch the C field (bits 23-31, 9 bits) of a fused compare-and-branch.
+   Forward jumps only: offset must fit 0..0x1FF. */
+void chunk_patch_jump_c(Chunk *chunk, int at, int32_t offset) {
+    if (at < 0 || at >= chunk->count) return;
+    assert(offset >= 0 && offset <= 0x1FF && "fused jump offset exceeds 9-bit C field");
+    if (offset < 0 || offset > 0x1FF) return;
+    uint32_t inst = chunk->code[at];
+    chunk->code[at] = (inst & 0x007FFFFF) | ((uint32_t)offset << 23);
 }
 
 /* ============================================================ */

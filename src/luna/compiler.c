@@ -1654,8 +1654,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             int j = emit_jump(c, OP_JMP, 0);
             if (fused) {
                 int off = c->chunk->count - (jz + 1);
-                if (off >= 0 && off <= 255)
-                    c->chunk->code[jz] = (c->chunk->code[jz] & 0x007FFFFF) | ((uint32_t)off << 23);
+                chunk_patch_jump_c(c->chunk, jz, off);
             } else {
                 patch_jump(c, jz);
             }
@@ -1667,8 +1666,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         } else {
             if (fused) {
                 int off = c->chunk->count - (jz + 1);
-                if (off >= 0 && off <= 255)
-                    c->chunk->code[jz] = (c->chunk->code[jz] & 0x007FFFFF) | ((uint32_t)off << 23);
+                chunk_patch_jump_c(c->chunk, jz, off);
             } else {
                 patch_jump(c, jz);
             }
@@ -1747,9 +1745,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
 
         if (fused) {
             int offset = c->chunk->count - (jz + 1);
-            if (offset >= 0 && offset <= 255) {
-                c->chunk->code[jz] = (c->chunk->code[jz] & 0x007FFFFF) | ((uint32_t)offset << 23);
-            }
+            chunk_patch_jump_c(c->chunk, jz, offset);
         } else {
             patch_jump(c, jz);
         }

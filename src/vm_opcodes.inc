@@ -297,161 +297,57 @@
         if (IS_NIL(REG(RA))) pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
-    /* ---- Compare-and-branch (ABC: A=left, B=right, C=offset) ---- */
-    op_lt_jz: {
-        Value _L = REG(RA), _R = REG(RB);
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
-            _c = AS_INT(_L) < AS_INT(_R);
-        } else {
-            if (is_num(_L) && is_num(_R)) _c = to_f64(_L) < to_f64(_R);
-            else _c = is_truthy(do_cmp(vm, _L, _R, OP_LT));
-        }
-        if (!_c) pc += (int16_t)C;
-        DECODE; goto *op_labels[OP(instr)];
+    /* ---- Compare-and-branch (ABC: A=left, B=right, C=offset 0..511) ---- */
+
+#define DEFINE_CMP_JZ(name, op_sym, mop_op) \
+    op_##name##_jz: { \
+        Value _L = REG(RA), _R = REG(RB); \
+        bool _c; \
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) { \
+            _c = ((int64_t)AS_INT(_L) op_sym (int64_t)AS_INT(_R)); \
+        } else if (_L == _R && !IS_DOUBLE(_L) && (mop_op == OP_EQ || mop_op == OP_NE)) { \
+            _c = (mop_op == OP_EQ); \
+        } else if (is_num(_L) && is_num(_R)) { \
+            _c = (to_f64(_L) op_sym to_f64(_R)); \
+        } else { \
+            _c = is_truthy(do_cmp(vm, _L, _R, mop_op)); \
+        } \
+        if (!_c) pc += C; \
+        DECODE; goto *op_labels[OP(instr)]; \
     }
-    op_le_jz: {
-        Value _L = REG(RA), _R = REG(RB);
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
-            _c = AS_INT(_L) <= AS_INT(_R);
-        } else {
-            if (is_num(_L) && is_num(_R)) _c = to_f64(_L) <= to_f64(_R);
-            else _c = is_truthy(do_cmp(vm, _L, _R, OP_LE));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
+
+#define DEFINE_CMP_JZ_IMM(name, op_sym, mop_op) \
+    op_##name##_jz_imm: { \
+        Value _L = REG(RA); \
+        int64_t _imm = (int8_t)RB; \
+        bool _c; \
+        if (LUNA_LIKELY(IS_INT(_L))) { \
+            _c = ((int64_t)AS_INT(_L) op_sym _imm); \
+        } else if (LUNA_LIKELY(IS_DOUBLE(_L))) { \
+            _c = (AS_DOUBLE(_L) op_sym (double)_imm); \
+        } else { \
+            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), mop_op)); \
+        } \
+        if (!_c) pc += C; \
+        DECODE; goto *op_labels[OP(instr)]; \
     }
-    op_gt_jz: {
-        Value _L = REG(RA), _R = REG(RB);
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
-            _c = AS_INT(_L) > AS_INT(_R);
-        } else {
-            if (is_num(_L) && is_num(_R)) _c = to_f64(_L) > to_f64(_R);
-            else _c = is_truthy(do_cmp(vm, _L, _R, OP_GT));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_ge_jz: {
-        Value _L = REG(RA), _R = REG(RB);
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
-            _c = AS_INT(_L) >= AS_INT(_R);
-        } else {
-            if (is_num(_L) && is_num(_R)) _c = to_f64(_L) >= to_f64(_R);
-            else _c = is_truthy(do_cmp(vm, _L, _R, OP_GE));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_eq_jz: {
-        Value _L = REG(RA), _R = REG(RB);
-        bool _c;
-        if (_L == _R) {
-            _c = true;
-        } else {
-            _c = is_truthy(do_cmp(vm, _L, _R, OP_EQ));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_ne_jz: {
-        Value _L = REG(RA), _R = REG(RB);
-        bool _c;
-        if (_L == _R) {
-            _c = false;
-        } else {
-            _c = is_truthy(do_cmp(vm, _L, _R, OP_NE));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_lt_jz_imm: {
-        Value _L = REG(RA);
-        int64_t _imm = (int8_t)RB;
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L))) {
-            _c = (int64_t)AS_INT(_L) < _imm;
-        } else if (IS_DOUBLE(_L)) {
-            _c = AS_DOUBLE(_L) < (double)_imm;
-        } else {
-            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_LT));
-        }
-        if (!_c) pc += (int16_t)C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_le_jz_imm: {
-        Value _L = REG(RA);
-        int64_t _imm = (int8_t)RB;
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L))) {
-            _c = (int64_t)AS_INT(_L) <= _imm;
-        } else if (IS_DOUBLE(_L)) {
-            _c = AS_DOUBLE(_L) <= (double)_imm;
-        } else {
-            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_LE));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_gt_jz_imm: {
-        Value _L = REG(RA);
-        int64_t _imm = (int8_t)RB;
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L))) {
-            _c = (int64_t)AS_INT(_L) > _imm;
-        } else if (IS_DOUBLE(_L)) {
-            _c = AS_DOUBLE(_L) > (double)_imm;
-        } else {
-            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_GT));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_ge_jz_imm: {
-        Value _L = REG(RA);
-        int64_t _imm = (int8_t)RB;
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L))) {
-            _c = (int64_t)AS_INT(_L) >= _imm;
-        } else if (IS_DOUBLE(_L)) {
-            _c = AS_DOUBLE(_L) >= (double)_imm;
-        } else {
-            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_GE));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_eq_jz_imm: {
-        Value _L = REG(RA);
-        int64_t _imm = (int8_t)RB;
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L))) {
-            _c = (int64_t)AS_INT(_L) == _imm;
-        } else if (IS_DOUBLE(_L)) {
-            _c = AS_DOUBLE(_L) == (double)_imm;
-        } else {
-            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_EQ));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-    op_ne_jz_imm: {
-        Value _L = REG(RA);
-        int64_t _imm = (int8_t)RB;
-        bool _c;
-        if (LUNA_LIKELY(IS_INT(_L))) {
-            _c = (int64_t)AS_INT(_L) != _imm;
-        } else if (IS_DOUBLE(_L)) {
-            _c = AS_DOUBLE(_L) != (double)_imm;
-        } else {
-            _c = is_truthy(do_cmp(vm, _L, make_int(_imm), OP_NE));
-        }
-        if (!_c) pc += C;
-        DECODE; goto *op_labels[OP(instr)];
-    }
+
+DEFINE_CMP_JZ(lt, <,  OP_LT)
+DEFINE_CMP_JZ(le, <=, OP_LE)
+DEFINE_CMP_JZ(gt, >,  OP_GT)
+DEFINE_CMP_JZ(ge, >=, OP_GE)
+DEFINE_CMP_JZ(eq, ==, OP_EQ)
+DEFINE_CMP_JZ(ne, !=, OP_NE)
+
+DEFINE_CMP_JZ_IMM(lt, <,  OP_LT)
+DEFINE_CMP_JZ_IMM(le, <=, OP_LE)
+DEFINE_CMP_JZ_IMM(gt, >,  OP_GT)
+DEFINE_CMP_JZ_IMM(ge, >=, OP_GE)
+DEFINE_CMP_JZ_IMM(eq, ==, OP_EQ)
+DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
+
+#undef DEFINE_CMP_JZ
+#undef DEFINE_CMP_JZ_IMM
 
     /* ---- Functions ---- */
     /* 33. OP_CALL */
