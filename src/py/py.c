@@ -1037,6 +1037,7 @@ static const VMFrontendHooks py_frontend_hooks = {
 
 /* Luna's language runtime bootstrap lives in the frontend, not in vm.c. */
 extern void vm_register_builtins(VM *vm);
+extern void vm_register_string_methods(VM *vm);
 extern void vm_register_canonical_classes(VM *vm);
 extern void vm_register_math_module(VM *vm);
 extern void vm_register_random_module(VM *vm);
@@ -1114,6 +1115,8 @@ void py_init_vm(VM *vm) {
     }
 
     fe->module_cache = new_dict();
+    module_init_global_paths();
+    module_probe_host_python_paths();
     vm_register_math_module(vm);
     vm_register_random_module(vm);
     vm_register_io_module(vm);

@@ -539,6 +539,95 @@ static Value string_method_size(VM *vm, Value *args, int nargs) {
     return make_int(((ObjString*)AS_OBJ(args[0]))->length);
 }
 
+/* UTF-8 case mapping for a single code point; -1 when no mapping exists. */
+static int utf8_case_map(int cp, bool upper) {
+    if (upper) {
+        if (cp >= 'a' && cp <= 'z') return cp - 32;
+        if (cp >= 0xE0 && cp <= 0xFE && cp != 0xF7) return cp - 32;
+    } else {
+        if (cp >= 'A' && cp <= 'Z') return cp + 32;
+        if (cp >= 0xC0 && cp <= 0xDE && cp != 0xD7) return cp + 32;
+    }
+    return -1;
+}
+
+/* Encode a code point as UTF-8 into buf (up to 4 bytes); returns byte count. */
+static int utf8_encode(int cp, char *buf) {
+    if (cp < 0x80) { buf[0] = (char)cp; return 1; }
+    if (cp < 0x800) {
+        buf[0] = (char)(0xC0 | (cp >> 6));
+        buf[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    if (cp < 0x10000) {
+        buf[0] = (char)(0xE0 | (cp >> 12));
+        buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    buf[0] = (char)(0xF0 | (cp >> 18));
+    buf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    buf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    buf[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
+/* Decode the code point starting at chars[i] (i advanced past it). */
+static int utf8_decode(const char *chars, int *i) {
+    unsigned char c = (unsigned char)chars[*i];
+    int cp;
+    int len = (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
+    if (len == 1) { cp = c; (*i)++; return cp; }
+    cp = c & (0x7F >> len);
+    for (int k = 1; k < len && (unsigned char)chars[*i + k]; k++) {
+        cp = (cp << 6) | ((unsigned char)chars[*i + k] & 0x3F);
+    }
+    *i += len;
+    return cp;
+}
+
+/* Shared implementation for upper/lower: preserves byte length only when the
+ * case mapping does not change any code point's UTF-8 width. */
+static Value string_case_method(VM *vm, Value *args, bool upper) {
+    if (!IS_STRING(args[0])) return make_null();
+    ObjString *str = (ObjString*)AS_OBJ(args[0]);
+    int len = str->length;
+    char *buf = malloc((size_t)len + 1);
+    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+    int pos = 0, i = 0, out_len = 0;
+    while (i < len) {
+        int start = i;
+        int cp = utf8_decode(str->chars, &i);
+        int mapped = utf8_case_map(cp, upper);
+        if (mapped < 0) {
+            memcpy(buf + pos, str->chars + start, i - start);
+            pos += i - start;
+            out_len += i - start;
+        } else {
+            char tmp[4];
+            int n = utf8_encode(mapped, tmp);
+            memcpy(buf + pos, tmp, (size_t)n);
+            pos += n;
+            out_len += n;
+        }
+    }
+    buf[pos] = '\0';
+    ObjString *result = new_string(buf, out_len);
+    free(buf);
+    (void)vm;
+    return make_obj((Object*)result);
+}
+
+static Value string_method_upper(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    return string_case_method(vm, args, true);
+}
+
+static Value string_method_lower(VM *vm, Value *args, int nargs) {
+    (void)vm; (void)nargs;
+    return string_case_method(vm, args, false);
+}
+
 static Value string_method_reverse(VM *vm, Value *args, int nargs) {
     (void)vm; (void)nargs;
     if (!IS_STRING(args[0])) return make_null();
@@ -593,6 +682,7 @@ void vm_register_builtins(VM *vm) {
 /* ============================================================ */
 
 void vm_register_canonical_classes(VM *vm) {
+    extern void vm_register_string_methods(VM *vm);
     /* Python-style builtin type classes (exposed as globals).
      * int/float are created and registered by py_register_number_methods. */
     py_fe(vm)->tuple_class = new_class("tuple", NULL);
@@ -605,6 +695,9 @@ void vm_register_canonical_classes(VM *vm) {
     class_add_native_method(py_fe(vm)->string_class, "length", string_method_length);
     class_add_native_method(py_fe(vm)->string_class, "size", string_method_size);
     class_add_native_method(py_fe(vm)->string_class, "reverse", string_method_reverse);
+    class_add_native_method(py_fe(vm)->string_class, "upper", string_method_upper);
+    class_add_native_method(py_fe(vm)->string_class, "lower", string_method_lower);
+    vm_register_string_methods(vm);
     vm_set_global(vm, "str", make_obj((Object*)py_fe(vm)->string_class), false);
 
     /* List canonical class */

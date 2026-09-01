@@ -57,6 +57,7 @@ PY_SOURCES = src/py/bigint.c src/py/object.c src/py/py.c src/py/range.c src/py/s
     src/py/stdlib/stdlib_math.c src/py/stdlib/stdlib_random.c \
     src/py/stdlib/stdlib_io.c src/py/stdlib/stdlib_time.c src/py/stdlib/stdlib_os.c \
     src/py/stdlib/stdlib_string.c \
+    src/py/stdlib/string_methods.c \
     src/py/stdlib/stdlib_socket.c src/py/stdlib/stdlib_json.c \
     src/py/stdlib/stdlib_enum.c \
     src/py/stdlib/stdlib_re.c \
