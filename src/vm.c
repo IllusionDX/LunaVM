@@ -82,12 +82,6 @@ bool vm_setitem(VM *vm, Value object, Value key, Value value) {
            vm->frontend->setitem(vm, object, key, value);
 }
 
-bool vm_slice(VM *vm, Value object, Value start, Value stop, Value step,
-              bool safe, Value *result) {
-    return vm && vm->frontend && vm->frontend->slice &&
-           vm->frontend->slice(vm, object, start, stop, step, safe, result);
-}
-
 bool vm_iterate(VM *vm, Value object, Value *iter, Value *state) {
     return vm && vm->frontend && vm->frontend->iterate &&
            vm->frontend->iterate(vm, object, iter, state);
@@ -831,7 +825,6 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_foriter,       // OP_FORITER
         &&op_indexget,      // 48 OP_INDEXGET
         &&op_indexset,      // 49 OP_INDEXSET
-        &&op_slice,         // 50 OP_SLICE
         &&op_memberget,     // 51 OP_MEMBERGET
         &&op_memberset,     // 52 OP_MEMBERSET
         &&op_getfield,      // 53 OP_GETFIELD

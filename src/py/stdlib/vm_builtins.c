@@ -16,6 +16,7 @@
 #include "py/object.h"
 #include "py/frontend_state.h"
 #include "py/range.h"
+#include "py/slice.h"
 #include "chunk.h"
 
 /* True for int32 immediates and heap bigints; excludes doubles. */
@@ -646,6 +647,7 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "chr",   bn_chr);
     vm_define_native(vm, "_build_tuple", bn_build_tuple);
     vm_define_native(vm, "isinstance", bn_isinstance);
+    vm_define_native(vm, "slice", py_builtin_slice);
 }
 
 /* ============================================================ */

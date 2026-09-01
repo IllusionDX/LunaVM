@@ -727,18 +727,6 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         goto op_throw;
         /* Legacy type switch below is unreachable during frontend dispatch. */
     }
-    op_slice: {
-        /* Slicing is a frontend concern; the core only issues the neutral
-         * opcode and lets the frontend build the resulting object. */
-        Value _result;
-        if (vm_slice(vm, REG(RB), REG(RB + 1), REG(RB + 2), REG(RB + 3), false, &_result)) {
-            SET_REG(RA, _result);
-            CHECK_GC;
-            DECODE; goto *op_labels[OP(instr)];
-        }
-        _exc = vm->last_exception;
-        goto op_throw;
-    }
 
     /* 51. OP_MEMBERGET (strict — throws on missing) */
     op_memberget: {

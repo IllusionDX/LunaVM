@@ -41,9 +41,6 @@ typedef bool (*VMIndexGetOperation)(struct VM *vm, Value object, Value key,
                                     bool safe, Value *result);
 typedef bool (*VMIndexSetOperation)(struct VM *vm, Value object, Value key,
                                      Value value);
-typedef bool (*VMIndexSliceOperation)(struct VM *vm, Value object, Value start,
-                                       Value stop, Value step, bool safe,
-                                       Value *result);
 typedef bool (*VMIterateOperation)(struct VM *vm, Value object, Value *iter,
                                    Value *state);
 typedef bool (*VMIterNextOperation)(struct VM *vm, Value iter, Value *state,
@@ -96,7 +93,6 @@ typedef struct VMFrontendHooks {
     VMIndexSetOperation setitem;
     VMMemberGetOperation getattr;
     VMMemberSetOperation setattr;
-    VMIndexSliceOperation slice;
     VMIterateOperation iterate;
     VMIterNextOperation iter_next;
     VMNewListOperation new_list;
@@ -322,8 +318,6 @@ bool     vm_binary(VM *vm, VMOperation op, Value left, Value right, Value *resul
 bool     vm_compare(VM *vm, VMOperation op, Value left, Value right, Value *result);
 bool     vm_getitem(VM *vm, Value object, Value key, bool safe, Value *result);
 bool     vm_setitem(VM *vm, Value object, Value key, Value value);
-bool     vm_slice(VM *vm, Value object, Value start, Value stop, Value step,
-                 bool safe, Value *result);
 bool     vm_iterate(VM *vm, Value object, Value *iter, Value *state);
 bool     vm_iter_next(VM *vm, Value iter, Value *state, Value *elem);
 bool     vm_new_list(VM *vm, int capacity, Value *out);

@@ -30,7 +30,8 @@ typedef enum {
     OBJ_INT64 = 13,
     OBJ_USERDATA,
     OBJ_VECTOR = 15,
-    OBJ_MATRIX = 16
+    OBJ_MATRIX = 16,
+    OBJ_SLICE = 17
 } ObjType;
 
 /* Object and Type are defined in the core value model (src/value.h).
@@ -55,6 +56,7 @@ typedef enum {
 #define IS_VECTOR(v)       IS_OBJ_KIND(v, OBJ_VECTOR)
 #define IS_MATRIX(v)       IS_OBJ_KIND(v, OBJ_MATRIX)
 #define IS_INT64(v)    IS_OBJ_KIND(v, OBJ_INT64)
+#define IS_SLICE(v)    IS_OBJ_KIND(v, OBJ_SLICE)
 
 /* MOP typedefs and the `Type` vtable struct are defined in the core value
  * model (src/value.h). Luna fills the vtable instances in luna/object.c. */
@@ -168,6 +170,11 @@ typedef struct ObjMatrix {
     float  m[16];
 } ObjMatrix;
 
+typedef struct ObjSlice {
+    Object obj;
+    Value  start, stop, step;
+} ObjSlice;
+
 typedef struct ObjInstance {
     Object              obj;
     char               *class_name;
@@ -251,6 +258,7 @@ ObjModule     *new_module(const char *name);
 ObjInt64      *new_int64(int64_t value);
 ObjVector      *new_vector(float x, float y, float z, float w);
 ObjMatrix      *new_matrix(void);
+ObjSlice       *new_slice(Value start, Value stop, Value step);
 static inline Value make_int64(int64_t value) { return make_obj((Object*)new_int64(value)); }
 Value          buffer_read_byte(const ObjBuffer *buf, size_t offset);
 Value          buffer_read_short(const ObjBuffer *buf, size_t offset);
@@ -309,5 +317,11 @@ struct ObjFunction *class_find_method(ObjClass *cls, const char *name);
 
 void runtime_error(const char *fmt, ...);
 int utf8_code_point_count(const char *s, int byte_len);
+
+/* Slice support (Luna has no tuple type; only list/string are sliced). */
+bool   luna_apply_slice(struct VM *vm, Value object, Value slicekey, Value *out);
+char  *luna_slice_to_cstr(Value self);
+void   luna_slice_free(Object *obj);
+void   luna_slice_mark(struct VM *vm, Object *obj);
 
 #endif /* LUNA_OBJECT_H */

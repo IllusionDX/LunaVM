@@ -20,6 +20,7 @@
 #include "vm.h"
 #include "api.h"
 #include "py/range.h"
+#include "py/slice.h"
 
 /* Forward declarations for helpers used by the lifecycle/formatting vtable
  * (defined later in this file, but referenced by the per-type free funcs). */
@@ -99,7 +100,9 @@ static Value py_string_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)a;
 
 static Value py_string_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
-    if (!IS_STRING(self) || !IS_INT(key)) return make_null();
+    if (!IS_STRING(self)) return make_null();
+    if (IS_SLICE(key)) { Value out; py_apply_slice(vm, self, key, &out); return out; }
+    if (!IS_INT(key)) return make_null();
     ObjString *s = (ObjString*)AS_OBJ(self);
     int idx = (int)AS_INT(key);
     if (idx < 0) idx += s->length;
@@ -390,7 +393,9 @@ static Value py_list_neg(struct VM *vm, Value a) { (void)vm; (void)a; return mak
 
 static Value py_list_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
-    if (!IS_LIST(self) || !IS_INT(key)) return make_null();
+    if (!IS_LIST(self)) return make_null();
+    if (IS_SLICE(key)) { Value out; py_apply_slice(vm, self, key, &out); return out; }
+    if (!IS_INT(key)) return make_null();
     ObjList *lst = (ObjList*)AS_OBJ(self);
     int idx = (int)AS_INT(key);
     int len = lst->count;
@@ -430,7 +435,9 @@ static int py_tuple_cmp(struct VM *vm, Value a, Value b) { (void)vm; (void)a; (v
 
 static Value py_tuple_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
-    if (!IS_TUPLE(self) || !IS_INT(key)) return make_null();
+    if (!IS_TUPLE(self)) return make_null();
+    if (IS_SLICE(key)) { Value out; py_apply_slice(vm, self, key, &out); return out; }
+    if (!IS_INT(key)) return make_null();
     ObjTuple *t = (ObjTuple*)AS_OBJ(self);
     int idx = (int)AS_INT(key);
     int len = t->count;
@@ -955,6 +962,16 @@ Type py_range_iter_type = {
     .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
 };
 
+/* Slice: a getitem key, not itself indexable. repr via py_slice_to_cstr. */
+Type py_slice_type = {
+    .name = "slice", .kind = OBJ_SLICE,
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
+};
+
 /* Indexed by ObjType. */
 Type *py_types[] = {
     [OBJ_STRING]       = &py_string_type,
@@ -973,6 +990,7 @@ Type *py_types[] = {
     [OBJ_BIGINT]       = &py_bigint_type,
     [OBJ_RANGE]        = &py_range_type,
     [OBJ_RANGEITER]    = &py_range_iter_type,
+    [OBJ_SLICE]        = &py_slice_type,
 };
 
 /* ============================================================
@@ -1300,7 +1318,7 @@ static void py_range_iter_mark(struct VM *vm, Object *obj) {
 
 /* One-time wiring: the frontend owns this kind switch; the core stays generic. */
 void py_wire_lifecycle(void) {
-    for (int k = 0; k <= OBJ_RANGEITER; k++) {
+    for (int k = 0; k <= OBJ_SLICE; k++) {
         Type *t = py_types[k];
         /* ObjType intentionally has reserved values; there is no Type for
          * those slots in py_types[]. */
@@ -1344,6 +1362,9 @@ void py_wire_lifecycle(void) {
             case OBJ_RANGEITER:
                 t->free = py_range_iter_free; t->mark = py_range_iter_mark;
                 t->to_cstr = py_range_iter_to_cstr; break;
+            case OBJ_SLICE:
+                t->free = py_slice_free; t->mark = py_slice_mark;
+                t->to_cstr = py_slice_to_cstr; break;
             default: break;
         }
     }

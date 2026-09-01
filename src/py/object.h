@@ -35,6 +35,7 @@ typedef enum {
     OBJ_BIGINT = 13,  /* arbitrary-precision int (PyLong-style, base 2^30) */
     OBJ_RANGE = 14,   /* lazy range (start/stop/step only, O(1)) */
     OBJ_RANGEITER = 15, /* lazy range iterator */
+    OBJ_SLICE = 16,   /* slice(start, stop, step) object used as a getitem key */
 } ObjType;
 
 /* Object and Type are defined in the core value model (src/value.h).
@@ -59,6 +60,7 @@ typedef enum {
 #define IS_BIGINT(v)   IS_OBJ_KIND(v, OBJ_BIGINT)
 #define IS_RANGE(v)    IS_OBJ_KIND(v, OBJ_RANGE)
 #define IS_RANGEITER(v) IS_OBJ_KIND(v, OBJ_RANGEITER)
+#define IS_SLICE(v)    IS_OBJ_KIND(v, OBJ_SLICE)
 
 /* MOP typedefs and the `Type` vtable struct are defined in the core value
  * model (src/value.h). Luna fills the vtable instances in luna/object.c. */
@@ -171,6 +173,15 @@ typedef struct {
     Value  stop;
     Value  step;
 } ObjRangeIter;
+
+/* Slice object — used as a key in OP_INDEXGET/__getitem__ for a[start:stop:step].
+ * start/stop/step are int32/bigint Values, or nil (make_null) when omitted. */
+typedef struct {
+    Object obj;
+    Value  start;
+    Value  stop;
+    Value  step;
+} ObjSlice;
 
 typedef struct ObjInstance {
     Object              obj;

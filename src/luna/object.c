@@ -100,7 +100,13 @@ static Value luna_string_mod(struct VM *vm, Value a, Value b) { (void)vm; (void)
 
 static Value luna_string_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
-    if (!IS_STRING(self) || !IS_INT(key)) return make_null();
+    if (!IS_STRING(self)) return make_null();
+    if (IS_SLICE(key)) {
+        Value out;
+        if (luna_apply_slice(vm, self, key, &out)) return out;
+        return make_null();
+    }
+    if (!IS_INT(key)) return make_null();
     ObjString *s = (ObjString*)AS_OBJ(self);
     int idx = (int)AS_INT(key);
     if (idx < 0) idx += s->length;
@@ -391,7 +397,13 @@ static Value luna_list_neg(struct VM *vm, Value a) { (void)vm; (void)a; return m
 
 static Value luna_list_getitem(struct VM *vm, Value self, Value key) {
     (void)vm;
-    if (!IS_LIST(self) || !IS_INT(key)) return make_null();
+    if (!IS_LIST(self)) return make_null();
+    if (IS_SLICE(key)) {
+        Value out;
+        if (luna_apply_slice(vm, self, key, &out)) return out;
+        return make_null();
+    }
+    if (!IS_INT(key)) return make_null();
     ObjList *lst = (ObjList*)AS_OBJ(self);
     int idx = (int)AS_INT(key);
     int len = lst->count;
@@ -877,6 +889,15 @@ Type luna_matrix_type = {
     .call = luna_matrix_call, .tostring = luna_matrix_tostring, .hash = luna_matrix_hash, .len = luna_matrix_len
 };
 
+Type luna_slice_type = {
+    .name = "slice", .kind = OBJ_SLICE,
+    .add = luna_default_add, .sub = luna_default_sub, .mul = luna_default_mul, .div = luna_default_div, .mod = luna_default_mod,
+    .neg = luna_default_neg, .cmp = luna_default_cmp,
+    .getitem = luna_default_getitem, .setitem = luna_default_setitem,
+    .getattr = luna_default_getattr, .setattr = luna_default_setattr,
+    .call = luna_default_call, .tostring = luna_default_tostring, .hash = luna_default_hash, .len = luna_default_len
+};
+
 /* Indexed by ObjType. */
 Type *luna_types[] = {
     [OBJ_STRING]       = &luna_string_type,
@@ -895,6 +916,7 @@ Type *luna_types[] = {
     [OBJ_USERDATA]     = &luna_userdata_type,
     [OBJ_VECTOR]       = &luna_vector_type,
     [OBJ_MATRIX]       = &luna_matrix_type,
+    [OBJ_SLICE]        = &luna_slice_type,
 };
 
 /* ============================================================
@@ -1211,9 +1233,42 @@ static void luna_userdata_free(Object *obj) {
     free(ud);
 }
 
+/* slice */
+void luna_slice_free(Object *obj) {
+    free(obj);
+}
+void luna_slice_mark(struct VM *vm, Object *obj) {
+    ObjSlice *s = (ObjSlice*)obj;
+    vm_mark_value(vm, s->start);
+    vm_mark_value(vm, s->stop);
+    vm_mark_value(vm, s->step);
+}
+char *luna_slice_to_cstr(Value self) {
+    ObjSlice *s = (ObjSlice*)AS_OBJ(self);
+    char *out = (char *)malloc(64);
+    if (!out) { fprintf(stderr, "OOM\n"); exit(1); }
+    int pos = 0;
+    if (IS_NIL(s->start)) { memcpy(out + pos, "None", 4); pos += 4; }
+    else if (IS_INT(s->start)) { pos += snprintf(out + pos, 64 - pos, "%d", AS_INT(s->start)); }
+    else { pos += snprintf(out + pos, 64 - pos, "?"); }
+    out[pos++] = ':';
+    if (IS_NIL(s->stop)) { memcpy(out + pos, "None", 4); pos += 4; }
+    else if (IS_INT(s->stop)) { pos += snprintf(out + pos, 64 - pos, "%d", AS_INT(s->stop)); }
+    else { pos += snprintf(out + pos, 64 - pos, "?"); }
+    bool step_one = IS_INT(s->step) && AS_INT(s->step) == 1;
+    if (!step_one) {
+        out[pos++] = ':';
+        if (IS_NIL(s->step)) { memcpy(out + pos, "None", 4); pos += 4; }
+        else if (IS_INT(s->step)) { pos += snprintf(out + pos, 64 - pos, "%d", AS_INT(s->step)); }
+        else { pos += snprintf(out + pos, 64 - pos, "?"); }
+    }
+    out[pos] = '\0';
+    return out;
+}
+
 /* One-time wiring: the frontend owns this kind switch; the core stays generic. */
 void luna_wire_lifecycle(void) {
-    for (int k = 0; k <= OBJ_MATRIX; k++) {
+    for (int k = 0; k <= OBJ_SLICE; k++) {
         Type *t = luna_types[k];
         /* ObjType intentionally has reserved values; there is no Type for
          * those slots in luna_types[]. */
@@ -1251,6 +1306,8 @@ void luna_wire_lifecycle(void) {
                 t->free = luna_buffer_free; t->to_cstr = luna_buffer_to_cstr; break;
             case OBJ_USERDATA:
                 t->free = luna_userdata_free; break;
+            case OBJ_SLICE:
+                t->free = luna_slice_free; t->mark = luna_slice_mark; t->to_cstr = luna_slice_to_cstr; break;
             default: break;
         }
     }
@@ -1675,6 +1732,14 @@ ObjMatrix *new_matrix(void) {
     for (int i = 0; i < 16; i++) obj->m[i] = 0.0f;
     obj->m[0] = obj->m[5] = obj->m[10] = obj->m[15] = 1.0f;
     return obj;
+}
+
+ObjSlice *new_slice(Value start, Value stop, Value step) {
+    ObjSlice *s = (ObjSlice *)malloc(sizeof(ObjSlice));
+    if (!s) { fprintf(stderr, "OOM\n"); exit(1); }
+    init_object((Object*)s, OBJ_SLICE, sizeof(ObjSlice));
+    s->start = start; s->stop = stop; s->step = step;
+    return s;
 }
 
 void buffer_reserve(ObjBuffer *buf, size_t capacity) {
@@ -2292,4 +2357,121 @@ int utf8_code_point_count(const char *s, int byte_len) {
         if ((s[i] & 0xC0) != 0x80) count++;
     }
     return count;
+}
+
+/* ============================================================
+ * Slice application — a[start:stop:step] resolved by the frontend.
+ * Mirrors the python reference (src/py/slice.c apply_slice_list/string),
+ * adapted because Luna has no tuple type.
+ * ============================================================ */
+bool luna_apply_slice(struct VM *vm, Value object, Value slicekey, Value *out) {
+    (void)vm;
+    if (!IS_SLICE(slicekey)) { *out = make_null(); return true; }
+    ObjSlice *sl = (ObjSlice*)AS_OBJ(slicekey);
+    int step = IS_INT(sl->step) ? AS_INT(sl->step) : 1;
+    int start, stop;
+    if (IS_LIST(object)) {
+        ObjList *lst = (ObjList*)AS_OBJ(object);
+        int len = list_length(lst);
+        if (IS_NIL(sl->start)) start = (step < 0) ? len - 1 : 0;
+        else if (IS_INT(sl->start)) {
+            start = AS_INT(sl->start);
+            if (start < 0) start += len;
+            if (start < 0) start = (step < 0) ? -1 : 0;
+            if (start > len) start = len;
+        } else start = (step < 0) ? len - 1 : 0;
+        if (IS_NIL(sl->stop)) stop = (step < 0) ? -1 : len;
+        else if (IS_INT(sl->stop)) {
+            stop = AS_INT(sl->stop);
+            if (stop < 0) stop += len;
+            if (stop < 0) stop = -1;
+            if (stop > len) stop = len;
+        } else stop = (step < 0) ? -1 : len;
+        ObjList *result = new_list(0);
+        if (step > 0) {
+            for (int i = start; i < stop; i += step) {
+                Value v = lst->items ? lst->items[i] : lst->inline_items[i];
+                list_add(result, v);
+            }
+        } else if (step < 0) {
+            for (int i = start; i > stop; i += step) {
+                Value v = lst->items ? lst->items[i] : lst->inline_items[i];
+                list_add(result, v);
+            }
+        }
+        *out = make_obj((Object *)result);
+        return true;
+    }
+    if (IS_STRING(object)) {
+        ObjString *s = (ObjString*)AS_OBJ(object);
+        int byte_len = s->length;
+        int cp_count = utf8_code_point_count(s->chars, byte_len);
+        int len = cp_count;
+        if (IS_NIL(sl->start)) start = (step < 0) ? len - 1 : 0;
+        else if (IS_INT(sl->start)) {
+            start = AS_INT(sl->start);
+            if (start < 0) start += len;
+            if (start < 0) start = (step < 0) ? -1 : 0;
+            if (start > len) start = len;
+        } else start = (step < 0) ? len - 1 : 0;
+        if (IS_NIL(sl->stop)) stop = (step < 0) ? -1 : len;
+        else if (IS_INT(sl->stop)) {
+            stop = AS_INT(sl->stop);
+            if (stop < 0) stop += len;
+            if (stop < 0) stop = -1;
+            if (stop > len) stop = len;
+        } else stop = (step < 0) ? -1 : len;
+        if (step == 0) {
+            *out = make_obj((Object *)new_string("", 0));
+            return true;
+        }
+        int *cp_pos = (int *)malloc((size_t)cp_count * sizeof(int));
+        if (!cp_pos) { fprintf(stderr, "OOM\n"); exit(1); }
+        int ci = 0;
+        for (int i = 0; i < byte_len; i++) {
+            if ((s->chars[i] & 0xC0) != 0x80) cp_pos[ci++] = i;
+        }
+        int total_bytes = 0;
+        if (step > 0) {
+            for (int i = start; i < stop; i += step) {
+                int cp_start = cp_pos[i];
+                int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                total_bytes += cp_end - cp_start;
+            }
+        } else {
+            for (int i = start; i > stop; i += step) {
+                int cp_start = cp_pos[i];
+                int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                total_bytes += cp_end - cp_start;
+            }
+        }
+        char *buf = (char *)malloc((size_t)total_bytes + 1);
+        if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+        int j = 0;
+        if (step > 0) {
+            for (int i = start; i < stop; i += step) {
+                int cp_start = cp_pos[i];
+                int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                int cp_len = cp_end - cp_start;
+                memcpy(buf + j, s->chars + cp_start, (size_t)cp_len);
+                j += cp_len;
+            }
+        } else {
+            for (int i = start; i > stop; i += step) {
+                int cp_start = cp_pos[i];
+                int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
+                int cp_len = cp_end - cp_start;
+                memcpy(buf + j, s->chars + cp_start, (size_t)cp_len);
+                j += cp_len;
+            }
+        }
+        buf[j] = '\0';
+        ObjString *result = new_string(buf, j);
+        free(buf);
+        free(cp_pos);
+        *out = make_obj((Object *)result);
+        return true;
+    }
+    *out = make_null();
+    return true;
 }

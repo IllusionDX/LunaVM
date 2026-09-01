@@ -152,6 +152,37 @@ static Value bn_input(VM *vm, Value *args, int n) {
     return make_null();
 }
 
+/* Internal-only native used by the Luna compiler when emitting
+ * a[start:stop:step]. Constructs a Slice(start, stop, step) object.
+ * Bounds must be INT or nil; step 0 raises ValueError.
+ * Accepts 1..3 args: 1 arg -> stop; 2 -> start, stop; 3 -> start, stop, step. */
+static Value bn_slice(VM *vm, Value *args, int n) {
+    if (n < 1 || n > 3) {
+        luna_throw(vm, luna_fe(vm)->argument_error_class, "_slice() takes 1 to 3 arguments");
+        return make_null();
+    }
+    for (int i = 0; i < n; i++) {
+        Value a = args[i];
+        if (!IS_INT(a) && !IS_NIL(a)) {
+            luna_throw(vm, luna_fe(vm)->type_error_class, "slice indices must be integers or nil");
+            return make_null();
+        }
+    }
+    Value start = make_null(), stop = make_null(), step = make_null();
+    if (n == 1) {
+        stop = args[0];
+    } else {
+        start = args[0]; stop = args[1];
+        if (n == 3) step = args[2];
+    }
+    if (IS_NIL(step)) step = make_int(1);
+    if (IS_INT(step) && AS_INT(step) == 0) {
+        luna_throw(vm, luna_fe(vm)->value_error_class, "slice step cannot be zero");
+        return make_null();
+    }
+    return make_obj((Object *)new_slice(start, stop, step));
+}
+
 static Value bn_range(VM *vm, Value *args, int n) {
     (void)vm;
     Value vstart = make_int(0), vstop = make_int(0), vstep = make_int(1);
@@ -815,6 +846,7 @@ void vm_register_builtins(VM *vm) {
     vm_define_native(vm, "vec3",  bn_vec3);
     vm_define_native(vm, "vec4",  bn_vec4);
     vm_define_native(vm, "mat4",  bn_mat4);
+    vm_define_native(vm, "_slice", bn_slice);
 }
 
 /* ============================================================ */

@@ -1037,15 +1037,19 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     }
 
     case EXPR_SLICE: {
-        /* OP_SLICE (kept: Python-style slicing) routes through the frontend
-         * slice hook; a null/non-indexable obj yields null, so the optional
-         * (?.) form needs no separate opcode. */
+        /* Python-style slicing a[start:stop:step] is resolved entirely in the
+         * frontend: build a Slice(start, stop, step) object via the `slice`
+         * builtin and pass it as the single key through OP_INDEXGET/__getitem__.
+         * The core only knows the neutral OP_INDEXGET; no OP_SLICE opcode. */
         compile_expr_into(c, expr->data.slice.obj, target);
         int saved_base = c->temp_base;
-        c->temp_base = target + 1;   /* runtime reads object + bounds from RB..RB+3 */
-        int start_reg = alloc_reg(c);
-        int stop_reg  = alloc_reg(c);
-        int step_reg  = alloc_reg(c);
+        c->temp_base = target + 1;
+        int callee_reg = alloc_reg(c);   /* slice builtin result (the key)   */
+        int start_reg  = alloc_reg(c);
+        int stop_reg   = alloc_reg(c);
+        int step_reg   = alloc_reg(c);
+        int mk = chunk_add_string(c->vm, c->chunk, "slice");
+        emit_ABx(c, OP_GETGLOBAL, (uint8_t)callee_reg, (uint16_t)mk);
         if (expr->data.slice.start)
             compile_expr_into(c, expr->data.slice.start, start_reg);
         else
@@ -1058,7 +1062,9 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             compile_expr_into(c, expr->data.slice.step, step_reg);
         else
             emit_ABC(c, OP_LOADNULL, (uint8_t)step_reg, 0, 0);
-        emit_ABC(c, OP_SLICE, (uint8_t)target, (uint8_t)target, 0);
+        emit_ABC(c, OP_CALL, (uint8_t)callee_reg, (uint8_t)callee_reg, 3);
+        emit_ABC(c, OP_INDEXGET, (uint8_t)target, (uint8_t)target, (uint8_t)callee_reg);
+        free_reg(c);
         free_reg(c);
         free_reg(c);
         free_reg(c);

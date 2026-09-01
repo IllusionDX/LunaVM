@@ -301,7 +301,8 @@ static bool py_index_get(VM *vm, Value object, Value key, bool safe, Value *out)
         vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, "value is not indexable");
         return false;
     }
-    if ((IS_LIST(object) || IS_STRING(object)) && !IS_INT(key) && !IS_BIGINT(key)) {
+    if ((IS_LIST(object) || IS_STRING(object)) && !IS_INT(key) && !IS_BIGINT(key)
+        && !IS_SLICE(key)) {
         if (safe) { *out = make_null(); return true; }
         const char *what = IS_LIST(object) ? "list" : "string";
         char msg[64];
@@ -318,7 +319,7 @@ static bool py_index_get(VM *vm, Value object, Value key, bool safe, Value *out)
         vm->last_exception = make_exception_instance(vm, py_fe(vm)->key_error_class, message);
         return false;
     }
-    if (!safe && (IS_LIST(object) || IS_STRING(object))) {
+    if (!safe && (IS_LIST(object) || IS_STRING(object)) && !IS_SLICE(key)) {
         int64_t index;
         if (!py_index_to_i64(vm, key, &index)) return false;   /* OverflowError */
         int64_t count = IS_LIST(object)
@@ -360,178 +361,6 @@ static bool py_index_set(VM *vm, Value object, Value key, Value value) {
         }
     }
     AS_OBJ(object)->type->setitem(vm, object, key, value);
-    return true;
-}
-
-/* Slicing semantics live in the frontend: the core only knows the neutral
- * OP_SLICE opcode. Non-indexable objects (including null)
- * yield null, matching the previous core behaviour. */
-/* Slice bounds: bigints beyond int64 raise OverflowError (CPython raises
- * "Python int too large to convert to C ssize_t" for slices too); bigints
- * that fit are clamped into the int32 range, where the existing start/stop
- * clamp logic reduces them to the correct endpoint. */
-static bool py_slice_bound(VM *vm, Value *v) {
-    if (IS_BIGINT(*v)) {
-        int64_t x;
-        if (!bigint_get_i64((ObjBigInt *)AS_OBJ(*v), &x)) {
-            vm->last_exception = make_exception_instance(vm, py_fe(vm)->overflow_error_class,
-                "Python int too large to convert to C ssize_t");
-            return false;
-        }
-        if (x > INT32_MAX) x = INT32_MAX;
-        else if (x < INT32_MIN) x = INT32_MIN;
-        *v = make_int((int32_t)x);
-    }
-    return true;
-}
-
-static bool py_slice(VM *vm, Value object, Value start_val, Value stop_val,
-                       Value step_val, bool safe, Value *out) {
-    (void)vm; (void)safe;
-    if (!IS_LIST(object) && !IS_STRING(object) && !IS_TUPLE(object)) {
-        *out = make_null();
-        return true;
-    }
-    if (!py_slice_bound(vm, &start_val)) return false;
-    if (!py_slice_bound(vm, &stop_val)) return false;
-    if (!py_slice_bound(vm, &step_val)) return false;
-    int step = IS_INT(step_val) ? AS_INT(step_val) : 1;
-    if (IS_LIST(object)) {
-        ObjList *lst = (ObjList *)AS_OBJ(object);
-        int len = list_length(lst);
-        int start, stop;
-        if (IS_NIL(start_val)) start = (step < 0) ? len - 1 : 0;
-        else if (IS_INT(start_val)) {
-            start = AS_INT(start_val);
-            if (start < 0) start += len;
-            if (start < 0) start = (step < 0) ? -1 : 0;
-            if (start > len) start = len;
-        } else start = (step < 0) ? len - 1 : 0;
-        if (IS_NIL(stop_val)) stop = (step < 0) ? -1 : len;
-        else if (IS_INT(stop_val)) {
-            stop = AS_INT(stop_val);
-            if (stop < 0) stop += len;
-            if (stop < 0) stop = -1;
-            if (stop > len) stop = len;
-        } else stop = (step < 0) ? -1 : len;
-        ObjList *result = new_list(0);
-        if (step > 0) {
-            for (int i = start; i < stop; i += step) {
-                Value v = lst->items ? lst->items[i] : lst->inline_items[i];
-                list_add(result, v);
-            }
-        } else if (step < 0) {
-            for (int i = start; i > stop; i += step) {
-                Value v = lst->items ? lst->items[i] : lst->inline_items[i];
-                list_add(result, v);
-            }
-        }
-        *out = make_obj((Object *)result);
-        return true;
-    }
-    if (IS_TUPLE(object)) {
-        ObjTuple *t = (ObjTuple *)AS_OBJ(object);
-        int len = t->count;
-        int start, stop;
-        if (IS_NIL(start_val)) start = (step < 0) ? len - 1 : 0;
-        else if (IS_INT(start_val)) {
-            start = AS_INT(start_val);
-            if (start < 0) start += len;
-            if (start < 0) start = (step < 0) ? -1 : 0;
-            if (start > len) start = len;
-        } else start = (step < 0) ? len - 1 : 0;
-        if (IS_NIL(stop_val)) stop = (step < 0) ? -1 : len;
-        else if (IS_INT(stop_val)) {
-            stop = AS_INT(stop_val);
-            if (stop < 0) stop += len;
-            if (stop < 0) stop = -1;
-            if (stop > len) stop = len;
-        } else stop = (step < 0) ? -1 : len;
-        int cap = (step > 0) ? (stop > start ? (stop - start + step - 1) / step : 0)
-                             : (start > stop ? (start - stop - step - 1) / (-step) : 0);
-        ObjTuple *result = new_tuple(cap);
-        int ri = 0;
-        if (step > 0) {
-            for (int i = start; i < stop; i += step) {
-                result->items[ri++] = t->items[i];
-            }
-        } else if (step < 0) {
-            for (int i = start; i > stop; i += step) {
-                result->items[ri++] = t->items[i];
-            }
-        }
-        *out = make_obj((Object *)result);
-        return true;
-    }
-    /* string */
-    ObjString *s = (ObjString *)AS_OBJ(object);
-    int byte_len = s->length;
-    int cp_count = utf8_code_point_count(s->chars, byte_len);
-    int len = cp_count;
-    int start, stop;
-    if (IS_NIL(start_val)) start = (step < 0) ? len - 1 : 0;
-    else if (IS_INT(start_val)) {
-        start = AS_INT(start_val);
-        if (start < 0) start += len;
-        if (start < 0) start = (step < 0) ? -1 : 0;
-        if (start > len) start = len;
-    } else start = (step < 0) ? len - 1 : 0;
-    if (IS_NIL(stop_val)) stop = (step < 0) ? -1 : len;
-    else if (IS_INT(stop_val)) {
-        stop = AS_INT(stop_val);
-        if (stop < 0) stop += len;
-        if (stop < 0) stop = -1;
-        if (stop > len) stop = len;
-    } else stop = (step < 0) ? -1 : len;
-    if (step == 0) {
-        *out = make_obj((Object *)new_string("", 0));
-        return true;
-    }
-    int *cp_pos = (int *)malloc((size_t)cp_count * sizeof(int));
-    if (!cp_pos) { fprintf(stderr, "OOM\n"); exit(1); }
-    int ci = 0;
-    for (int i = 0; i < byte_len; i++) {
-        if ((s->chars[i] & 0xC0) != 0x80) cp_pos[ci++] = i;
-    }
-    int total_bytes = 0;
-    if (step > 0) {
-        for (int i = start; i < stop; i += step) {
-            int cp_start = cp_pos[i];
-            int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-            total_bytes += cp_end - cp_start;
-        }
-    } else {
-        for (int i = start; i > stop; i += step) {
-            int cp_start = cp_pos[i];
-            int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-            total_bytes += cp_end - cp_start;
-        }
-    }
-    char *buf = (char *)malloc((size_t)total_bytes + 1);
-    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
-    int j = 0;
-    if (step > 0) {
-        for (int i = start; i < stop; i += step) {
-            int cp_start = cp_pos[i];
-            int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-            int cp_len = cp_end - cp_start;
-            memcpy(buf + j, s->chars + cp_start, (size_t)cp_len);
-            j += cp_len;
-        }
-    } else {
-        for (int i = start; i > stop; i += step) {
-            int cp_start = cp_pos[i];
-            int cp_end = (i < cp_count - 1) ? cp_pos[i + 1] : byte_len;
-            int cp_len = cp_end - cp_start;
-            memcpy(buf + j, s->chars + cp_start, (size_t)cp_len);
-            j += cp_len;
-        }
-    }
-    buf[j] = '\0';
-    ObjString *result = new_string(buf, j);
-    free(buf);
-    free(cp_pos);
-    *out = make_obj((Object *)result);
     return true;
 }
 
@@ -1195,7 +1024,6 @@ static const VMFrontendHooks py_frontend_hooks = {
     .setitem = py_index_set,
     .getattr = py_member_get,
     .setattr = py_member_set,
-    .slice = py_slice,
     .iterate = py_iterate,
     .iter_next = py_iter_next,
     .new_list = py_new_list_op,

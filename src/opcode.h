@@ -140,7 +140,6 @@ typedef enum {
 
     OP_INDEXGET,    /* ABC  : A = B[C]                                     */
     OP_INDEXSET,    /* ABC  : A[B] = C                                     */
-    OP_SLICE,       /* ABC  : A = slice(B, B+1..B+C)  C=0..3, null=omit  */
     OP_MEMBERGET,   /* ABC  : A = B.field  (field = constants[C])         */
     OP_MEMBERSET,   /* ABC  : A.field = B  (field = constants[C])         */
     OP_GETFIELD,    /* ABC  : A = B->fields[C] (slot-based field get)     */
