@@ -51,7 +51,7 @@ void chunk_free(Chunk *chunk);
 int  chunk_write(Chunk *chunk, uint32_t inst, int line);
 
 /* Convenience emitters using encoding macros from opcode.h */
-int  chunk_emit_ABC (Chunk *chunk, int line, OpCode op, uint8_t a, uint8_t b, uint8_t c);
+int  chunk_emit_ABC (Chunk *chunk, int line, OpCode op, uint8_t a, uint8_t b, uint32_t c);
 int  chunk_emit_ABx (Chunk *chunk, int line, OpCode op, uint8_t a, uint16_t bx);
 int  chunk_emit_AsBx(Chunk *chunk, int line, OpCode op, uint8_t a, int32_t sbx);
 

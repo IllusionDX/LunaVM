@@ -216,7 +216,7 @@ static void free_reg(Compiler *c) {
 /* Emit helpers                                                 */
 /* ============================================================ */
 
-static void emit_ABC(Compiler *c, OpCode op, uint8_t a, uint8_t b, uint8_t ci) {
+static void emit_ABC(Compiler *c, OpCode op, uint8_t a, uint8_t b, uint32_t ci) {
     chunk_emit_ABC(c->chunk, c->line, op, a, b, ci);
 }
 
@@ -732,10 +732,10 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             }
         }
 
-        /* ADDK/MULK: literal right operand in constant pool, no LOADK needed */
-        if ((strcmp(op_str, "+") == 0 || strcmp(op_str, "*") == 0) &&
-            (expr->data.binary.right->kind == EXPR_INTEGER ||
-             expr->data.binary.right->kind == EXPR_FLOAT)) {
+        /* RK fast path: literal right operand in constant pool → single op, no LOADK.
+           The C field carries the const index (RK encoding, 0..255). */
+        if (expr->data.binary.right->kind == EXPR_INTEGER ||
+            expr->data.binary.right->kind == EXPR_FLOAT) {
             Value cv;
             if (expr->data.binary.right->kind == EXPR_INTEGER) {
                 bigint_from_decimal(expr->data.binary.right->data.integer.value,
@@ -749,9 +749,32 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             }
             if (cidx < 0) cidx = chunk_add_const(c->chunk, cv);
             if (cidx <= 255) {
+                OpCode op;
+                if (strcmp(op_str, "+") == 0) op = OP_ADD;
+                else if (strcmp(op_str, "-") == 0) op = OP_SUB;
+                else if (strcmp(op_str, "*") == 0) op = OP_MUL;
+                else if (strcmp(op_str, "/") == 0) op = OP_DIV;
+                else if (strcmp(op_str, "//") == 0) op = OP_IDIV;
+                else if (strcmp(op_str, "%") == 0) op = OP_MOD;
+                else if (strcmp(op_str, "**") == 0) op = OP_POW;
+                else if (strcmp(op_str, "==") == 0) op = OP_EQ;
+                else if (strcmp(op_str, "!=") == 0) op = OP_NE;
+                else if (strcmp(op_str, "<") == 0) op = OP_LT;
+                else if (strcmp(op_str, "<=") == 0) op = OP_LE;
+                else if (strcmp(op_str, ">") == 0) op = OP_GT;
+                else if (strcmp(op_str, ">=") == 0) op = OP_GE;
+                else if (strcmp(op_str, "in") == 0) op = OP_IN;
+                else if (strcmp(op_str, "not in") == 0) op = OP_IN;
+                else if (strcmp(op_str, "is") == 0) op = OP_RAW_EQ;
+                else if (strcmp(op_str, "is not") == 0) op = OP_RAW_NE;
+                else if (strcmp(op_str, "&") == 0) op = OP_BAND;
+                else if (strcmp(op_str, "|") == 0) op = OP_BOR;
+                else if (strcmp(op_str, "^") == 0) op = OP_BXOR;
+                else if (strcmp(op_str, "<<") == 0) op = OP_SHL;
+                else if (strcmp(op_str, ">>") == 0) op = OP_SHR;
+                else { compile_expr_into(c, expr->data.binary.left, target); int temp = alloc_reg(c); compile_expr_into(c, expr->data.binary.right, temp); emit_ABC(c, OP_ADD, (uint8_t)target, (uint8_t)target, (uint8_t)temp); free_reg(c); break; }
                 compile_expr_into(c, expr->data.binary.left, target);
-                OpCode kop = (strcmp(op_str, "+") == 0) ? OP_ADDK : OP_MULK;
-                emit_ABC(c, kop, (uint8_t)target, (uint8_t)target, (uint8_t)cidx);
+                emit_ABC(c, op, (uint8_t)target, (uint8_t)target, RK_CONST((uint16_t)cidx));
                 break;
             }
         }
@@ -1697,7 +1720,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             if (fused) {
                 int off = c->chunk->count - (jz + 1);
                 if (off >= 0 && off <= 255)
-                    c->chunk->code[jz] = (c->chunk->code[jz] & 0x00FFFFFF) | ((uint32_t)off << 24);
+                    c->chunk->code[jz] = (c->chunk->code[jz] & 0x007FFFFF) | ((uint32_t)off << 23);
             } else {
                 patch_jump(c, jz);
             }
@@ -1710,7 +1733,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             if (fused) {
                 int off = c->chunk->count - (jz + 1);
                 if (off >= 0 && off <= 255)
-                    c->chunk->code[jz] = (c->chunk->code[jz] & 0x00FFFFFF) | ((uint32_t)off << 24);
+                    c->chunk->code[jz] = (c->chunk->code[jz] & 0x007FFFFF) | ((uint32_t)off << 23);
             } else {
                 patch_jump(c, jz);
             }
@@ -1790,7 +1813,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         if (fused) {
             int offset = c->chunk->count - (jz + 1);
             if (offset >= 0 && offset <= 255) {
-                c->chunk->code[jz] = (c->chunk->code[jz] & 0x00FFFFFF) | ((uint32_t)offset << 24);
+                c->chunk->code[jz] = (c->chunk->code[jz] & 0x007FFFFF) | ((uint32_t)offset << 23);
             }
         } else {
             patch_jump(c, jz);

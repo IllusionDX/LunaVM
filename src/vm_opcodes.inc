@@ -56,8 +56,18 @@
     /* ---- Arithmetic (ABC: A = B op C) ---- */
     /* 7.  OP_ADD */
     op_add: {
-        Value _L = RKB;
-        Value _R = RKC;
+        Value _L = RKB, _R = RKC;
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            int64_t res = (int64_t)AS_INT(_L) + (int64_t)AS_INT(_R);
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                SET_REG(RA, INT_VAL((int32_t)res));
+                CHECK_GC; DECODE; goto *op_labels[OP(instr)];
+            }
+        }
+        if (LUNA_LIKELY(IS_DOUBLE(_L) && IS_DOUBLE(_R))) {
+            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
+            CHECK_GC; DECODE; goto *op_labels[OP(instr)];
+        }
         Value _v = do_arith(vm, _L, _R, OP_ADD);
         if (IS_NIL(_v)) {
             _exc = vm->last_exception;
@@ -65,7 +75,7 @@
             goto op_throw;
         }
         SET_REG(RA, _v);
-        DECODE; goto *op_labels[OP(instr)];
+        CHECK_GC; DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 8.  OP_SUB */
@@ -84,6 +94,17 @@
     /* 9.  OP_MUL */
     op_mul: {
         Value _L = RKB, _R = RKC;
+        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
+            int64_t res = (int64_t)AS_INT(_L) * (int64_t)AS_INT(_R);
+            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
+                SET_REG(RA, INT_VAL((int32_t)res));
+                CHECK_GC; DECODE; goto *op_labels[OP(instr)];
+            }
+        }
+        if (LUNA_LIKELY(IS_DOUBLE(_L) && IS_DOUBLE(_R))) {
+            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
+            CHECK_GC; DECODE; goto *op_labels[OP(instr)];
+        }
         Value _v = do_arith(vm, _L, _R, OP_MUL);
         if (IS_NIL(_v)) { _exc = vm->last_exception; if (IS_NIL(_exc)) _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, "unsupported multiplication"); goto op_throw; }
         SET_REG(RA, _v);
@@ -144,71 +165,17 @@
     }
 
     /* 13. OP_BAND */
-    op_band: { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BAND); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise and");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_band: { Value _v=do_arith(vm,RKB,RKC,OP_BAND); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise and");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 14. OP_BOR */
-    op_bor:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BOR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise or");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_bor:  { Value _v=do_arith(vm,RKB,RKC,OP_BOR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise or");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 15. OP_BXOR */
-    op_bxor: { Value _v=do_arith(vm,REG(RB),REG(RC),OP_BXOR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise xor");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_bxor: { Value _v=do_arith(vm,RKB,RKC,OP_BXOR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise xor");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 16. OP_BNOT */
     op_bnot: { Value _v=make_null(); if(!vm_unary(vm,VM_OP_BNOT,REG(RB),&_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise not");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 17. OP_SHL */
-    op_shl:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_SHL); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift left");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
+    op_shl:  { Value _v=do_arith(vm,RKB,RKC,OP_SHL); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift left");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
     /* 18. OP_SHR */
-    op_shr:  { Value _v=do_arith(vm,REG(RB),REG(RC),OP_SHR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift right");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
-
-    /* ---- Arithmetic with constant pool operand ---- */
-    /* OP_ADDK */
-    op_addk: {
-        Value _L = REG(RB);
-        Value _R = CONST(RC);
-        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
-            int64_t res = (int64_t)AS_INT(_L) + (int64_t)AS_INT(_R);
-            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
-                SET_REG(RA, INT_VAL((int32_t)res));
-                CHECK_GC; DECODE; goto *op_labels[OP(instr)];
-            }
-        }
-        if (LUNA_LIKELY(IS_DOUBLE(_L) && IS_DOUBLE(_R))) {
-            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) + AS_DOUBLE(_R)));
-            CHECK_GC; DECODE; goto *op_labels[OP(instr)];
-        }
-        Value _v = do_arith(vm, _L, _R, OP_ADD);
-        if (IS_NIL(_v)) {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "unsupported operand type(s) for +: '%s' and '%s'",
-                     val_type_name(_L), val_type_name(_R));
-            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
-            goto op_throw;
-        }
-        SET_REG(RA, _v);
-        CHECK_GC; DECODE; goto *op_labels[OP(instr)];
-    }
-    /* OP_MULK */
-    op_mulk: {
-        Value _L = REG(RB);
-        Value _R = CONST(RC);
-        if (LUNA_LIKELY(IS_INT(_L) && IS_INT(_R))) {
-            int64_t res = (int64_t)AS_INT(_L) * (int64_t)AS_INT(_R);
-            if (LUNA_LIKELY(res >= INT32_MIN && res <= INT32_MAX)) {
-                SET_REG(RA, INT_VAL((int32_t)res));
-                CHECK_GC; DECODE; goto *op_labels[OP(instr)];
-            }
-        }
-        if (LUNA_LIKELY(IS_DOUBLE(_L) && IS_DOUBLE(_R))) {
-            SET_REG_PRIM(RA, make_double(AS_DOUBLE(_L) * AS_DOUBLE(_R)));
-            CHECK_GC; DECODE; goto *op_labels[OP(instr)];
-        }
-        Value _v = do_arith(vm, _L, _R, OP_MUL);
-        if (IS_NIL(_v)) {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "unsupported operand type(s) for *: '%s' and '%s'",
-                     val_type_name(_L), val_type_name(_R));
-            _exc = vm_make_exception(vm, VM_EXCEPTION_TYPE, buf);
-            goto op_throw;
-        }
-        SET_REG(RA, _v);
-        CHECK_GC; DECODE; goto *op_labels[OP(instr)];
-    }
+    op_shr:  { Value _v=do_arith(vm,RKB,RKC,OP_SHR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift right");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
 
     /* ---- Integer-immediate arithmetic (ABC: A = B op (int8_t)C) ---- */
     /* 19. OP_ADDI */

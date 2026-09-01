@@ -3,23 +3,27 @@
  * All instructions are a fixed 4 bytes (32-bit uint32_t).
  * 8 instructions fit per 64-byte CPU cache line.
  *
- * Three encodings share the same 32-bit word:
+ * Two encodings share the same 32-bit word:
  *
  *   ABC   (3-register ops)
- *     bits  0-7  : opcode  (8 bits, up to 256 opcodes)
- *     bits  8-15 : A       (8 bits, destination register)
- *     bits 16-23 : B       (8 bits, source register 1)
- *     bits 24-31 : C       (8 bits, source register 2 / small immediate)
+ *     bits  0-6  : opcode  (7 bits, up to 128 opcodes)
+ *     bits  7-14 : A       (8 bits, destination register)
+ *     bits 15-22 : B       (8 bits, source register 1)
+ *     bits 23-31 : C       (9 bits, source register 2 / small immediate)
  *
  *   ABx   (reg + unsigned 16-bit immediate)
- *     bits  0-7  : opcode
- *     bits  8-15 : A
- *     bits 16-31 : Bx      (16 bits unsigned — constant index, count, …)
+ *     bits  0-6  : opcode
+ *     bits  7-14 : A
+ *     bits 15-31 : Bx      (17 bits unsigned — constant index, count, …)
  *
- *   AsBx  (reg + signed 16-bit offset)
- *     bits  0-7  : opcode
- *     bits  8-15 : A
- *     bits 16-31 : sBx     (16 bits signed — jump offsets)
+ *   AsBx  (reg + signed 17-bit offset)
+ *     bits  0-6  : opcode
+ *     bits  7-14 : A
+ *     bits 15-31 : sBx     (17 bits signed, biased — jump offsets)
+ *
+ * Operand C uses Lua's RK format: C < 256 selects register C,
+ * C >= 256 selects constant pool index C-256 (limited to 0..255).
+ * Arithmetic and comparison ops read C through this scheme.
  */
 
 #ifndef LUNA_OPCODE_H
@@ -29,26 +33,35 @@
 
 /* ---- Encoding / Decoding macros ---- */
 
-/* ABC format */
+/* ABC format: opcode 7 bits, A 8 bits, B 8 bits, C 9 bits (RK) */
 #define ENCODE_ABC(op, a, b, c) \
-    ((uint32_t)(op) | ((uint32_t)(a) << 8) | ((uint32_t)(b) << 16) | ((uint32_t)(c) << 24))
+    ((uint32_t)(op) | ((uint32_t)(a) << 7) | ((uint32_t)(b) << 15) | ((uint32_t)(c) << 23))
 
-/* ABx format (unsigned 16-bit immediate) */
+/* ABx format (unsigned 17-bit immediate) */
 #define ENCODE_ABx(op, a, bx) \
-    ((uint32_t)(op) | ((uint32_t)(a) << 8) | ((uint32_t)(uint16_t)(bx) << 16))
+    ((uint32_t)(op) | ((uint32_t)(a) << 7) | ((uint32_t)(uint32_t)(bx) << 15))
 
-/* AsBx format (signed 16-bit immediate, biased by 32767) */
-#define SBIAS 32767
+/* AsBx format (signed 17-bit immediate, biased by 65535) */
+#define SBIAS 65535
 #define ENCODE_AsBx(op, a, sbx) \
-    ((uint32_t)(op) | ((uint32_t)(a) << 8) | ((uint32_t)(uint16_t)((sbx) + SBIAS) << 16))
+    ((uint32_t)(op) | ((uint32_t)(a) << 7) | ((uint32_t)(uint32_t)((sbx) + SBIAS) << 15))
 
 /* Field extraction */
-#define DECODE_OP(inst)  ((uint8_t) ((inst)       & 0xFF))
-#define DECODE_A(inst)   ((uint8_t) (((inst) >> 8)  & 0xFF))
-#define DECODE_B(inst)   ((uint8_t) (((inst) >> 16) & 0xFF))
-#define DECODE_C(inst)   ((uint8_t) (((inst) >> 24) & 0xFF))
-#define DECODE_Bx(inst)  ((uint16_t)(((inst) >> 16) & 0xFFFF))
-#define DECODE_sBx(inst) ((int32_t)((uint16_t)(((inst) >> 16) & 0xFFFF)) - SBIAS)
+#define DECODE_OP(inst)  ((uint8_t) ((inst)       & 0x7F))
+#define DECODE_A(inst)   ((uint8_t) (((inst) >> 7)  & 0xFF))
+#define DECODE_B(inst)   ((uint8_t) (((inst) >> 15) & 0xFF))
+#define DECODE_C(inst)   ((uint16_t)(((inst) >> 23) & 0x1FF))
+#define DECODE_Bx(inst)  ((uint32_t)(((inst) >> 15) & 0x1FFFF))
+#define DECODE_sBx(inst) ((int32_t)(((inst) >> 15) & 0x1FFFF) - SBIAS)
+
+/* RK operand encoding: 0..255 = register, 256..511 = const index 0..255 */
+#define RK_REG_SHIFT   23
+#define RK_CONST_FLAG  (1u << 8)
+#define RK_REG(i)      ((uint32_t)(i))
+#define RK_CONST(i)    (RK_CONST_FLAG | (uint32_t)(i))
+#define IS_RK_CONST(rk) ((rk) & RK_CONST_FLAG)
+#define RK_INDEX(rk)   ((uint16_t)((rk) & 0xFF))
+#define DECODE_RK_C(inst) ((uint16_t)(((inst) >> 23) & 0x1FF))
 
 /* ---- Opcode enum ---- */
 
@@ -79,10 +92,6 @@ typedef enum {
     OP_BNOT,        /* ABC  : A = ~B                                       */
     OP_SHL,         /* ABC  : A = B << C                                   */
     OP_SHR,         /* ABC  : A = B >> C                                   */
-
-    /* ---- Arithmetic with constant pool operand (ABC: A = B op constants[C]) ---- */
-    OP_ADDK,        /* ABC  : A = B + constants[C]                         */
-    OP_MULK,        /* ABC  : A = B * constants[C]                         */
 
     /* ---- Integer-immediate arithmetic (ABC: A = B op (int8_t)C) ---- */
     OP_ADDI,        /* ABC  : A = B + (int8_t)C  (arithmetic fast path)  */

@@ -765,7 +765,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 #define RB       (B)
 #define RC       (C)
 #define RKB      REG(B)
-#define RKC      REG(C)
+#define RKC      RK_LOAD(C)
 
 #define CHECK_GC \
     do { \
@@ -774,6 +774,9 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 
 #define OP(inst) DECODE_OP(inst)
 #define BX       Bx
+
+/* RK operand: C < 256 is a register, C >= 256 is a const-pool index */
+#define RK_LOAD(c) (IS_RK_CONST(c) ? CONST(RK_INDEX(c)) : REG(c))
 #define SBX      sBx
 
     static const void *op_labels[] = {
@@ -798,9 +801,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_bnot,          // 16 OP_BNOT
         &&op_shl,           // 17 OP_SHL
         &&op_shr,           // 18 OP_SHR
-        &&op_addk,          // 19 OP_ADDK
-        &&op_mulk,          // 20 OP_MULK
-        &&op_addi,          // 21 OP_ADDI
+        &&op_addi,          // 19 OP_ADDI
         &&op_subi,          // 22 OP_SUBI
         &&op_eq,            // 23 OP_EQ
         &&op_ne,            // 26 OP_NE
@@ -922,6 +923,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
 #undef RB
 #undef RC
 #undef RKB
+#undef RK_LOAD
 #undef RKC
 #undef REG
 #undef CONST

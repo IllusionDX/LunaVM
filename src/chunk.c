@@ -69,7 +69,7 @@ int chunk_write(Chunk *chunk, uint32_t inst, int line) {
 }
 
 int chunk_emit_ABC(Chunk *chunk, int line, OpCode op,
-                   uint8_t a, uint8_t b, uint8_t c) {
+                   uint8_t a, uint8_t b, uint32_t c) {
     return chunk_write(chunk, ENCODE_ABC(op, a, b, c), line);
 }
 
@@ -131,11 +131,11 @@ void chunk_patch_sBx(Chunk *chunk, int at, int32_t sbx) {
         fprintf(stderr, "chunk_patch_sBx: index %d out of range\n", at);
         return;
     }
-    /* Preserve opcode and A, overwrite bits 16-31 */
+    /* Preserve opcode and A, overwrite bits 15-31 */
     uint32_t inst = chunk->code[at];
-    uint32_t preserved = inst & 0x0000FFFF;  /* low 16 bits: opcode + A */
-    uint32_t new_bx = (uint32_t)(uint16_t)((sbx) + SBIAS);
-    chunk->code[at] = preserved | (new_bx << 16);
+    uint32_t preserved = inst & 0x00007FFF;  /* low 15 bits: opcode + A */
+    uint32_t new_bx = (uint32_t)(uint32_t)((sbx) + SBIAS);
+    chunk->code[at] = preserved | (new_bx << 15);
 }
 
 /* ============================================================ */
@@ -151,7 +151,6 @@ static const char *op_mnemonics[] = {
     "MOD",     "IDIV",     "POW",       "NEG",
     "BAND",    "BOR",      "BXOR",      "BNOT",
     "SHL",     "SHR",
-    "ADDK",    "MULK",
     "ADDI",    "SUBI",
     "EQ",      "NE",       "LT",        "LE",
     "GT",      "GE",       "IN",        "NOT",
@@ -190,7 +189,6 @@ static OpFormat op_formats[] = {
     /* MOD */      FMT_ABC, /* IDIV */ FMT_ABC, /* POW */ FMT_ABC, /* NEG */ FMT_ABC,
     /* BAND */     FMT_ABC, /* BOR */ FMT_ABC, /* BXOR */ FMT_ABC,
     /* BNOT */     FMT_ABC, /* SHL */ FMT_ABC, /* SHR */ FMT_ABC,
-    /* ADDK */     FMT_ABC, /* MULK */ FMT_ABC,
     /* ADDI */     FMT_ABC, /* SUBI */ FMT_ABC,
     /* EQ */       FMT_ABC, /* NE */ FMT_ABC, /* LT */ FMT_ABC,
     /* LE */       FMT_ABC, /* GT */ FMT_ABC, /* GE */ FMT_ABC,
@@ -260,8 +258,8 @@ void chunk_disassemble(Chunk *chunk) {
         uint8_t opcode = DECODE_OP(inst);
         uint8_t a      = DECODE_A(inst);
         uint8_t b      = DECODE_B(inst);
-        uint8_t c      = DECODE_C(inst);
-        uint16_t bx    = DECODE_Bx(inst);
+        uint32_t c     = DECODE_C(inst);
+        uint32_t bx    = DECODE_Bx(inst);
         int32_t sbx    = DECODE_sBx(inst);
 
         const char *mnem = opcode < OP_COUNT ? op_mnemonics[opcode] : "???";
@@ -270,35 +268,11 @@ void chunk_disassemble(Chunk *chunk) {
         for (int d = 0; d < depth; d++) printf("  ");
         printf("  %4d  %-15s", i, mnem);
 
-        /* Special: ADDI / SUBI use C as immediate, B as source register */
+        /* Special: ADDI / SUBI use C as RK-immediate, B as source register */
         if (opcode == OP_ADDI) {
             printf(" R%d R%d %+d", a, b, (int8_t)c);
         } else if (opcode == OP_SUBI) {
             printf(" R%d R%d %+d", a, b, -(int8_t)c);
-        } else if (opcode == OP_ADDK) {
-            Value cv = chunk->constants[c];
-            if (IS_INT(cv))
-                printf(" R%d R%d %lld", a, b, (long long)AS_INT(cv));
-            else if (IS_DOUBLE(cv))
-                printf(" R%d R%d %g", a, b, AS_DOUBLE(cv));
-            else if (IS_OBJ(cv)) {
-                char *s = value_to_string(cv);
-                printf(" R%d R%d %s", a, b, s);
-                free(s);
-            } else
-                printf(" R%d R%d const[%d]", a, b, c);
-        } else if (opcode == OP_MULK) {
-            Value cv = chunk->constants[c];
-            if (IS_INT(cv))
-                printf(" R%d R%d %lld", a, b, (long long)AS_INT(cv));
-            else if (IS_DOUBLE(cv))
-                printf(" R%d R%d %g", a, b, AS_DOUBLE(cv));
-            else if (IS_OBJ(cv)) {
-                char *s = value_to_string(cv);
-                printf(" R%d R%d %s", a, b, s);
-                free(s);
-            } else
-                printf(" R%d R%d const[%d]", a, b, c);
         }
         /* Special: LT_JZ / LE_JZ / GT_JZ / GE_JZ use A=left, B=right, C=offset */
         else if (opcode == OP_LT_JZ || opcode == OP_LE_JZ ||
@@ -314,7 +288,21 @@ void chunk_disassemble(Chunk *chunk) {
         else {
             switch (fmt) {
                 case FMT_ABC:
-                    printf(" R%d R%d %d", a, b, c);
+                    if (IS_RK_CONST(c)) {
+                        Value cv = chunk->constants[RK_INDEX(c)];
+                        if (IS_INT(cv))
+                            printf(" R%d R%d %lld", a, b, (long long)AS_INT(cv));
+                        else if (IS_DOUBLE(cv))
+                            printf(" R%d R%d %g", a, b, AS_DOUBLE(cv));
+                        else if (IS_OBJ(cv)) {
+                            char *s = value_to_string(cv);
+                            printf(" R%d R%d %s", a, b, s);
+                            free(s);
+                        } else
+                            printf(" R%d R%d const[%d]", a, b, RK_INDEX(c));
+                    } else {
+                        printf(" R%d R%d R%d", a, b, c);
+                    }
                     break;
                 case FMT_ABx:
                     printf(" R%d %d", a, bx);
