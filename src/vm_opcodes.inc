@@ -111,7 +111,7 @@
         CHECK_GC; DECODE; goto *op_labels[OP(instr)];
     }
     
-    /* 10. OP_DIV */
+/* 10. OP_DIV */
     op_div: {
         Value _L = RKB, _R = RKC;
         Value _v = do_arith(vm, _L, _R, OP_DIV);
@@ -119,7 +119,7 @@
         SET_REG(RA, _v);
         DECODE; goto *op_labels[OP(instr)];
     }
-    
+
     /* 11. OP_MOD */
     op_mod: {
         Value _L = RKB, _R = RKC;
@@ -164,21 +164,21 @@
         goto op_throw;
     }
 
-    /* 13. OP_BAND */
+    /* 15. OP_BAND */
     op_band: { Value _v=do_arith(vm,RKB,RKC,OP_BAND); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise and");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
-    /* 14. OP_BOR */
+    /* 16. OP_BOR */
     op_bor:  { Value _v=do_arith(vm,RKB,RKC,OP_BOR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise or");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
-    /* 15. OP_BXOR */
+    /* 17. OP_BXOR */
     op_bxor: { Value _v=do_arith(vm,RKB,RKC,OP_BXOR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise xor");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
-    /* 16. OP_BNOT */
+    /* 18. OP_BNOT */
     op_bnot: { Value _v=make_null(); if(!vm_unary(vm,VM_OP_BNOT,REG(RB),&_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported bitwise not");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
-    /* 17. OP_SHL */
+    /* 19. OP_SHL */
     op_shl:  { Value _v=do_arith(vm,RKB,RKC,OP_SHL); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift left");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
-    /* 18. OP_SHR */
+    /* 20. OP_SHR */
     op_shr:  { Value _v=do_arith(vm,RKB,RKC,OP_SHR); if(IS_NIL(_v)){_exc=vm->last_exception; if(IS_NIL(_exc)) _exc=vm_make_exception(vm,VM_EXCEPTION_TYPE,"unsupported shift right");goto op_throw;} SET_REG(RA,_v); DECODE; goto *op_labels[OP(instr)]; }
 
     /* ---- Integer-immediate arithmetic (ABC: A = B op (int8_t)C) ---- */
-    /* 19. OP_ADDI */
+    /* 21. OP_ADDI */
     op_addi: {
         Value v = REG(RB);
         if (LUNA_LIKELY(IS_INT(v))) {
@@ -203,7 +203,7 @@
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 20. OP_SUBI */
+    /* 22. OP_SUBI */
     op_subi: {
         Value v = REG(RB);
         if (LUNA_LIKELY(IS_INT(v))) {
@@ -229,21 +229,21 @@
     }
 
     /* ---- Comparison (ABC: A = B cmp C, result is bool) ---- */
-    /* 21. OP_EQ */
+    /* 23. OP_EQ */
     op_eq: {
         Value _L = RKB, _R = RKC;
         SET_REG_PRIM(RA, do_cmp(vm, _L, _R, OP_EQ));
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 22. OP_NE */
+    /* 24. OP_NE */
     op_ne: {
         Value _L = RKB, _R = RKC;
         SET_REG_PRIM(RA, do_cmp(vm, _L, _R, OP_NE));
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* OP_RAW_EQ / OP_RAW_NE: Python `is` / `is not` — raw bit/pointer identity.
-     * No deep comparison, no frontend hook: immediates compare by bits, heap
-     * objects by pointer. Matches CPython's identity semantics. */
+    /* 75. OP_RAW_EQ / 76. OP_RAW_NE: identity (`is` / `is not`).  No deep
+     * comparison, no frontend hook: immediates compare by bits, heap objects
+     * by pointer.  Matches CPython identity semantics. */
     op_raw_eq: {
         Value _L = RKB, _R = RKC;
         SET_REG_PRIM(RA, make_bool(_L == _R));
@@ -254,15 +254,15 @@
         SET_REG_PRIM(RA, make_bool(_L != _R));
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 23. OP_LT */
+    /* 25. OP_LT */
     op_lt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_LT)); DECODE; goto *op_labels[OP(instr)]; }
-    /* 24. OP_LE */
+    /* 26. OP_LE */
     op_le: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_LE)); DECODE; goto *op_labels[OP(instr)]; }
-    /* 25. OP_GT */
+    /* 27. OP_GT */
     op_gt: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_GT)); DECODE; goto *op_labels[OP(instr)]; }
-    /* 26. OP_GE */
+    /* 28. OP_GE */
     op_ge: { Value _L=RKB,_R=RKC; SET_REG_PRIM(RA,do_cmp(vm, _L,_R,OP_GE)); DECODE; goto *op_labels[OP(instr)]; }
-    /* 27. OP_IN */
+    /* 29. OP_IN */
     op_in: {
         Value needle = RKB;
         Value haystack = RKC;
@@ -273,31 +273,35 @@
     }
 
     /* ---- Logical ---- */
-    /* 28. OP_NOT */
+    /* 30. OP_NOT */
     op_not: SET_REG_PRIM(RA, make_bool(!is_truthy(REG(RB)))); DECODE; goto *op_labels[OP(instr)];
 
     /* ---- Control Flow ---- */
-    /* 29. OP_JMP */
+    /* 31. OP_JMP */
     op_jmp:
         pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
-    /* 30. OP_JZ */
+    /* 32. OP_JZ */
     op_jz:
         if (!is_truthy(REG(RA))) pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
-    /* 31. OP_JNZ */
+    /* 33. OP_JNZ */
     op_jnz:
         if (is_truthy(REG(RA))) pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
-    /* 32. OP_JNIL */
+    /* 34. OP_JNIL */
     op_jnil:
         if (IS_NIL(REG(RA))) pc += sBx;
         DECODE; goto *op_labels[OP(instr)];
 
     /* ---- Compare-and-branch (ABC: A=left, B=right, C=offset 0..511) ---- */
+    /* 61. OP_LT_JZ, 62. OP_LE_JZ, 63. OP_GT_JZ,
+     * 64. OP_GE_JZ, 65. OP_EQ_JZ, 66. OP_NE_JZ,
+     * 67. OP_LT_JZ_IMM, 68. OP_LE_JZ_IMM, 69. OP_GT_JZ_IMM,
+     * 70. OP_GE_JZ_IMM, 71. OP_EQ_JZ_IMM, 72. OP_NE_JZ_IMM */
 
 #define DEFINE_CMP_JZ(name, op_sym, mop_op) \
     op_##name##_jz: { \
@@ -350,7 +354,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
 #undef DEFINE_CMP_JZ_IMM
 
     /* ---- Functions ---- */
-    /* 33. OP_CALL */
+    /* 35. OP_CALL */
     op_call: {
         uint8_t ret_reg = RA;
         uint8_t fn_reg  = B;
@@ -412,12 +416,13 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* OP_KW_PREFIX: record kw state, then fall through directly into OP_CALL. */
+    /* 58. OP_KW_PREFIX: record kw state, then fall through directly into OP_CALL. */
     op_kw_prefix: {
         vm->next_call_kw_count = A;
         vm->next_call_kw_idx   = (uint16_t)Bx;
         DECODE; goto op_call;
     }
+    /* 36. OP_RET */
     op_ret: {
         uint8_t ret_reg = RA;
         Value retval = REG(ret_reg);
@@ -469,12 +474,12 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         goto *op_labels[OP(instr)];
     }
 
-    /* 34. OP_LEAVE */
+    /* 37. OP_LEAVE */
     op_leave:
         close_upvalues(vm, vm->frame_count);
         DECODE; goto *op_labels[OP(instr)];
 
-    /* 36. OP_CLOSURE */
+    /* 38. OP_CLOSURE */
     op_closure: {
         uint8_t k = B;
         uint8_t dst = RA;
@@ -499,21 +504,21 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
     }
 
     /* ---- Globals ---- */
-    /* 37. OP_GETGLOBAL */
+    /* 39. OP_GETGLOBAL */
     op_getglobal: {
         Value v;
         if (vm_get_global_fast(vm, KSTROBJ(BX), &v)) SET_REG(RA, v);
         else SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 38. OP_SETGLOBAL */
+    /* 40. OP_SETGLOBAL */
     op_setglobal: {
         vm_set_global(vm, KSTR(BX), REG(RA), false);
         DECODE; goto *op_labels[OP(instr)];
     }
 
     /* ---- Upvalues ---- */
-    /* 39. OP_GETUPVAL */
+    /* 41. OP_GETUPVAL */
     op_getupval: {
         uint8_t upv_idx = B;
         uint8_t dst = RA;
@@ -524,7 +529,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         }
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 40. OP_SETUPVAL */
+    /* 42. OP_SETUPVAL */
     op_setupval: {
         uint8_t upv_idx = B;
         uint8_t src = RA;
@@ -534,27 +539,9 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* ---- Object Ops ---- */
-    /*
-     * OBJECT CREATION CONVENTIONS
-     *
-     * Two class flavors:
-     *   1. Luna-class (script-defined, e.g. "Player"):
-     *      Constructor is `def _init(self, ...):`.  Compiler emits OP_NEW
-     *      then OP_INVOKE("_init", args).  OP_INVOKE natively handles
-     *      missing _init (returns nil, see strcmp("_init") at ~line 1570).
-     *
-     *   2. Native class (stdlib, e.g. "net.Socket"):
-     *      OP_NEW resolves qualified names by lookup: module->exports[class].
-     *      Must export the ObjClass itself, not just a factory function.
-     *
-     * NIL-RETURN TRAP
-     *   Luna _init returns nil if there's no explicit `return self`.
-     *   Never set ret_reg = obj_reg — _init's nil will clobber the instance.
-     *   Always route _init's return to a scratch register (obj_reg + nargs + 1).
-     */
+/* ---- Object Ops ---- */
 
-    /* 41. OP_NEW */
+    /* 43. OP_NEW */
     op_new: {
         Value _inst;
         if (!vm_construct(vm, CONST(BX), &_inst)) {
@@ -565,7 +552,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 42. OP_NEWDICT */
+    /* 44. OP_NEWDICT */
     op_newdict: {
         Value _dict;
         if (!vm_new_dict(vm, &_dict)) {
@@ -576,7 +563,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 43. OP_NEWLIST */
+    /* 45. OP_NEWLIST */
     op_newlist: {
         Value _list;
         if (!vm_new_list(vm, (int)Bx, &_list)) {
@@ -587,7 +574,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         CHECK_GC;
         DECODE; goto *op_labels[OP(instr)];
     }
-    /* 44. OP_LISTAPPEND */
+    /* 46. OP_LISTAPPEND */
     op_listappend: {
         Value lst = REG(RA);
         Value val = REG(RB);
@@ -599,7 +586,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 45. OP_GETITER */
+    /* 47. OP_GETITER */
     op_getiter: {
         Value iter_obj, iter_state;
         if (!vm_iterate(vm, REG(RB), &iter_obj, &iter_state)) {
@@ -613,7 +600,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* OP_FORITER : generic iterator (lists / dicts / strings / iterables) */
+    /* 48. OP_FORITER : generic iterator (lists / dicts / strings / iterables) */
     op_foriter: {
         Value _state = REG(RA + 1);
         Value _elem;
@@ -628,7 +615,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* OP_FORLOOP : numeric range loop, e.g. for i in range(a, b, step).
+    /* 73. OP_FORLOOP : numeric range loop, e.g. for i in range(a, b, step).
      *   RA   = current index (the loop variable)
      *   RA+1 = limit (exclusive)
      *   RA+2 = step
@@ -668,7 +655,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* OP_FORPREP : numeric range prepare (companion to OP_FORLOOP).
+    /* 74. OP_FORPREP : numeric range prepare (companion to OP_FORLOOP).
      *   RA   = current index (the loop variable, already = start)
      *   RA+1 = limit (exclusive)
      *   RA+2 = step
@@ -702,7 +689,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 48. OP_INDEXGET (strict — throws on missing or null obj) */
+    /* 49. OP_INDEXGET (strict — throws on missing or null obj) */
     op_indexget: {
         /* Semantic indexing belongs to the frontend.  The legacy switch below
          * remains temporarily as a source-compatibility fallback while the
@@ -717,6 +704,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
             goto op_throw;
         }
     }
+    /* 50. OP_INDEXSET */
     op_indexset: {
         if (vm_setitem(vm, REG(RA), REG(RB), REG(RC))) {
             gc_write_barrier(REG(RA), REG(RC));
@@ -742,7 +730,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 51. OP_MEMBERSET */
+    /* 52. OP_MEMBERSET */
     op_memberset: {
         {
             Value _name = make_obj((Object *)KSTROBJ(RC));
@@ -755,7 +743,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         goto op_throw;
     }
 
-    /* OP_GETFIELD (slot-based field get: A = B->fields[C]) */
+    /* 53. OP_GETFIELD (slot-based field get: A = B->fields[C]) */
     op_getfield: {
         Value obj = REG(RB);
         Value _f;
@@ -764,7 +752,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* OP_SETFIELD (slot-based field set: A->fields[C] = B) */
+    /* 54. OP_SETFIELD (slot-based field set: A->fields[C] = B) */
     op_setfield: {
         Value obj = REG(RA);
         vm_set_field_slot(vm, obj, (int)RC, REG(RB));
@@ -773,7 +761,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
     }
 
     /* ---- Invocation ---- */
-    /* 52. OP_INVOKE */
+    /* 55. OP_INVOKE */
     op_invoke: {
         uint8_t ret_reg = RA;
         uint8_t obj_reg = B;
@@ -851,7 +839,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 53. OP_SUPER */
+    /* 56. OP_SUPER */
     op_super: {
         uint8_t ret_reg = RA;
         uint8_t self_reg = RB;
@@ -907,15 +895,12 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
     }
 
     /* ---- Exceptions ---- */
-    /* OP_THROW
+    /* 57. OP_THROW
      *
-     * On the cold path only.  The happy path of every try-block is zero-cost:
-     * no opcode, no malloc, no per-frame state.  When a throw does fire we
-     * consult chunk->exceptions for the current IP and walk the call stack
-     * only if no handler is found here.
-     *
-     * The exception is written into the handler's exc_reg by the static
-     * table; nothing runtime-allocated, nothing to free.
+     * Cold path only.  The happy path of every try-block is zero-cost:
+     * no opcode, no malloc, no per-frame state.  When a throw fires we
+     * consult chunk->exceptions for the current IP and walk the call
+     * stack only if no handler is found here.
      */
     op_throw: {
         if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
@@ -976,7 +961,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         return VM_EXCEPTION;
     }
 
-    /* 66. OP_IMPORT */
+    /* 59. OP_IMPORT */
     op_import: {
         uint8_t dst = RA;
         Value mod_name_val = CONST(BX);
@@ -996,7 +981,7 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         }
     }
 
-    /* 68. OP_HALT */
+    /* 60. OP_HALT */
     op_halt: {
         CallFrame *frame = &FRAME;
         vm->last_return_value = REG(0);
