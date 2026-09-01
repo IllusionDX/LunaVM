@@ -931,10 +931,23 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
          * (last-added) backward; the innermost matching try wins.  We only
          * pop a frame when its entire exception table declines to handle
          * the throw, which means the exception has truly escaped that
-         * function. */
+         * function.
+         *
+         * CRITICAL: pc always points into callee's chunk after DECODE.
+         * For the origin frame (where the error occurred), throw_ip =
+         * (pc - chunk->code) - 1.  For every outer frame reached after
+         * unwinding, pc is stale (points into the popped child chunk).
+         * Those frames' throw_ip must use cf->ip - 1 instead, since
+         * PUSH_FRAME stored return address (= next-after-CALL) into
+         * cf->ip before calling down.  Subtracting 1 gives the CALL
+         * instruction itself — the point where the exception escapes. */
+        bool is_origin_frame = true;
         while (vm->frame_count > 0) {
             CallFrame *cf = &vm->frames[vm->frame_count - 1];
-            int throw_ip = (int)(pc - cf->chunk->code) - 1;
+            int throw_ip = is_origin_frame
+                           ? (int)(pc - cf->chunk->code) - 1
+                           : cf->ip - 1;
+            is_origin_frame = false;
             ExceptionEntry *match = NULL;
             /* The compiler adds exception entries innermost-first, so a
              * forward linear scan already picks the innermost match. */
