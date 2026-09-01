@@ -552,9 +552,11 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         else if (strcmp(op_str, "??") == 0) {
             compile_expr_into(c, expr->data.binary.left, target);
             /* Short-circuit ?? : if target != null, skip RHS */
-            int j_coalesce = emit_jump(c, OP_COALESCE, (uint8_t)target);
+            int j_nil = emit_jump(c, OP_JNIL, (uint8_t)target);
+            int j_done = emit_jump(c, OP_JMP, 0);
+            patch_jump(c, j_nil);
             compile_expr_into(c, expr->data.binary.right, target);
-            patch_jump(c, j_coalesce);
+            patch_jump(c, j_done);
             break;
         }
 

@@ -690,9 +690,6 @@ const char *token_type_name(TokenType type) {
         case TOK_SLASH_SLASH_ASSIGN: return "SLASH_SLASH_ASSIGN";
         case TOK_ARROW: return "ARROW";
         case TOK_LAMBDA: return "LAMBDA";
-        case TOK_COALESCE: return "COALESCE";
-        case TOK_QUESTION_DOT: return "QUESTION_DOT";
-        case TOK_QUESTION_LBRACKET: return "QUESTION_LBRACKET";
         case TOK_AMPERSAND: return "AMPERSAND";
         case TOK_PIPE: return "PIPE";
         case TOK_CARET: return "CARET";

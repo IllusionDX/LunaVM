@@ -843,8 +843,7 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_endtry,        // 59 OP_ENDTRY
         &&op_isinstance,    // 60 OP_ISINSTANCE
         &&op_kw_prefix,     // OP_KW_PREFIX
-        &&op_coalesce,      // OP_COALESCE
-        &&op_import,        // 69 OP_IMPORT
+        &&op_import,        // 68 OP_IMPORT
         &&op_halt,          // 70 OP_HALT
         &&op_lt_jz,         // 71 OP_LT_JZ
         &&op_le_jz,         // 72 OP_LE_JZ

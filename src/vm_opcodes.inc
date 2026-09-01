@@ -1051,17 +1051,6 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 62. OP_COALESCE */
-    op_coalesce: {
-        if (!IS_NIL(REG(RA))) {
-            pc += sBx;
-            DECODE;
-            goto *op_labels[OP(instr)];
-        }
-        DECODE;
-        goto *op_labels[OP(instr)];
-    }
-
     /* 66. OP_IMPORT */
     op_import: {
         uint8_t dst = RA;

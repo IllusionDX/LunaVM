@@ -167,7 +167,6 @@ typedef enum {
      * The plain positional OP_CALL never pays for this: it just reads the
      * vm->next_call_kw_* fields (a register compare on the fast path). */
     OP_KW_PREFIX,   /* ABx  : A = kw_count, Bx = kw_names const index       */
-    OP_COALESCE,    /* AsBx : if A != null then PC += sBx (skip RHS)     */
 
     /* ---- Safe access (null on missing, no throw) ---- */
 

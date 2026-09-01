@@ -754,25 +754,11 @@ static Expr *parse_and(Parser *parser) {
     return left;
 }
 
-static Expr *parse_coalesce(Parser *parser) {
-    Expr *left = parse_and(parser);
-    while (match(parser, TOK_COALESCE)) {
-        Token *op = advance(parser);
-        Expr *right = parse_and(parser);
-        Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
-        expr->data.binary.left = left;
-        expr->data.binary.operator = strdup(op->value);
-        expr->data.binary.right = right;
-        left = expr;
-    }
-    return left;
-}
-
 static Expr *parse_or(Parser *parser) {
-    Expr *left = parse_coalesce(parser);
+    Expr *left = parse_and(parser);
     while (match(parser, TOK_OR)) {
         Token *op = advance(parser);
-        Expr *right = parse_coalesce(parser);
+        Expr *right = parse_and(parser);
         Expr *expr = make_expr(EXPR_BINARY, peek(parser)->line);
         expr->data.binary.left = left;
         expr->data.binary.operator = strdup(op->value);

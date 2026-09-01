@@ -581,14 +581,6 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
             free_reg(c);
             break;
         }
-        else if (strcmp(op_str, "??") == 0) {
-            compile_expr_into(c, expr->data.binary.left, target);
-            /* Short-circuit ?? : if target != null, skip RHS */
-            int j_coalesce = emit_jump(c, OP_COALESCE, (uint8_t)target);
-            compile_expr_into(c, expr->data.binary.right, target);
-            patch_jump(c, j_coalesce);
-            break;
-        }
 
         /* ============================================================ */
         /* Constant folding: evaluate at compile time if both operands  */
