@@ -500,7 +500,7 @@ static bool py_slice(VM *vm, Value object, Value start_val, Value stop_val,
     return true;
 }
 
-/* Iteration (6d.2): the core only issues neutral OP_GETITER/OP_FORITER for
+/* Iteration: the core only issues neutral OP_GETITER/OP_FORITER for
  * generic iterables (lists/dicts/strings). Numeric `for i in range(...)` loops
  * are compiled to the dedicated OP_FORLOOP. The
  * frontend builds an opaque iterator plus an int-index state, then yields
@@ -670,7 +670,7 @@ static bool py_set_field_slot(VM *vm, Value obj, int slot, Value value) {
     return true;
 }
 
-/* 6d.5: resolve an invoke callable + self-binding layout. Returns
+/* Resolve an invoke callable + self-binding layout. Returns
  * *self_arg = receiver when the callable is a bound method, else null for a
  * static/module function. *callable = null signals an optional-__init__ no-op. */
 static bool py_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *callable) {
@@ -761,7 +761,7 @@ static bool py_invoke(VM *vm, Value obj, Value name, Value *self_arg, Value *cal
     }
 }
 
-/* 6d.5: resolve a super-call over the direct base class (always method layout). */
+/* Resolve a super-call over the direct base class (always method layout). */
 static bool py_super(VM *vm, Value self, Value name, Value *self_arg, Value *callable) {
     *self_arg = self;
     *callable = make_null();
@@ -801,7 +801,7 @@ static bool member_miss(VM *vm, bool safe, void *err_class, const char *msg, Val
     return false;
 }
 
-/* 6d.5: authoritative member lookup. The core op_memberget/op_memberget_safe
+/* Authoritative member lookup. The core op_memberget
  * delegate entirely here; the legacy switch previously lived in the opcode. */
 /* Resolve a native method of a canonical class for any receiver (heap or
  * immediate). Zero-arg natives compute eagerly (property-style access, as
@@ -970,7 +970,7 @@ static bool py_member_get(VM *vm, Value object, Value name, bool safe, Value *ou
     }
 }
 
-/* 6d.5: authoritative member set. Mirrors the legacy OP_MEMBERSET switch. */
+/* Authoritative member set. Mirrors the legacy OP_MEMBERSET switch. */
 static bool py_member_set(VM *vm, Value object, Value name, Value value) {
     if (!IS_STRING(name)) return false;
     const char *chars = ((ObjString *)AS_OBJ(name))->chars;

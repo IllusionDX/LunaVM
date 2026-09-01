@@ -1008,15 +1008,13 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         } else {
             compile_expr_into(c, expr->data.field_access.obj, target);
             int fk = chunk_add_string(c->vm, c->chunk, expr->data.field_access.field);
-            OpCode get_op = expr->data.field_access.optional ? OP_MEMBERGET_SAFE : OP_MEMBERGET;
             if (fk > 255) {
                 int temp = alloc_reg(c);
                 emit_ABx(c, OP_LOADK, (uint8_t)temp, (uint16_t)fk);
-                emit_ABC(c, expr->data.field_access.optional ? OP_INDEXGET_SAFE : OP_INDEXGET,
-                         (uint8_t)target, (uint8_t)target, (uint8_t)temp);
+                emit_ABC(c, OP_INDEXGET, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
                 free_reg(c);
             } else {
-                emit_ABC(c, get_op, (uint8_t)target, (uint8_t)target, (uint8_t)fk);
+                emit_ABC(c, OP_MEMBERGET, (uint8_t)target, (uint8_t)target, (uint8_t)fk);
             }
         }
         break;
@@ -1026,8 +1024,7 @@ static void compile_expr_into(Compiler *c, Expr *expr, int target) {
         compile_expr_into(c, expr->data.index_access.obj, target);
         int temp = alloc_reg(c);
         compile_expr_into(c, expr->data.index_access.index, temp);
-        OpCode get_op = expr->data.index_access.optional ? OP_INDEXGET_SAFE : OP_INDEXGET;
-        emit_ABC(c, get_op, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
+        emit_ABC(c, OP_INDEXGET, (uint8_t)target, (uint8_t)target, (uint8_t)temp);
         free_reg(c);
         break;
     }

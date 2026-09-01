@@ -766,17 +766,6 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
             goto op_throw;
         }
     }
-    op_indexget_safe: {
-        {
-            Value _result;
-            if (vm_getitem(vm, REG(RB), REG(RC), true, &_result)) {
-                SET_REG(RA, _result);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-            _exc = vm->last_exception;
-            goto op_throw;
-        }
-    }
     op_indexset: {
         if (vm_setitem(vm, REG(RA), REG(RB), REG(RC))) {
             gc_write_barrier(REG(RA), REG(RC));
@@ -811,20 +800,6 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         }
         _exc = vm->last_exception;
         goto op_throw;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* 63. OP_MEMBERGET_SAFE (safe — null on missing or null obj) */
-    op_memberget_safe: {
-        {
-            Value _result;
-            Value _name = make_obj((Object *)KSTROBJ(RC));
-            if (vm_getattr(vm, REG(RB), _name, true, &_result)) {
-                SET_REG(RA, _result);
-                DECODE; goto *op_labels[OP(instr)];
-            }
-        }
-        SET_REG_PRIM(RA, make_null());
         DECODE; goto *op_labels[OP(instr)];
     }
 

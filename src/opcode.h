@@ -170,8 +170,6 @@ typedef enum {
     OP_COALESCE,    /* AsBx : if A != null then PC += sBx (skip RHS)     */
 
     /* ---- Safe access (null on missing, no throw) ---- */
-    OP_MEMBERGET_SAFE, /* ABC  : A = B?.field (field = constants[C]). null if obj null or missing */
-    OP_INDEXGET_SAFE,  /* ABC  : A = B?.[C]. null if obj null or missing      */
 
     /* ---- Module import ---- */
     OP_IMPORT,      /* ABx  : A = import(module=constants[Bx])              */

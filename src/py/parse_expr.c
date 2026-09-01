@@ -482,18 +482,16 @@ static Expr *parse_postfix(Parser *parser) {
             call->data.call.arg_names = arg_names;
             expr = call;
         }
-        else if (match(parser, TOK_DOT) || match(parser, TOK_QUESTION_DOT)) {
-            bool optional = match(parser, TOK_QUESTION_DOT);
+        else if (match(parser, TOK_DOT)) {
             advance(parser);
-            Token *field = expect(parser, TOK_IDENTIFIER, "Expected field name after '.' or '?.'");
+            Token *field = expect(parser, TOK_IDENTIFIER, "Expected field name after '.'");
             Expr *access = make_expr(EXPR_FIELD_ACCESS, peek(parser)->line);
             access->data.field_access.obj = expr;
             access->data.field_access.field = strdup(field ? field->value : "");
-            access->data.field_access.optional = optional;
+            access->data.field_access.optional = false;
             expr = access;
         }
-        else if (match(parser, TOK_LBRACKET) || match(parser, TOK_QUESTION_LBRACKET)) {
-            bool optional = match(parser, TOK_QUESTION_LBRACKET);
+        else if (match(parser, TOK_LBRACKET)) {
             advance(parser);
             if (match(parser, TOK_COLON)) {
                 /* Slice with omitted start: [:stop] or [:stop:step] */
@@ -503,7 +501,7 @@ static Expr *parse_postfix(Parser *parser) {
                 slice->data.slice.start = NULL;
                 slice->data.slice.stop = NULL;
                 slice->data.slice.step = NULL;
-                slice->data.slice.optional = optional;
+                slice->data.slice.optional = false;
                 if (!match(parser, TOK_COLON) && !match(parser, TOK_RBRACKET)) {
                     slice->data.slice.stop = parse_expression(parser);
                 }
@@ -525,7 +523,7 @@ static Expr *parse_postfix(Parser *parser) {
                     slice->data.slice.start = first;
                     slice->data.slice.stop = NULL;
                     slice->data.slice.step = NULL;
-                    slice->data.slice.optional = optional;
+                    slice->data.slice.optional = false;
                     if (!match(parser, TOK_COLON) && !match(parser, TOK_RBRACKET)) {
                         slice->data.slice.stop = parse_expression(parser);
                     }
@@ -542,7 +540,7 @@ static Expr *parse_postfix(Parser *parser) {
                     Expr *index_node = make_expr(EXPR_INDEX_ACCESS, peek(parser)->line);
                     index_node->data.index_access.obj = expr;
                     index_node->data.index_access.index = first;
-                    index_node->data.index_access.optional = optional;
+                    index_node->data.index_access.optional = false;
                     expect(parser, TOK_RBRACKET, "Expected ']' after index");
                     expr = index_node;
                 }

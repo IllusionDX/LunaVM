@@ -188,7 +188,7 @@ static Value py_bound_method_call(struct VM *vm, Value self, Value *args, int ar
 }
 
 /* ============================================================
- * Callable / closure protocol (Part 6b)
+ * Callable / closure protocol
  *
  * The core (op_call / op_ret / OP_GETUPVAL / OP_SETUPVAL) reaches a callable's
  * bytecode chunk, bound self, display name and upvalue storage purely through
@@ -888,7 +888,7 @@ Type *py_types[] = {
 };
 
 /* ============================================================
- * Lifecycle / formatting vtable (Part 6c)
+ * Lifecycle / formatting vtable
  *
  * The core reaches GC mark, free, equality, and string formatting through
  * these vtable methods instead of switching on ObjType. The frontend owns

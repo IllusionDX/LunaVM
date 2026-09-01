@@ -1,25 +1,37 @@
 # Test strict vs safe access semantics
-# Strict (. / []) throws on missing. Safe (?. / ?.[]) returns null.
+# Strict (. / []) throws on missing. Safe (?. / ?.[]) short-circuits on null
+# only: if the object exists but the key is missing, it throws (JS-style).
 
 var d = {"a": 1}
 var lst = [10, 20, 30]
 
-# Safe access returns null
-print(d?.missing)
-print(lst?.[99])
-
-# Safe field access on null object
+# Safe access on null object returns null
 var n = null
 print(n?.field)
 print(n?.[0])
 
-# Ternary with safe access
-var val = d?.missing ?? "fallback"
+# Safe access on existing object with existing key works
+print(d?.a)
+print(lst?.[1])
+
+# Missing key on existing object throws (JS-style)
+try:
+    var x = d?.missing
+    print("FAIL: expected throw")
+except Exception:
+    print("caught missing")
+
+# Missing index on existing list throws
+try:
+    var y = lst?.[99]
+    print("FAIL: expected throw")
+except Exception:
+    print("caught index")
+
+# Ternary with safe access on null
+var val = n?.missing ?? "fallback"
 print(val)
 
-# Safe slice
-print(lst?.[10:20])
-
-# Existing keys still work
+# Existing keys still work (strict)
 print(d.a)
 print(lst[0])

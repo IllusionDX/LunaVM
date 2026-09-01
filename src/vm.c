@@ -844,12 +844,10 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_isinstance,    // 60 OP_ISINSTANCE
         &&op_kw_prefix,     // OP_KW_PREFIX
         &&op_coalesce,      // OP_COALESCE
-        &&op_memberget_safe,// 69 OP_MEMBERGET_SAFE
-        &&op_indexget_safe, // 70 OP_INDEXGET_SAFE
-        &&op_import,        // 71 OP_IMPORT
-        &&op_halt,          // 72 OP_HALT
-        &&op_lt_jz,         // 73 OP_LT_JZ
-        &&op_le_jz,         // 74 OP_LE_JZ
+        &&op_import,        // 69 OP_IMPORT
+        &&op_halt,          // 70 OP_HALT
+        &&op_lt_jz,         // 71 OP_LT_JZ
+        &&op_le_jz,         // 72 OP_LE_JZ
         &&op_gt_jz,         // 75 OP_GT_JZ
         &&op_ge_jz,         // 76 OP_GE_JZ
         &&op_eq_jz,         // 75 OP_EQ_JZ

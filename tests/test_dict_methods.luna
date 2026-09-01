@@ -31,8 +31,12 @@ var rm = d3.remove
 print(rm("a"))
 print(d3)
 
-# 8. Non-existent key returns null only through safe access
-print(d?.["not_a_key"])
+# 8. Non-existent key throws on safe access of existing dict (JS-style)
+try:
+    print(d?.["not_a_key"])
+    print("FAIL: expected throw")
+except Exception:
+    print("caught not_a_key")
 
 # 9. Nested dict/list access (consolidated from test_dict_list.luna)
 var world_state = {"regions": ["Forest", "Tundra", "Volcano"]}

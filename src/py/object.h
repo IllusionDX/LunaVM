@@ -67,7 +67,7 @@ typedef enum {
  * IS_X predicates and by constructors). Defined in luna/object.c. */
 extern Type *py_types[];
 
-/* One-time wiring of the Part 6c lifecycle/formatting vtable methods. Called
+/* One-time wiring of the lifecycle/formatting vtable methods. Called
  * from the frontend's state init (py_new_state) after vm_init. */
 void py_wire_lifecycle(void);
 
