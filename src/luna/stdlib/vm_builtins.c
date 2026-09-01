@@ -154,19 +154,43 @@ static Value bn_input(VM *vm, Value *args, int n) {
 
 static Value bn_range(VM *vm, Value *args, int n) {
     (void)vm;
-    int64_t start = 0, end = 0, step = 1;
+    Value vstart = make_int(0), vstop = make_int(0), vstep = make_int(1);
     if (n == 1 && IS_NUMBER(args[0])) {
-        end = as_int64(args[0]);
+        vstop = args[0];
     } else if (n >= 2) {
-        if (IS_NUMBER(args[0])) start = as_int64(args[0]);
-        if (IS_NUMBER(args[1])) end   = as_int64(args[1]);
-        if (n >= 3 && IS_NUMBER(args[2])) step = as_int64(args[2]);
+        if (IS_NUMBER(args[0])) vstart = args[0];
+        if (IS_NUMBER(args[1])) vstop  = args[1];
+        if (n >= 3 && IS_NUMBER(args[2])) vstep = args[2];
+    }
+    if (IS_INT(vstep)) {
+        if (AS_INT(vstep) == 0) return make_obj((Object *)new_list(0));
+    } else if (IS_INT64(vstep)) {
+        if (as_int64(vstep) == 0) return make_obj((Object *)new_list(0));
+    } else {
+        return make_obj((Object *)new_list(0));
     }
     ObjList *l = new_list(0);
-    if (step > 0) {
-        for (int64_t i = start; i < end; i += step) list_add(l, make_int((int32_t)i));
-    } else if (step < 0) {
-        for (int64_t i = start; i > end; i += step) list_add(l, make_int((int32_t)i));
+    bool wide = IS_INT64(vstart) || IS_INT64(vstop) || IS_INT64(vstep);
+    if (wide) {
+        int64_t s = as_int64(vstart);
+        int64_t e = as_int64(vstop);
+        int64_t p = as_int64(vstep);
+        while ((p > 0 && s < e) || (p < 0 && s > e)) {
+            if (l->count >= 100000000) {
+                luna_throw(vm, luna_fe(vm)->runtime_error_class,
+                    "range() too large to materialize");
+            }
+            list_add(l, (s >= INT32_MIN && s <= INT32_MAX) ? make_int((int32_t)s) : make_int64(s));
+            s += p;
+        }
+    } else {
+        int32_t s = AS_INT(vstart);
+        int32_t e = AS_INT(vstop);
+        int32_t p = AS_INT(vstep);
+        while ((p > 0 && s < e) || (p < 0 && s > e)) {
+            list_add(l, make_int(s));
+            s += p;
+        }
     }
     return make_obj((Object *)l);
 }

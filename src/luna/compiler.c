@@ -462,6 +462,19 @@ static void compile_single_assignment(Compiler *c, Expr *lhs, int src_reg) {
 /* Expressions                                                  */
 /* ============================================================ */
 
+/* True iff `expr` is an EXPR_INTEGER literal whose decimal string parses to
+ * a value representable as int32 (the same gate the compiler applies at line
+ * 470 when emitting OP_LOADI). Used by the for-range compiler to decide
+ * whether OP_FORLOOP can be emitted (int32/double-only specialisation) or
+ * the loop must fall through to the generic OP_GETITER + OP_FORITER path. */
+static bool is_int32_literal(Expr *expr, int32_t *out_val) {
+    if (!expr || expr->kind != EXPR_INTEGER) return false;
+    int64_t v = atoll(expr->data.integer.value);
+    if (v < INT32_MIN || v > INT32_MAX) return false;
+    if (out_val) *out_val = (int32_t)v;
+    return true;
+}
+
 static void compile_expr_into(Compiler *c, Expr *expr, int target) {
     switch (expr->kind) {
 
@@ -1788,6 +1801,22 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             if (nargs >= 2) { start_expr = rargs[0]; stop_expr = rargs[1]; }
             if (nargs >= 3) step_expr = rargs[2];
 
+            /* OP_FORLOOP / OP_FORPREP are specialised to int32 + double only.
+             * If any of start/stop/step is not an int32 literal at AST level
+             * (e.g. an identifier, a float, an int64 that doesn't fit int32),
+             * fall through to the generic OP_GETITER + OP_FORITER path which
+             * calls bn_range and walks a real list preserving full precision. */
+            int32_t iv_start = 0, iv_stop = 0, iv_step = 1;
+            bool fits_fast = true;
+            if (nargs == 1) {
+                fits_fast = is_int32_literal(stop_expr, &iv_stop);
+            } else {
+                if (!is_int32_literal(start_expr, &iv_start)) fits_fast = false;
+                if (!is_int32_literal(stop_expr,  &iv_stop))  fits_fast = false;
+                if (nargs >= 3 && !is_int32_literal(step_expr, &iv_step)) fits_fast = false;
+            }
+
+            if (fits_fast) {
             int r_idx  = alloc_reg(c);   /* loop variable / current index */
             int r_lim  = alloc_reg(c);   /* limit (exclusive)            */
             int r_step = alloc_reg(c);   /* step                         */
@@ -1831,6 +1860,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
             loop_pop(c);
             scope_exit(c);
             break;
+            }
             }
         }
 

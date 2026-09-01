@@ -12,6 +12,7 @@
 #include "py/object.h"
 #include "py/number_methods.h"
 #include "py/frontend_state.h"
+#include "py/range.h"
 #include "chunk.h"
 #include "lexer.h"
 #include "parser.h"
@@ -557,6 +558,9 @@ static bool py_iterate(VM *vm, Value object, Value *iter, Value *state) {
         *iter = make_obj((Object *)keys);
     } else if (IS_LIST(object) || IS_STRING(object) || IS_TUPLE(object)) {
         *iter = object;
+    } else if (IS_RANGE(object)) {
+        ObjRange *r = (ObjRange *)AS_OBJ(object);
+        *iter = make_obj((Object *)new_range_iter(r->start, r->stop, r->step));
     } else if (IS_OBJ(object) && AS_OBJ(object)) {
         vm->last_exception = make_exception_instance(vm, py_fe(vm)->type_error_class, "object is not iterable");
         return false;
@@ -593,6 +597,9 @@ static bool py_iter_next(VM *vm, Value iter, Value *state, Value *elem) {
         *elem = make_obj((Object *)new_string(buf, 1));
         *state = make_int(idx + 1);
         return true;
+    }
+    if (IS_RANGEITER(iter)) {
+        return range_iter_next(vm, (ObjRangeIter *)AS_OBJ(iter), elem);
     }
     return false;
 }

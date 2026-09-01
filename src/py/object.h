@@ -33,6 +33,8 @@ typedef enum {
     OBJ_MODULE,
     OBJ_BUFFER = 12,
     OBJ_BIGINT = 13,  /* arbitrary-precision int (PyLong-style, base 2^30) */
+    OBJ_RANGE = 14,   /* lazy range (start/stop/step only, O(1)) */
+    OBJ_RANGEITER = 15, /* lazy range iterator */
 } ObjType;
 
 /* Object and Type are defined in the core value model (src/value.h).
@@ -55,6 +57,8 @@ typedef enum {
 #define IS_MODULE(v)       IS_OBJ_KIND(v, OBJ_MODULE)
 #define IS_BUFFER(v)       IS_OBJ_KIND(v, OBJ_BUFFER)
 #define IS_BIGINT(v)   IS_OBJ_KIND(v, OBJ_BIGINT)
+#define IS_RANGE(v)    IS_OBJ_KIND(v, OBJ_RANGE)
+#define IS_RANGEITER(v) IS_OBJ_KIND(v, OBJ_RANGEITER)
 
 /* MOP typedefs and the `Type` vtable struct are defined in the core value
  * model (src/value.h). Luna fills the vtable instances in luna/object.c. */
@@ -150,6 +154,23 @@ typedef struct ObjBuffer {
     size_t  capacity;
     size_t  cursor;
 } ObjBuffer;
+
+/* Lazy range — stores only (start, stop, step); no materialized elements.
+ * start/stop/step are int32 immediates or bigint Values. O(1) memory. */
+typedef struct {
+    Object obj;
+    Value  start;
+    Value  stop;
+    Value  step;
+} ObjRange;
+
+/* Lazy range iterator — one cursor `current` advancing by `step`. */
+typedef struct {
+    Object obj;
+    Value  current;
+    Value  stop;
+    Value  step;
+} ObjRangeIter;
 
 typedef struct ObjInstance {
     Object              obj;

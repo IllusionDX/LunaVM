@@ -19,6 +19,7 @@
 #include "chunk.h"
 #include "vm.h"
 #include "api.h"
+#include "py/range.h"
 
 /* Forward declarations for helpers used by the lifecycle/formatting vtable
  * (defined later in this file, but referenced by the per-type free funcs). */
@@ -682,6 +683,13 @@ static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
             }
             return make_obj((Object *)t);
         }
+        if (IS_RANGE(v)) {
+            ObjList *temp = list_from_range((ObjRange *)AS_OBJ(v));
+            ObjTuple *t = new_tuple(temp->count);
+            for (int i = 0; i < temp->count; i++)
+                t->items[i] = temp->items ? temp->items[i] : temp->inline_items[i];
+            return make_obj((Object *)t);
+        }
         luna_throw(vm, py_fe(vm)->type_error_class, "tuple() argument must be an iterable");
         return make_obj((Object *)new_tuple(0));
     }
@@ -703,6 +711,9 @@ static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
                 list_add(l, make_obj((Object *)new_string(buf, 1)));
             }
             return make_obj((Object *)l);
+        }
+        if (IS_RANGE(v)) {
+            return make_obj((Object *)list_from_range((ObjRange *)AS_OBJ(v)));
         }
         luna_throw(vm, py_fe(vm)->type_error_class, "list() argument must be an iterable");
         return make_obj((Object *)new_list(0));
@@ -923,6 +934,27 @@ Type py_bigint_type = {
     .call = py_default_call, .tostring = py_bigint_tostring, .hash = py_bigint_hash, .len = py_bigint_len
 };
 
+/* Lazy range: no add/sub/mul; yes getitem (O(1) indexing) and len/tostring. */
+Type py_range_type = {
+    .name = "range", .kind = OBJ_RANGE,
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_range_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_range_tostring, .hash = py_default_hash, .len = py_default_len
+};
+
+/* Range iterator: iterable but not indexable; only used internally by the
+ * OP_GETITER/OP_FORITER machinery. */
+Type py_range_iter_type = {
+    .name = "range_iterator", .kind = OBJ_RANGEITER,
+    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
+    .neg = py_default_neg, .cmp = py_default_cmp,
+    .getitem = py_default_getitem, .setitem = py_default_setitem,
+    .getattr = py_default_getattr, .setattr = py_default_setattr,
+    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
+};
+
 /* Indexed by ObjType. */
 Type *py_types[] = {
     [OBJ_STRING]       = &py_string_type,
@@ -939,6 +971,8 @@ Type *py_types[] = {
     [OBJ_MODULE]       = &py_module_type,
     [OBJ_BUFFER]       = &py_buffer_type,
     [OBJ_BIGINT]       = &py_bigint_type,
+    [OBJ_RANGE]        = &py_range_type,
+    [OBJ_RANGEITER]    = &py_range_iter_type,
 };
 
 /* ============================================================
@@ -1247,9 +1281,26 @@ static char* py_buffer_to_cstr(Value self) {
     return strdup(out);
 }
 
+/* range */
+static void py_range_free(Object *obj) { free(obj); }
+static void py_range_mark(struct VM *vm, Object *obj) {
+    ObjRange *r = (ObjRange*)obj;
+    vm_mark_value(vm, r->start);
+    vm_mark_value(vm, r->stop);
+    vm_mark_value(vm, r->step);
+}
+/* range iterator */
+static void py_range_iter_free(Object *obj) { free(obj); }
+static void py_range_iter_mark(struct VM *vm, Object *obj) {
+    ObjRangeIter *it = (ObjRangeIter*)obj;
+    vm_mark_value(vm, it->current);
+    vm_mark_value(vm, it->stop);
+    vm_mark_value(vm, it->step);
+}
+
 /* One-time wiring: the frontend owns this kind switch; the core stays generic. */
 void py_wire_lifecycle(void) {
-    for (int k = 0; k <= OBJ_BIGINT; k++) {
+    for (int k = 0; k <= OBJ_RANGEITER; k++) {
         Type *t = py_types[k];
         /* ObjType intentionally has reserved values; there is no Type for
          * those slots in py_types[]. */
@@ -1287,6 +1338,12 @@ void py_wire_lifecycle(void) {
                 t->mark = py_module_mark; t->to_cstr = py_module_to_cstr; break;
             case OBJ_BUFFER:
                 t->free = py_buffer_free; t->to_cstr = py_buffer_to_cstr; break;
+            case OBJ_RANGE:
+                t->free = py_range_free; t->mark = py_range_mark;
+                t->to_cstr = py_range_to_cstr; break;
+            case OBJ_RANGEITER:
+                t->free = py_range_iter_free; t->mark = py_range_iter_mark;
+                t->to_cstr = py_range_iter_to_cstr; break;
             default: break;
         }
     }

@@ -15,7 +15,11 @@
 #include "value.h"
 #include "py/object.h"
 #include "py/frontend_state.h"
+#include "py/range.h"
 #include "chunk.h"
+
+/* True for int32 immediates and heap bigints; excludes doubles. */
+static inline bool is_integer_value(Value v) { return IS_INT(v) || IS_BIGINT(v); }
 
 /* ============================================================ */
 /* Global variable table                                         */
@@ -144,33 +148,44 @@ static Value bn_input(VM *vm, Value *args, int n) {
     return make_null();
 }
 
-/* Exact int64 view of a builtin arg: doubles keep the legacy truncation;
- * bigints beyond int64 raise OverflowError (CPython semantics). */
-static int64_t bn_int64_arg(VM *vm, Value v) {
-    if (IS_DOUBLE(v)) return (int64_t)AS_DOUBLE(v);
-    int64_t out;
-    if (int64_exact(v, &out)) return out;
-    luna_throw(vm, py_fe(vm)->overflow_error_class, "Python int too large to convert to C ssize_t");
-    return 0;
-}
-
 static Value bn_range(VM *vm, Value *args, int n) {
-    (void)vm;
-    int64_t start = 0, end = 0, step = 1;
-    if (n == 1 && IS_NUMBER(args[0])) {
-        end = bn_int64_arg(vm, args[0]);
+    /* CPython semantics: bounds/step must be integers (int32 or bigint);
+     * floats raise TypeError; step zero raises ValueError. Construction is
+     * O(1): nothing is materialized. */
+    if (n < 1) {
+        luna_throw(vm, py_fe(vm)->type_error_class, "range expected at least 1 argument, got 0");
+        return make_null();
+    }
+    /* Reject non-integer args (e.g. floats) with a CPython-style message. */
+    bool args_ok = false;
+    if (n == 1) {
+        args_ok = is_integer_value(args[0]);
     } else if (n >= 2) {
-        if (IS_NUMBER(args[0])) start = bn_int64_arg(vm, args[0]);
-        if (IS_NUMBER(args[1])) end   = bn_int64_arg(vm, args[1]);
-        if (n >= 3 && IS_NUMBER(args[2])) step = bn_int64_arg(vm, args[2]);
+        args_ok = is_integer_value(args[0]) && is_integer_value(args[1]);
+        if (n >= 3) args_ok = args_ok && is_integer_value(args[2]);
     }
-    ObjList *l = new_list(0);
-    if (step > 0) {
-        for (int64_t i = start; i < end; i += step) list_add(l, make_int((int32_t)i));
-    } else if (step < 0) {
-        for (int64_t i = start; i > end; i += step) list_add(l, make_int((int32_t)i));
+    if (!args_ok) {
+        luna_throw(vm, py_fe(vm)->type_error_class, "'float' object cannot be interpreted as an integer");
+        return make_null();
     }
-    return make_obj((Object *)l);
+
+    Value vstart = make_int(0), vstop = make_int(0), vstep = make_int(1);
+    if (n == 1) {
+        vstop = args[0];
+    } else {
+        vstart = args[0]; vstop = args[1];
+        if (n >= 3) vstep = args[2];
+    }
+
+    /* step must be non-zero. */
+    bool step_zero = (IS_BIGINT(vstep) && ((ObjBigInt *)AS_OBJ(vstep))->sign == 0)
+                  || (IS_INT(vstep) && AS_INT(vstep) == 0);
+    if (step_zero) {
+        luna_throw(vm, py_fe(vm)->value_error_class, "range() arg 3 must not be zero");
+        return make_null();
+    }
+
+    return make_obj((Object *)new_range(vstart, vstop, vstep));
 }
 
 static Value bn_build_tuple(VM *vm, Value *args, int n) {
@@ -247,6 +262,7 @@ static Value bn_len(VM *vm, Value *args, int n) {
         case OBJ_LIST:    return make_int(((ObjList*)  AS_OBJ(args[0]))->count);
         case OBJ_TUPLE:   return make_int(((ObjTuple*) AS_OBJ(args[0]))->count);
         case OBJ_DICT:    return make_int(((ObjDict*)  AS_OBJ(args[0]))->entry_count);
+        case OBJ_RANGE:   return range_length_value((ObjRange *)AS_OBJ(args[0]));
         default:          return make_int(0);
     }
 }
@@ -280,6 +296,7 @@ static Value bn_type(VM *vm, Value *args, int n) {
                 case OBJ_CLOSURE:    t = "closure";    break;
                 case OBJ_ENUM:       t = "enum";       break;
                 case OBJ_CLASS:      t = "class";      break;
+                case OBJ_RANGE:      t = "range";      break;
                 default:             t = "object";     break;
             }
         }

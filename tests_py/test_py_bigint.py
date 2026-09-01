@@ -116,6 +116,45 @@ t("bitlen-small", 5.bit_length(), 3)
 # abs on bigints
 t("abs-big", abs(-(10 ** 50)), 10 ** 50)
 
+# range() with bigint bounds/steps (must preserve arbitrary precision)
+t("range-big-len", len(range(2 ** 62, 2 ** 62 + 5)), 5)
+t("range-big-first", list(range(2 ** 62, 2 ** 62 + 5))[0], 2 ** 62)
+t("range-big-last", list(range(2 ** 62, 2 ** 62 + 5))[-1], 2 ** 62 + 4)
+step = list(range(2 ** 62, 2 ** 62 + 30, 10))
+t("range-big-step-len", len(step), 3)
+t("range-big-step-1", step[1], 2 ** 62 + 10)
+t("range-big-step-2", step[2], 2 ** 62 + 20)
+neg = list(range(2 ** 62 + 30, 2 ** 62, -10))
+t("range-big-neg-len", len(neg), 3)
+t("range-big-neg-0", neg[0], 2 ** 62 + 30)
+t("range-big-neg-2", neg[2], 2 ** 62 + 10)
+rbig = []
+for i in range(5000000000, 5000000003):
+    rbig.append(i)
+t("range-big-var-len", len(rbig), 3)
+t("range-big-var-1", rbig[1], 5000000001)
+t("range-big-var-2", rbig[2], 5000000002)
+
+# lazy range: len() is O(1) even for astronomically large ranges (CPython match)
+t("range-lazy-huge-single", len(range(2 ** 62 + 3)), 2 ** 62 + 3)
+t("range-lazy-huge-100", len(range(2 ** 100)), 2 ** 100)
+t("range-lazy-huge-step", len(range(0, 2 ** 100, 7)), (2 ** 100 + 6) // 7)
+# O(1) indexing on a huge range without materializing
+t("range-lazy-idx-0", range(0, 2 ** 100)[5], 5)
+t("range-lazy-idx-last", range(2 ** 62, 2 ** 62 + 30, 10)[-1], 2 ** 62 + 20)
+# floats rejected by range (CPython TypeError)
+try:
+    x = range(1.5, 5)
+    print("FAIL range-float: no exception")
+except TypeError:
+    print("ok range-float")
+# step zero rejected at construction (CPython ValueError)
+try:
+    x = range(0, 5, 0)
+    print("FAIL range-zero-step: no exception")
+except ValueError:
+    print("ok range-zero-step")
+
 # true division (int / int) stays exact and rounded
 t("truediv", (10 ** 40) / 7, 1.4285714285714284e+39)
 t("truediv-small", 1 / 3, 1.0 / 3.0)
