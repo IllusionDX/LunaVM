@@ -343,7 +343,7 @@ All instructions are a fixed **4 bytes (32 bits)** encoded as a `uint32_t`.
 | `0.2.14-alpha` | Done | Optional chaining (`?.`): `obj?.field` returns `null` if `obj` is `null`, otherwise accesses `field`. Chains correctly: `a?.b?.c`. Short-circuit via `OP_JNIL`. |
 | `0.2.15-alpha` | Done | Dict method-priority dot access (Godot-style): dict methods (`keys`, `has`, `remove`, `values`, `clear`, `length`) accessible as bound methods via dot access (`dict.keys` returns callable). Method names shadow data keys for dot access; bracket access (`dict['keys']`) still reaches data keys. |
 | `0.2.16-alpha` | Done | Strict/safe access semantics: strict `.` and `[]` throw on missing key/field/index or null obj. Safe `?.` and `?.[]` return `null` on missing or null obj. New `?.[]` token for safe index/slice access. New opcodes: `OP_MEMBERGET_SAFE`, `OP_INDEXGET_SAFE`, `OP_SLICE_SAFE`. |
-| `0.3.0-alpha` | Done | Typed exception handling: `try`/`except`/`finally` with real exception class hierarchy (`Exception`, `TypeError`, `KeyError`, `IndexError`, `AttributeError`, `ValueError`, `RuntimeError`). `except Type:` and `except Type as var:` syntax with runtime `isinstance` dispatch. `OP_ISINSTANCE` opcode for subclass-aware type checking. Descriptive error messages prefixed with exception type. |
+| `0.3.0-alpha` | Done | Typed exception handling: `try`/`except`/`finally` with real exception class hierarchy (`Exception`, `TypeError`, `KeyError`, `IndexError`, `AttributeError`, `ValueError`, `RuntimeError`). `except Type:` and `except Type as var:` syntax with runtime `isinstance` dispatch via the `vm_instance_of` frontend hook. Descriptive error messages prefixed with exception type. |
 | `0.3.1-alpha` | Done | Module import system with global isolation and module cache. `import` and relative imports work. `math` stdlib module (sin, cos, tan, sqrt, pow, log, exp, clamp, lerp, random with Lua-style overloads, randomseed, constants). ARC frame refcounting fix: call frames now retain/release `fn` and `closure` explicitly. Dict SOO→heap transition double-release fixed. GC root marking for modules and exception classes. |
 | `0.3.2-alpha` | Done | Native exception propagation via `setjmp`/`longjmp`. `luna_throw(vm, "TypeError", "message")` lets C native functions raise Luna exceptions that unwind to the nearest `try`/`except` or fatal abort if uncaught. `ArgumentError` added to exception hierarchy. `math` stdlib validates arity and types (throws `ArgumentError`/`TypeError`/`ValueError` instead of silent fallback). Domain validation: `sqrt(-1)`, `log(0)`, `acos(2)`, division by zero in `mod`. |
 | `0.3.3-alpha` | Done | `random` stdlib module with instance-based PCG32 RNG. `random.PCG(seed)` creates isolated generator objects with `.int(min, max)`, `.float()`, `.float(min, max)`, `.seed(n)` methods. State stored in `_state` list inside `ObjInstance`. `OP_INVOKE` fix: native instance methods now correctly receive `self`. `vm_run_chunk`/`vm_execute_loop` split to eliminate `-Wclobbered` from `setjmp`/`longjmp`. |
@@ -687,15 +687,15 @@ Will be a fast exact-match. No inheritance, no polymorphism. Direct tag/bit/clas
 
 **`is`** will be fast because it is exact match. For class names, it will be a pointer comparison on `klass`. No hash lookups, no chain walks.
 
-#### `isinstance(x, T)` — Compatibility check (planned)
+#### `isinstance(x, T)` — Compatibility check (implemented)
 
-Will walk the class hierarchy for instances. For primitives, will work the same as `is` (no hierarchy yet).
+Walks the class hierarchy for instances. For primitives, behaves like `is` (no built-in hierarchy yet, but the builtin accepts tuples of types and the runtime hook is overridable per-frontend).
 
-| Expression | Planned VM check |
-|------------|------------------|
+| Expression | VM check |
+|------------|----------|
 | `isinstance(x, int)` | `IS_INT(x)` |
 | `isinstance(x, number)` | `IS_INT(x) \|\| IS_DOUBLE(x)` |
-| `isinstance(x, Player)` | `IS_INSTANCE(x) && klass_chain_contains(klass, Player_class)` |
+| `isinstance(x, Player)` | `IS_INSTANCE(x) && klass_chain_contains(klass, Player_class)` (via `vm_instance_of` hook) |
 | `isinstance(x, object)` | `true` for any value |
 
 For objects, will walk `klass → base → base → ...` until match or null.
@@ -714,7 +714,7 @@ For objects, will walk `klass → base → base → ...` until match or null.
 3. AST: `EXPR_IS_TYPE` node
 4. Compiler: `OP_ISTYPE` (ABC, builtin category) and `OP_INSTANCEOF` (ABx, class name lookup)
 5. VM: dispatch loop handlers for both opcodes
-6. Builtins: `isinstance()` function in `vm_builtins.c`
+6. Builtins: `isinstance()` function in `vm_builtins.c` ✅; delegates to the frontend `vm_instance_of` hook for class-chain walks.
 
 Target: `0.3.x` after modules/imports land, since it touches the same compiler pipeline.
 

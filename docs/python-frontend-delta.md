@@ -157,8 +157,8 @@ Done in `src/py` (verified at `8751d6a`):
 - **Literal subset:** `0x`/`0o`/`0b` and `_` digit separators unverified in
   `scan_number` (`lexer.c:189`). Optional in phase 2.
 - **Builtins:** present: `print`, `len`, `range`, `type`, `str`, `int`,
-  `float` (`vm_builtins.c:748-768`). Missing: `isinstance`, `enumerate`,
-  `abs`, `min`, `max`, `sorted`, `repr`, `bool`.
+  `float`, `isinstance` (`vm_builtins.c:748-768`).
+  Missing: `enumerate`, `abs`, `min`, `max`, `sorted`, `repr`, `bool`.
 
 ---
 

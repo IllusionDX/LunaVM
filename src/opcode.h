@@ -157,9 +157,6 @@ typedef enum {
     OP_TRY,         /* AsBx : push try, catch at PC+sBx                   */
     OP_ENDTRY,      /* ABC  : pop try frame (A,B,C unused)               */
 
-    /* ---- Type checking ---- */
-    OP_ISINSTANCE,  /* ABC  : A = isinstance(B, C)  (C is a class object) */
-
     /* ---- Keyword-argument prefix ----
      * OP_KW_PREFIX is emitted immediately before OP_CALL only when a call
      * carries keyword arguments.  It carries the keyword count (A) and a

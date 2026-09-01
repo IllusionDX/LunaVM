@@ -2065,12 +2065,19 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                 int next_clause = -1;
 
                 if (cc->type_name) {
-                    int cls_reg = alloc_reg(c);
                     int const_idx = chunk_add_const(c->chunk, make_obj((Object*)new_string(cc->type_name, (int)strlen(cc->type_name))));
-                    chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)cls_reg, (uint16_t)const_idx);
-                    int bool_reg = alloc_reg(c);
-                    emit_ABC(c, OP_ISINSTANCE, (uint8_t)bool_reg, (uint8_t)exc_reg, (uint8_t)cls_reg);
-                    next_clause = emit_jump(c, OP_JZ, (uint8_t)bool_reg);
+                    int fn_reg   = alloc_reg(c);
+                    int arg1_reg = alloc_reg(c);
+                    int arg2_reg = alloc_reg(c);
+                    int res_reg  = alloc_reg(c);
+                    int fn_idx   = chunk_add_const(c->chunk, make_obj((Object*)new_string("isinstance", 10)));
+                    chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)fn_reg,   (uint16_t)fn_idx);
+                    emit_move(c, (uint8_t)arg1_reg, (uint8_t)exc_reg);
+                    chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)arg2_reg, (uint16_t)const_idx);
+                    emit_ABC(c, OP_CALL, (uint8_t)res_reg, (uint8_t)fn_reg, 2);
+                    next_clause = emit_jump(c, OP_JZ, (uint8_t)res_reg);
+                    free_reg(c);
+                    free_reg(c);
                     free_reg(c);
                     free_reg(c);
                 }

@@ -1041,16 +1041,6 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         DECODE; goto *op_labels[OP(instr)];
     }
 
-    /* 58. OP_ISINSTANCE */
-    op_isinstance: {
-        Value obj = REG(RB);
-        Value cls = REG(RC);
-        bool result = false;
-        vm_instance_of(vm, obj, cls, &result);
-        SET_REG_PRIM(RA, make_bool(result));
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
     /* 66. OP_IMPORT */
     op_import: {
         uint8_t dst = RA;

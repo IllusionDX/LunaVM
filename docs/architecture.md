@@ -411,8 +411,9 @@ No step skips `make` verification. Each part is committed independently.
 >       auto-call, enum variants, class name/base/fields, vector components).
 >     - `op_invoke` / `op_super` resolve callables + self-binding layout via `invoke` /
 >       `super_fn` hooks and share a single call path (removing ~700 lines of
->       duplicated frame-push code). `op_isinstance` uses the `instance_of` hook;
->       `op_getfield` / `op_setfield` use `get_field_slot` / `set_field_slot`.
+>       duplicated frame-push code). The `isinstance` builtin delegates class-chain
+>       checks to the `instance_of` frontend hook (no dedicated opcode); `op_getfield` /
+>       `op_setfield` use `get_field_slot` / `set_field_slot`.
 >   - **6e (pending):** remove `value.h` shim (`#include "luna/object.h"` still
 >     present at `value.h:165`). Remaining core references to Luna macros: `IS_*`
 >     checks inside `op_call`/`op_kcall` (function/closure/bound-method dispatch),
@@ -429,8 +430,8 @@ No step skips `make` verification. Each part is committed independently.
 > enough and stay frontend-lowered via the `VMFrontendHooks` boundary where their semantics
 > live.
 >   Kept (general): `OP_COALESCE` (`??`, JS), `OP_SLICE` (`a[b:c]`, Python), `OP_MEMBERGET`/
->   `SET`, `OP_INDEXGET`/`SET`, `OP_MEMBERGET_SAFE`/`INDEXGET_SAFE` (`?.`, JS), `OP_IN`,
->   `OP_ISINSTANCE`, `OP_INVOKE`, `OP_SUPER`, `OP_NEW`/`NEWLIST`/`NEWDICT`/`LISTAPPEND`,
+>   SET`, `OP_INDEXGET`/`SET`, `OP_MEMBERGET_SAFE`/`INDEXGET_SAFE` (`?.`, JS), `OP_IN`,
+>   `OP_INVOKE`, `OP_SUPER`, `OP_NEW`/`NEWLIST`/`NEWDICT`/`LISTAPPEND`,
 >   `OP_GETITER`/`FORLOOP`, `OP_IMPORT`, `OP_DEFAULT`/`KWARGS`/`KCALL`, `OP_GETFIELD`/`SETFIELD`,
 >   `OP_THROW`/`TRY`/`ENDTRY`.
 >   - **OP_SLICE_SAFE** (`a?[b:c]` — optional-chaining combined with slice; neither Python nor
@@ -465,9 +466,10 @@ No step skips `make` verification. Each part is committed independently.
 - **6d.5 (DONE):** member access and method invocation are fully delegated to the
   frontend. `op_memberget`/`op_memberget_safe`/`op_memberset` use the authoritative
   `luna_member_get`/`luna_member_set`; `op_invoke`/`op_super` use `invoke`/`super_fn`
-  to resolve callables + self-binding and share one call path; `op_isinstance` and
-  `op_getfield`/`op_setfield` use `instance_of`/`get_field_slot`/`set_field_slot`.
-  The core no longer switches on `obj->type->kind` anywhere.
+  to resolve callables + self-binding and share one call path. The `isinstance`
+  builtin delegates the class-chain check to the `instance_of` frontend hook;
+  `op_getfield`/`op_setfield` use `get_field_slot`/`set_field_slot`. The core no
+  longer switches on `obj->type->kind` anywhere.
 - **6d.6 (DONE, runtime path):** `OP_IMPORT` now delegates module lookup,
   parsing, compilation, execution, export creation and cache insertion to the
   frontend's `import_module` callback. The core only receives the resulting

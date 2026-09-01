@@ -180,16 +180,6 @@ static Value bn_build_tuple(VM *vm, Value *args, int n) {
     return make_obj((Object *)t);
 }
 
-static bool bn_isinstance_class(VM *vm, Value obj, ObjClass *target) {
-    ObjClass *c = get_class(vm, obj);
-    if (!c) return false;
-    while (c) {
-        if (c == target) return true;
-        c = c->base;
-    }
-    return false;
-}
-
 static Value bn_isinstance(VM *vm, Value *args, int n) {
     (void)vm;
     if (n < 2) return make_bool(false);
@@ -198,15 +188,18 @@ static Value bn_isinstance(VM *vm, Value *args, int n) {
     if (IS_TUPLE(cls)) {
         ObjTuple *t = (ObjTuple *)AS_OBJ(cls);
         for (int i = 0; i < t->count; i++) {
-            if (IS_OBJ(t->items[i]) && AS_OBJ(t->items[i])->type->kind == OBJ_CLASS &&
-                bn_isinstance_class(vm, obj, (ObjClass *)AS_OBJ(t->items[i]))) {
-                return make_bool(true);
+            Value item = t->items[i];
+            if (IS_OBJ(item) && AS_OBJ(item) && AS_OBJ(item)->type->kind == OBJ_CLASS) {
+                bool r = false;
+                if (vm_instance_of(vm, obj, item, &r) && r) return make_bool(true);
             }
         }
         return make_bool(false);
     }
     if (IS_OBJ(cls) && AS_OBJ(cls) && AS_OBJ(cls)->type->kind == OBJ_CLASS) {
-        return make_bool(bn_isinstance_class(vm, obj, (ObjClass *)AS_OBJ(cls)));
+        bool r = false;
+        vm_instance_of(vm, obj, cls, &r);
+        return make_bool(r);
     }
     return make_bool(false);
 }

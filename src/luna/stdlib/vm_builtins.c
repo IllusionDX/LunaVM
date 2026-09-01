@@ -308,16 +308,6 @@ static Value bn_isinf(VM *vm, Value *args, int n) {
     return make_bool(IS_INF(args[0]));
 }
 
-static bool bn_isinstance_class(VM *vm, Value obj, ObjClass *target) {
-    ObjClass *c = get_class(vm, obj);
-    if (!c) return false;
-    while (c) {
-        if (c == target) return true;
-        c = c->base;
-    }
-    return false;
-}
-
 static Value bn_isinstance(VM *vm, Value *args, int n) {
     (void)vm;
     if (n < 2) return make_bool(false);
@@ -327,15 +317,17 @@ static Value bn_isinstance(VM *vm, Value *args, int n) {
         ObjList *l = (ObjList *)AS_OBJ(cls);
         for (int i = 0; i < l->count; i++) {
             Value c = l->items ? l->items[i] : l->inline_items[i];
-            if (IS_OBJ(c) && AS_OBJ(c)->type->kind == OBJ_CLASS &&
-                bn_isinstance_class(vm, obj, (ObjClass *)AS_OBJ(c))) {
-                return make_bool(true);
+            if (IS_OBJ(c) && AS_OBJ(c) && AS_OBJ(c)->type->kind == OBJ_CLASS) {
+                bool r = false;
+                if (vm_instance_of(vm, obj, c, &r) && r) return make_bool(true);
             }
         }
         return make_bool(false);
     }
     if (IS_OBJ(cls) && AS_OBJ(cls) && AS_OBJ(cls)->type->kind == OBJ_CLASS) {
-        return make_bool(bn_isinstance_class(vm, obj, (ObjClass *)AS_OBJ(cls)));
+        bool r = false;
+        vm_instance_of(vm, obj, cls, &r);
+        return make_bool(r);
     }
     return make_bool(false);
 }

@@ -841,7 +841,6 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_throw,         // 57 OP_THROW
         &&op_try,           // 58 OP_TRY
         &&op_endtry,        // 59 OP_ENDTRY
-        &&op_isinstance,    // 60 OP_ISINSTANCE
         &&op_kw_prefix,     // OP_KW_PREFIX
         &&op_import,        // 68 OP_IMPORT
         &&op_halt,          // 70 OP_HALT

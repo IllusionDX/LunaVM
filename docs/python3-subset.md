@@ -66,12 +66,9 @@ verified working in `pyluna` (`tests_py` suite + probes below).
 - `with` / context managers (`__enter__` / `__exit__`) — not implemented
   (no `TOK_WITH`, no dunders).
 - ~~`super()`~~ — verified (`py.c` `py_super`; `super().__init__()` in
-  `test_py_oop.py`). Global `isinstance()` still missing (`OP_ISINSTANCE`
-  exists but is only used by `except Type:`).
-- Available builtins — verified in `src/py/stdlib/vm_builtins.c`: `print`,
-  `len`, `range`, `type`, `str`, `int`, `float` exist; `isinstance`,
-  `enumerate`, `abs`, `min`, `max`, `sorted`, `repr`, `bool` do not
-  (only `math.abs`).
+  `test_py_oop.py`). `isinstance()` is implemented in `src/py/stdlib/vm_builtins.c`
+  (delegates to the `vm_instance_of` frontend hook for class-chain walks; supports
+  tuples of types).
 - `tuple` / `set` as types — absent (`tuple` no type in lexer/AST; both
   `tuple` and `set` are `Plan`).
 - ~~f-strings~~ — verified: `f"..."` / `f'...'` (`lexer.c:491`, `fstring.c`);
@@ -127,7 +124,7 @@ Target: `print`, `len`, `range`, `isinstance`, `type`, `enumerate`, `abs`,
 `min`, `max`, `sorted`, `repr`, `str`, `int`, `float`, `bool`.
 
 Verified present in `src/py/stdlib/vm_builtins.c`: `print`, `len`, `range`,
-`type`, `str`, `int`, `float`. Still missing: `isinstance`, `enumerate`,
+`isinstance`, `type`, `str`, `int`, `float`. Still missing: `enumerate`,
 `abs` (only in `math`), `min`, `max`, `sorted`, `repr`, `bool`.
 
 ### Semantics
