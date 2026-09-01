@@ -499,14 +499,6 @@ void vm_set_process_args(VM *vm, int argc, char **argv) {
 
 static void close_upvalues(VM *vm, int frame_depth);
 
-static void vm_pop_try_frames(VM *vm, int min_depth) {
-    while (vm->try_stack && vm->try_stack->frame_depth > min_depth) {
-        TryFrame *tf = vm->try_stack;
-        vm->try_stack = tf->next;
-        free(tf);
-    }
-}
-
 void vm_free(VM *vm) {
     free(vm->frontend_slots);
     vm->frontend_slots = NULL;
@@ -542,12 +534,6 @@ void vm_free(VM *vm) {
 
     free(vm->stack);
     vm->stack = NULL;
-
-    while (vm->try_stack) {
-        TryFrame *tf = vm->try_stack;
-        vm->try_stack = tf->next;
-        free(tf);
-    }
 
     value_free_intern_table();
 
@@ -832,8 +818,6 @@ VMResult vm_execute_loop(VM *vm, Chunk *chunk) {
         &&op_invoke,        // 55 OP_INVOKE
         &&op_super,         // 56 OP_SUPER
         &&op_throw,         // 57 OP_THROW
-        &&op_try,           // 58 OP_TRY
-        &&op_endtry,        // 59 OP_ENDTRY
         &&op_kw_prefix,     // OP_KW_PREFIX
         &&op_import,        // 68 OP_IMPORT
         &&op_halt,          // 70 OP_HALT
@@ -1141,59 +1125,6 @@ static void close_upvalues(VM *vm, int frame_depth) {
 }
 
 /* ============================================================ */
-/* Exception helpers                                             */
-/* ============================================================ */
-
-void vm_push_try(VM *vm, int catch_ip) {
-    TryFrame *tf = malloc(sizeof(TryFrame));
-    tf->catch_ip = catch_ip;
-    tf->frame_depth = vm->frame_count;
-    tf->stack_count = vm->stack_count;
-    tf->next = vm->try_stack;
-    vm->try_stack = tf;
-}
-
-void vm_pop_try(VM *vm) {
-    if (vm->try_stack) {
-        TryFrame *tf = vm->try_stack;
-        vm->try_stack = tf->next;
-        free(tf);
-    }
-}
-
-int vm_throw(VM *vm, Value exception) {
-    if (vm->try_stack && vm->try_stack->frame_depth <= vm->frame_count) {
-        TryFrame *tf = vm->try_stack;
-        vm->try_stack = tf->next;
-        vm_pop_try_frames(vm, tf->frame_depth);
-        while (vm->frame_count > tf->frame_depth) {
-            vm->frame_count--;
-        }
-        vm->stack_count = tf->stack_count;
-        CallFrame *frame = &vm->frames[vm->frame_count - 1];
-        frame->ip = tf->catch_ip;
-        free(tf);
-        return 1;
-    }
-    /* Extract message via the MOP message hook when the value is an object
-     * that exposes one (e.g. exception instances).  Falls back to a generic
-     * stringification otherwise. */
-    if (IS_OBJ(exception)) {
-        Object *o = AS_OBJ(exception);
-        if (o->type && o->type->message) {
-            const char *msg = o->type->message(vm, exception);
-            if (msg) {
-                fprintf(stderr, "Uncaught exception: %s\n", msg);
-                return 1;
-            }
-        }
-    }
-    char *s = value_to_string(exception);
-    fprintf(stderr, "Uncaught exception: %s\n", s);
-    free(s);
-    return 1;
-}
-
 /* Native exception throw — callable from C builtin functions.
  * Uses longjmp to safely return to the VM bytecode loop,
  * which then reuses the existing op_throw unwinding logic. */

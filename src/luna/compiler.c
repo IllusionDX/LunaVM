@@ -395,9 +395,6 @@ static void emit_finally_blocks_for_early_exit(Compiler *c, LoopInfo *stop_at) {
 
     for (int i = 0; i < count; i++) {
         FinallyCtx *ctx = buf[i];
-        if (ctx->has_catch) {
-            emit_ABC(c, OP_ENDTRY, 0, 0, 0);
-        }
         scope_enter(c);
         for (int j = 0; j < ctx->finally_count; j++)
             compile_stmt(c, ctx->finally_body[j]);
@@ -1986,7 +1983,6 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
 
     case STMT_TRY: {
         int exc_reg = alloc_reg(c);
-        int try_idx = -1;
         int skip_dispatch = -1;
 
         bool has_catch = stmt->data.try_stmt.catch_count > 0;
@@ -1998,8 +1994,11 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                               has_catch);
         }
 
+        int try_start_ip = -1;
+        int skip_ip      = -1;
+
         if (has_catch) {
-            try_idx = emit_jump(c, OP_TRY, (uint8_t)exc_reg);
+            try_start_ip = c->chunk->count;
         }
 
         scope_enter(c);
@@ -2008,9 +2007,11 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
         scope_exit(c);
 
         if (has_catch) {
-            emit_ABC(c, OP_ENDTRY, 0, 0, 0);
             skip_dispatch = emit_jump(c, OP_JMP, 0);
-            patch_jump(c, try_idx);
+            skip_ip = skip_dispatch;
+            /* The protected region ends just before the OP_JMP (exclusive). */
+            chunk_add_exception(c->chunk, try_start_ip, skip_ip,
+                                /*catch_ip*/ c->chunk->count, (uint8_t)exc_reg);
 
             int *end_jumps = malloc(sizeof(int) * stmt->data.try_stmt.catch_count);
             int end_count = 0;
@@ -2238,7 +2239,7 @@ static int compile_function_value(Compiler *c, const char *name,
         for (int i = 0; i < fn_chunk.count; i++) {
             OpCode op = DECODE_OP(fn_chunk.code[i]);
             if (op == OP_CALL || op == OP_INVOKE || op == OP_SUPER ||
-                op == OP_TRY || op == OP_CLOSURE) {
+                op == OP_CLOSURE) {
                 is_leaf = false;
                 break;
             }
@@ -2402,10 +2403,10 @@ static void compile_class(Compiler *c, Decl *decl) {
             for (int i = 0; i < mchunk.count; i++) {
                 OpCode op = DECODE_OP(mchunk.code[i]);
                 if (op == OP_CALL || op == OP_INVOKE || op == OP_SUPER ||
-                    op == OP_TRY || op == OP_CLOSURE) {
-                    is_leaf = false;
-                    break;
-                }
+op == OP_CLOSURE) {
+                is_leaf = false;
+                break;
+            }
             }
         }
 

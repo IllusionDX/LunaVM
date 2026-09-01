@@ -203,15 +203,6 @@ typedef struct GlobalEntry {
 
 #define VM_GLOBAL_BUCKETS 256
 
-/* ---- Exception handling frame ---- */
-typedef struct TryFrame {
-    int catch_ip;
-    int frame_depth;   /* vm->frame_count when TRY was pushed */
-    int stack_count;   /* vm->stack_count when TRY was pushed */
-    int exc_reg;       /* register to receive exception value */
-    struct TryFrame *next;
-} TryFrame;
-
 /* ---- Inline caches ---- */
 #define IC_CACHE_SIZE 1024  /* must be power of 2 */
 
@@ -259,9 +250,6 @@ typedef struct VM {
 
     /* GC intrusive list */
     Object     *objects;
-
-    /* Exception handling */
-    TryFrame   *try_stack;
 
     /* Open upvalues (not yet closed) */
     void       *open_upvalues;

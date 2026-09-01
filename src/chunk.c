@@ -27,6 +27,10 @@ void chunk_init(Chunk *chunk, const char *name) {
     chunk->global_cache  = NULL;
     chunk->max_registers = 0;
 
+    chunk->exceptions         = NULL;
+    chunk->exception_count    = 0;
+    chunk->exception_capacity = 0;
+
     chunk->name = name ? strdup(name) : strdup("<chunk>");
     chunk->source_path = NULL;
 }
@@ -37,6 +41,7 @@ void chunk_free(Chunk *chunk) {
 
     free(chunk->constants);
     free(chunk->global_cache);
+    free(chunk->exceptions);
     free(chunk->name);
     free(chunk->source_path);
 
@@ -150,6 +155,32 @@ void chunk_patch_jump_c(Chunk *chunk, int at, int32_t offset) {
 }
 
 /* ============================================================ */
+/* Exception table                                                */
+/* ============================================================ */
+
+int chunk_add_exception(Chunk *chunk, int start_ip, int end_ip,
+                        int catch_ip, uint8_t exc_reg) {
+    if (chunk->exception_count >= chunk->exception_capacity) {
+        int new_cap = chunk->exception_capacity < 8
+                      ? 8
+                      : chunk->exception_capacity * 2;
+        chunk->exceptions = realloc(chunk->exceptions,
+                                    sizeof(ExceptionEntry) * (size_t)new_cap);
+        if (!chunk->exceptions) {
+            fprintf(stderr, "chunk: out of memory (exception table)\n");
+            exit(1);
+        }
+        chunk->exception_capacity = new_cap;
+    }
+    int idx = chunk->exception_count++;
+    chunk->exceptions[idx].start_ip = start_ip;
+    chunk->exceptions[idx].end_ip   = end_ip;
+    chunk->exceptions[idx].catch_ip = catch_ip;
+    chunk->exceptions[idx].exc_reg  = exc_reg;
+    return idx;
+}
+
+/* ============================================================ */
 /* Disassembly                                                    */
 /* ============================================================ */
 
@@ -174,7 +205,7 @@ static const char *op_mnemonics[] = {
     "INDEXGET","INDEXSET",
     "MEMBERGET","MEMBERSET","GETFIELD",  "SETFIELD",
     "INVOKE",    "SUPER",
-    "THROW",   "TRY",      "ENDTRY",
+    "THROW",
     "KW_PREFIX",
     "IMPORT",  "HALT",
     "LT_JZ",   "LE_JZ",    "GT_JZ",     "GE_JZ",
@@ -227,8 +258,6 @@ static OpFormat op_formats[] = {
     /* INVOKE */   FMT_ABC,
     /* SUPER */    FMT_ABC,
     /* THROW */    FMT_ABC,
-    /* TRY */      FMT_AsBx,
-    /* ENDTRY */   FMT_ABC,
     /* KW_PREFIX */FMT_ABx,
     /* IMPORT */   FMT_ABx,
     /* HALT */     FMT_ABC,

@@ -460,7 +460,6 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
         
         if (LUNA_LIKELY(vm->open_upvalues)) close_upvalues(vm, vm->frame_count);
 
-        vm_pop_try_frames(vm, vm->frame_count - 1);
         vm->frame_count--;
         SYNC_LOCALS();
         SET_REG(callee->ret_reg, retval);
@@ -908,7 +907,16 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
     }
 
     /* ---- Exceptions ---- */
-    /* 54. OP_THROW */
+    /* OP_THROW
+     *
+     * On the cold path only.  The happy path of every try-block is zero-cost:
+     * no opcode, no malloc, no per-frame state.  When a throw does fire we
+     * consult chunk->exceptions for the current IP and walk the call stack
+     * only if no handler is found here.
+     *
+     * The exception is written into the handler's exc_reg by the static
+     * table; nothing runtime-allocated, nothing to free.
+     */
     op_throw: {
         if (!IS_OBJ(_exc) || !AS_OBJ(_exc)) {
             /* _exc was not pre-set (user OP_THROW or a re-throw). The value
@@ -930,55 +938,42 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
             free(msg);
         }
         vm->last_exception = _exc;
-        /* unwind to the nearest catch */
-        while (vm->try_stack) {
-            TryFrame *tf = vm->try_stack;
-            if (tf->frame_depth <= vm->frame_count) {
-                /* unwind call frames */
-                while (vm->frame_count > tf->frame_depth) {
-                    CallFrame *unwound = &vm->frames[vm->frame_count - 1];
-                    
-                    frame_release_refs(unwound);
-                    close_upvalues(vm, vm->frame_count);
-                    vm->frame_count--;
+
+        /* Walk frames from innermost outward, looking for a static exception
+         * entry whose [start_ip, end_ip) range contains the throwing IP.
+         * All try/catch blocks in the same function share one chunk and one
+         * exception table, so we search that table from the innermost entry
+         * (last-added) backward; the innermost matching try wins.  We only
+         * pop a frame when its entire exception table declines to handle
+         * the throw, which means the exception has truly escaped that
+         * function. */
+        while (vm->frame_count > 0) {
+            CallFrame *cf = &vm->frames[vm->frame_count - 1];
+            int throw_ip = (int)(pc - cf->chunk->code) - 1;
+            ExceptionEntry *match = NULL;
+            /* The compiler adds exception entries innermost-first, so a
+             * forward linear scan already picks the innermost match. */
+            for (int i = 0; i < cf->chunk->exception_count; i++) {
+                ExceptionEntry *e = &cf->chunk->exceptions[i];
+                if (throw_ip >= e->start_ip && throw_ip < e->end_ip) {
+                    match = e;
+                    break;
                 }
-                vm->stack_count = tf->stack_count;
-                SET_REG(tf->exc_reg, _exc);
-                vm->frames[vm->frame_count - 1].ip = tf->catch_ip;
-                vm->try_stack = tf->next;
-                free(tf);
-                _exc = make_null();
+            }
+            if (match) {
+                cf->ip = match->catch_ip;
                 SYNC_LOCALS();
+                SET_REG(match->exc_reg, _exc);
+                _exc = make_null();
                 DECODE;
                 goto *op_labels[OP(instr)];
             }
-            /* stale frame from deeper call, pop it */
-            vm->try_stack = tf->next;
-            free(tf);
+            /* No handler in this function: pop the frame and try the caller. */
+            frame_release_refs(cf);
+            close_upvalues(vm, vm->frame_count);
+            vm->frame_count--;
         }
         return VM_EXCEPTION;
-    }
-
-    /* 55. OP_TRY */
-    op_try: {
-        TryFrame *tf = malloc(sizeof(TryFrame));
-        tf->catch_ip   = (int)(pc - current_chunk->code) + sBx;
-        tf->frame_depth = vm->frame_count;
-        tf->stack_count = vm->stack_count;
-        tf->exc_reg    = RA;
-        tf->next       = vm->try_stack;
-        vm->try_stack  = tf;
-        DECODE; goto *op_labels[OP(instr)];
-    }
-
-    /* 56. OP_ENDTRY */
-    op_endtry: {
-        if (vm->try_stack) {
-            TryFrame *tf = vm->try_stack;
-            vm->try_stack = tf->next;
-            free(tf);
-        }
-        DECODE; goto *op_labels[OP(instr)];
     }
 
     /* 66. OP_IMPORT */
