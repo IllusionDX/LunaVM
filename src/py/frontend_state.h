@@ -20,6 +20,7 @@ typedef struct PyFrontend {
     ObjClass *runtime_error_class;
     ObjClass *argument_error_class;
     ObjClass *overflow_error_class;
+    ObjClass *zero_division_error_class;
 
     /* Canonical classes for built-in types */
     ObjClass *string_class;

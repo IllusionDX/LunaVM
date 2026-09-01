@@ -139,7 +139,7 @@ static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right,
             case VM_OP_DIV:
                 /* Python 3: `/` is always true division — int / int → float */
                 if (b) { *out = make_double((double)a / (double)b); return true; }
-                vm->last_exception = make_exception_instance(vm, py_fe(vm)->runtime_error_class, "division by zero");
+                vm->last_exception = make_exception_instance(vm, py_fe(vm)->zero_division_error_class, "division by zero");
                 return false;
             case VM_OP_MOD:
                 /* Python modulo: result takes the divisor's sign. */
@@ -159,7 +159,7 @@ static bool py_binary_operation(VM *vm, VMOperation op, Value left, Value right,
                     *out = py_integer_result(q);
                     return true;
                 }
-                vm->last_exception = make_exception_instance(vm, py_fe(vm)->runtime_error_class, "division by zero");
+                vm->last_exception = make_exception_instance(vm, py_fe(vm)->zero_division_error_class, "division by zero");
                 return false;
             }
             case VM_OP_POW: {
@@ -1100,6 +1100,7 @@ void py_init_vm(VM *vm) {
     fe->overflow_error_class = py_register_exception(vm, "OverflowError", fe->exception_class);
     fe->runtime_error_class = py_register_exception(vm, "RuntimeError", fe->exception_class);
     fe->argument_error_class = py_register_exception(vm, "ArgumentError", fe->exception_class);
+    fe->zero_division_error_class = py_register_exception(vm, "ZeroDivisionError", fe->exception_class);
 
     {
         ObjClass *exc_classes[] = {

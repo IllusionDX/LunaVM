@@ -398,17 +398,17 @@ DEFINE_CMP_JZ_IMM(ne, !=, OP_NE)
             DECODE; goto *op_labels[OP(instr)];
         }
 
-        /* Native callable: gather positional args (skip the trailing kwarg values
-           a keyword prefix may have pushed) and dispatch via the vtable.  The vtable
-           prepends `self` for bound methods, so we never do it here. */
-        int positional = (int)nargs - (int)kw_count;
-        if (positional < 0) positional = 0;
+        /* Native callable: gather ALL args contiguously (positional first,
+         * then kwarg values) and dispatch via the vtable with the kw_names
+         * list.  The callee's Type decides: kw-aware natives unpack by name,
+         * plain natives reject kwargs with a TypeError.  The vtable prepends
+         * `self` for bound methods, so we never do it here. */
         Value scratch[256];
-        for (int i = 0; i < positional; i++) scratch[i] = REG(fn_reg + 1 + i);
+        for (int i = 0; i < nargs; i++) scratch[i] = REG(fn_reg + 1 + i);
         Value result;
         /* Dispatch through vm_call_value so a native function that throws surfaces
            as a catchable exception instead of being swallowed. */
-        if (vm_call_value(vm, fn_val, scratch, positional, &result) == VM_EXCEPTION) {
+        if (vm_call_value_kw(vm, fn_val, scratch, nargs, kw_names, &result) == VM_EXCEPTION) {
             _exc = vm->last_exception;
             goto op_throw;
         }

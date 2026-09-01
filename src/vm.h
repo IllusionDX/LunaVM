@@ -19,6 +19,7 @@
 /* Host-callable ABI owned by the core. Frontends may typedef their own name
  * for the same signature, but the VM must not depend on that frontend name. */
 typedef Value (*VMNativeFn)(struct VM *vm, Value *args, int arg_count);
+typedef Value (*VMNativeKwFn)(struct VM *vm, Value *args, int arg_count, Value kw_names);
 
 /* Primitive operation identifiers are part of the VM ABI, not a language
  * object model.  A frontend can implement these operations without exposing
@@ -344,10 +345,14 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk);
  * Handles frame setup, execution, and result extraction.
  * Returns VM_OK on success, VM_EXCEPTION on unhandled error. */
 VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *out);
+VMResult vm_call_value_kw(VM *vm, Value fn_val, Value *args, int arg_count,
+                          Value kw_names, Value *out);
 
 /* Native exception throw — usable from C builtin functions */
 void luna_throw(VM *vm, void *error_class, const char *format, ...);
 bool vm_call_native(VM *vm, VMNativeFn fn, Value *args, int arg_count, Value *out);
+bool vm_call_native_kw(VM *vm, VMNativeKwFn fn, Value *args, int arg_count,
+                       Value kw_names, Value *out);
 
 /* Stack trace — formats the call stack into a string buffer (GCC-style) */
 void vm_format_stack_trace(VM *vm, char *buf, size_t buf_size, const char *error_msg);

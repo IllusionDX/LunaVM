@@ -116,7 +116,7 @@ static void py_string_setitem(struct VM *vm, Value self, Value key, Value val) {
 
 static Value py_string_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int py_string_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value py_string_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_string_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 
 /* ---- MOP call vtables (Part 5) ----
  * Bytecode callables (function/closure/bound_method) run synchronously through
@@ -125,15 +125,27 @@ static Value py_string_call(struct VM *vm, Value self, Value *args, int argc) { 
  * `!= VM_OK`, not `!`. On failure the exception is already in vm->last_exception;
  * we re-propagate via longjmp exactly like op_throw (goto op_throw), preserving
  * Luna's frame-based exception unwinding instead of swallowing it as null. */
-static Value py_function_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_function_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     if (!IS_FUNCTION(self)) return make_null();
     ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
+    int kw_count = (IS_LIST(kw_names)) ? list_length((ObjList*)AS_OBJ(kw_names)) : 0;
     if (fn->is_native) {
+        /* CPython semantics: plain natives reject named arguments loudly
+         * instead of silently consuming the kw values as positional. */
+        if (kw_count > 0 && !fn->native_kw && !fn->cfunc) {
+            luna_throw(vm, py_fe(vm)->type_error_class,
+                "math.%s() takes no keyword arguments", fn->name ? fn->name : "<native>");
+        }
         Value scratch[256];
         for (int i = 0; i < argc; i++) scratch[i] = args[i];
         Value result;
         if (fn->cfunc) {
             result = api_cfunc_dispatch(vm, fn->cfunc, scratch, argc);
+        } else if (fn->native_kw) {
+            if (!vm_call_native_kw(vm, fn->native_kw, scratch, argc, kw_names, &result)) {
+                if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                return make_null();
+            }
         } else {
             if (!vm_call_native(vm, fn->native_fn, scratch, argc, &result)) {
                 if (vm->native_jump) longjmp(vm->native_jump->env, 1);
@@ -143,14 +155,14 @@ static Value py_function_call(struct VM *vm, Value self, Value *args, int argc) 
         return result;
     }
     Value out;
-    if (vm_call_value(vm, self, args, argc, &out) != VM_OK) {
+    if (vm_call_value_kw(vm, self, args, argc, kw_names, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
         return make_null();
     }
     return out;
 }
 
-static Value py_closure_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_closure_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     if (!IS_CLOSURE(self)) return make_null();
     ObjClosure *cl = (ObjClosure *)AS_OBJ(self);
     if (cl->function->is_native) {
@@ -158,10 +170,23 @@ static Value py_closure_call(struct VM *vm, Value self, Value *args, int argc) {
          * old inline OP_INVOKE native path (which inspected fn->is_native) and
          * avoids an infinite loop when the core routes a native closure through
          * t->call (get_chunk returns NULL, so vm_call_value would re-enter). */
+        int kw_count = (IS_LIST(kw_names)) ? list_length((ObjList*)AS_OBJ(kw_names)) : 0;
+        if (kw_count > 0 && !cl->function->native_kw && !cl->function->cfunc) {
+            luna_throw(vm, py_fe(vm)->type_error_class,
+                "%s() takes no keyword arguments",
+                cl->function->name ? cl->function->name : "<native>");
+        }
         Value scratch[256];
         for (int i = 0; i < argc; i++) scratch[i] = args[i];
         Value result;
         if (cl->function->cfunc) return api_cfunc_dispatch(vm, cl->function->cfunc, scratch, argc);
+        if (cl->function->native_kw) {
+            if (!vm_call_native_kw(vm, cl->function->native_kw, scratch, argc, kw_names, &result)) {
+                if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                return make_null();
+            }
+            return result;
+        }
         if (!vm_call_native(vm, cl->function->native_fn, scratch, argc, &result)) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
@@ -169,21 +194,21 @@ static Value py_closure_call(struct VM *vm, Value self, Value *args, int argc) {
         return result;
     }
     Value out;
-    if (vm_call_value(vm, self, args, argc, &out) != VM_OK) {
+    if (vm_call_value_kw(vm, self, args, argc, kw_names, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
         return make_null();
     }
     return out;
 }
 
-static Value py_bound_method_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_bound_method_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     if (!IS_BOUND_METHOD(self)) return make_null();
     ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(self);
     Value scratch[256];
     scratch[0] = bm->self; /* implicit self */
     for (int i = 0; i < argc; i++) scratch[i + 1] = args[i];
     Value out;
-    if (vm_call_value(vm, make_obj((Object*)bm->fn), scratch, argc + 1, &out) != VM_OK) {
+    if (vm_call_value_kw(vm, make_obj((Object*)bm->fn), scratch, argc + 1, kw_names, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
         return make_null();
     }
@@ -417,7 +442,7 @@ static void py_list_setitem(struct VM *vm, Value self, Value key, Value val) {
 
 static Value py_list_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int py_list_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value py_list_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_list_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value py_list_tostring(struct VM *vm, Value self) { (void)vm; return self; }  /* approximate */
 static uint32_t py_list_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int py_list_len(struct VM *vm, Value self) { (void)vm; return ((ObjList*)AS_OBJ(self))->count; }
@@ -453,7 +478,7 @@ static void py_tuple_setitem(struct VM *vm, Value self, Value key, Value val) {
 
 static Value py_tuple_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int py_tuple_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value py_tuple_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_tuple_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value py_tuple_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 
 static uint32_t py_tuple_hash(Value self) {
@@ -534,7 +559,7 @@ static int py_dict_setattr(struct VM *vm, Value self, const char *name, Value va
     dict_set((ObjDict*)AS_OBJ(self), make_obj((Object*)new_string(name, (int)strlen(name))), val);
     return 1;
 }
-static Value py_dict_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_dict_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value py_dict_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t py_dict_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int py_dict_len(struct VM *vm, Value self) { (void)vm; return ((ObjDict*)AS_OBJ(self))->entry_count; }
@@ -575,7 +600,7 @@ static int py_instance_setattr(struct VM *vm, Value self, const char *name, Valu
     return 1;
 }
 
-static Value py_instance_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_instance_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     if (!inst->klass) return make_null();
     ObjFunction *fn = NULL;
@@ -589,13 +614,20 @@ static Value py_instance_call(struct VM *vm, Value self, Value *args, int argc) 
     Value out;
     if (fn->is_native) {
         if (fn->cfunc) return api_cfunc_dispatch(vm, fn->cfunc, scratch, argc + 1);
+        if (fn->native_kw) {
+            if (!vm_call_native_kw(vm, fn->native_kw, scratch, argc + 1, kw_names, &out)) {
+                if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                return make_null();
+            }
+            return out;
+        }
         if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
         }
         return out;
     }
-    if (vm_call_value(vm, make_obj((Object*)fn), scratch, argc + 1, &out) != VM_OK) {
+    if (vm_call_value_kw(vm, make_obj((Object*)fn), scratch, argc + 1, kw_names, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
         return make_null();
     }
@@ -608,7 +640,7 @@ static int py_instance_len(struct VM *vm, Value self) { (void)vm; (void)self; re
 /* Python-style class instantiation: `Foo(args...)` allocates an instance and
  * runs its `__init__` method (inherited methods included) with self bound as
  * the first argument.  Missing __init__ is a no-op (instance is returned). */
-static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value py_class_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     if (!IS_CLASS(self)) return make_null();
     ObjClass *cls = (ObjClass*)AS_OBJ(self);
 
@@ -740,11 +772,16 @@ static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
         Value out;
         if (fn->is_native) {
             if (fn->cfunc) return api_cfunc_dispatch(vm, fn->cfunc, scratch, argc + 1);
-            if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
+            if (fn->native_kw) {
+                if (!vm_call_native_kw(vm, fn->native_kw, scratch, argc + 1, kw_names, &out)) {
+                    if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                    return make_null();
+                }
+            } else if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
                 if (vm->native_jump) longjmp(vm->native_jump->env, 1);
                 return make_null();
             }
-        } else if (vm_call_value(vm, make_obj((Object*)fn), scratch, argc + 1, &out) != VM_OK) {
+        } else if (vm_call_value_kw(vm, make_obj((Object*)fn), scratch, argc + 1, kw_names, &out) != VM_OK) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
         }
@@ -797,7 +834,7 @@ static Value py_default_getitem(struct VM *vm, Value self, Value key) { (void)vm
 static void py_default_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
 static Value py_default_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int py_default_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value py_default_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value py_default_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value py_default_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t py_default_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int py_default_len(struct VM *vm, Value self) { (void)vm; return 0; }
@@ -1644,6 +1681,7 @@ ObjFunction *new_function(const char *name) {
     f->is_native = false;
     f->is_leaf = false;
     f->native_fn = NULL;
+    f->native_kw = NULL; /* MUST be NULL: malloc() garbage would route every call through the kw dispatcher */
     f->cfunc = NULL; /* MUST be NULL for native functions: malloc() garbage can match a non-null dispatch check in vm_opcodes.inc, causing silent failures */
     f->params = NULL;
     f->body = NULL;
@@ -1658,6 +1696,13 @@ ObjFunction *new_native_function(const char *name, NativeFn fn) {
     ObjFunction *f = new_function(name);
     f->is_native = true;
     f->native_fn = fn;
+    return f;
+}
+
+ObjFunction *new_native_kw_function(const char *name, NativeKwFn fn) {
+    ObjFunction *f = new_function(name);
+    f->is_native = true;
+    f->native_kw = fn;
     return f;
 }
 
@@ -1811,7 +1856,9 @@ bool is_truthy(Value v) {
 }
 
 bool values_equal(Value a, Value b) {
-    if (a == b) return true;
+    /* Bit-identity fast path — but NaN is never equal to itself (IEEE-754),
+     * so doubles must fall through to the numeric comparison below. */
+    if (a == b && !(IS_DOUBLE(a) && isnan(AS_DOUBLE(a)))) return true;
     /* Exact numeric equality across int32 / bigint / double. Heap bigints
        never duplicate an int32 (normalized at construction), but bigints can
        meet doubles, and doubles lose precision above 2^53, so those paths
@@ -1819,6 +1866,9 @@ bool values_equal(Value a, Value b) {
     bool a_num = IS_INT(a) || IS_BIGINT(a) || IS_DOUBLE(a);
     bool b_num = IS_INT(b) || IS_BIGINT(b) || IS_DOUBLE(b);
     if (a_num && b_num) {
+        /* IEEE-754: NaN is unequal to everything (CPython float semantics) */
+        if (IS_DOUBLE(a) && IS_DOUBLE(b) && isnan(AS_DOUBLE(a)) && isnan(AS_DOUBLE(b)))
+            return false;
         if (IS_BIGINT(a) && IS_BIGINT(b))
             return bigint_cmp((ObjBigInt *)AS_OBJ(a), (ObjBigInt *)AS_OBJ(b)) == 0;
         if (IS_BIGINT(a) && IS_DOUBLE(b))
@@ -1829,7 +1879,13 @@ bool values_equal(Value a, Value b) {
             return bigint_cmp_value((ObjBigInt *)AS_OBJ(a), b) == 0;
         if (IS_BIGINT(b))
             return bigint_cmp_value((ObjBigInt *)AS_OBJ(b), a) == 0;
-        /* int32 vs int32/double: floats are exact over the int32 range. */
+        /* int32 vs int32/double: floats are exact over the int32 range.
+         * double vs double: NaN != NaN handled above. */
+        if (IS_DOUBLE(a) && IS_DOUBLE(b)) {
+            double da = AS_DOUBLE(a), db = AS_DOUBLE(b);
+            if (isnan(da) || isnan(db)) return false;
+            return da == db;
+        }
         return as_double(a) == as_double(b);
     }
     /* Heap objects: route through the type's eq vtable. The default impl is
@@ -1848,7 +1904,67 @@ char *value_to_string(Value v) {
     if (IS_BOOL(v)) return strdup(AS_BOOL(v) ? "true" : "false");
     if (IS_INT(v)) { snprintf(buf, sizeof(buf), "%d", AS_INT(v)); return strdup(buf); }
     if (IS_BIGINT(v)) return bigint_to_decimal((ObjBigInt*)AS_OBJ(v));
-    if (IS_DOUBLE(v)) { snprintf(buf, sizeof(buf), "%g", AS_DOUBLE(v)); return strdup(buf); }
+    if (IS_DOUBLE(v)) {
+        /* CPython repr float formatting: shortest string that round-trips.
+         * Try %1.{p}e for p = 0..16, shortest whose value survives a
+         * round-trip; fall back to %.17g.  Then convert the exponent part
+         * from C's e+05 to Python's e+05 / e+16 two-digit minimum. */
+        double d = AS_DOUBLE(v);
+        if (isnan(d)) return strdup("nan");
+        if (isinf(d)) return strdup(d > 0 ? "inf" : "-inf");
+        int digits = 17;
+        char t[40];
+        for (int p = 0; p <= 16; p++) {
+            snprintf(t, sizeof(t), "%1.*e", p, d);
+            if (strtod(t, NULL) == d) { digits = p + 1; break; }
+        }
+        if (digits < 17) {
+            /* Shortest round-trip digits found.  CPython's repr uses
+             * %.{digits}g but re-renders with fixed notation when the decimal
+             * exponent is small (avoiding 1e+02 for 100.0). */
+            char g[40];
+            snprintf(g, sizeof(g), "%1.*e", digits - 1, d);
+            char *ep = strchr(g, 'e');
+            int exp_val = ep ? atoi(ep + 1) : 0;
+            if (exp_val >= -4 && exp_val < 16) {
+                /* fixed notation: precision = significant digits beyond the
+                 * decimal point (digits-1-exp), then trim to shortest form */
+                int prec = digits - 1 - exp_val;
+                if (prec < 0) prec = 0;
+                snprintf(g, sizeof(g), "%.*f", prec, d);
+                char *dot = strchr(g, '.');
+                if (dot) {
+                    char *end = g + strlen(g) - 1;
+                    while (end > dot && *end == '0') *end-- = '\0';
+                    if (end == dot) *end = '\0';  /* all-fraction zeros: drop dot */
+                }
+                if (!strchr(g, '.')) {
+                    /* CPython: repr(1.0) == '1.0' — integral floats keep .0 */
+                    size_t len = strlen(g);
+                    g[len] = '.'; g[len + 1] = '0'; g[len + 2] = '\0';
+                }
+                snprintf(buf, sizeof(buf), "%s", g);
+            } else if (exp_val < -4 || exp_val >= 16) {
+                /* scientific: mantissa + e±XX (min 2 exponent digits) */
+                char mant[32];
+                size_t mlen = (size_t)(ep - g);
+                if (mlen >= sizeof(mant)) mlen = sizeof(mant) - 1;
+                memcpy(mant, g, mlen); mant[mlen] = '\0';
+                char *dot = strchr(mant, '.');
+                if (dot) {
+                    char *end = mant + mlen - 1;
+                    while (end > dot && *end == '0') *end-- = '\0';
+                    if (end == dot) *end = '\0';
+                }
+                snprintf(buf, sizeof(buf), "%se%+03d", mant, exp_val);
+            } else {
+                snprintf(buf, sizeof(buf), "%s", g);
+            }
+            return strdup(buf);
+        }
+        snprintf(buf, sizeof(buf), "%.17g", d);
+        return strdup(buf);
+    }
     if (IS_OBJ(v)) {
         Object *obj = AS_OBJ(v);
         if (!obj) return strdup("null");

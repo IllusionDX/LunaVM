@@ -76,6 +76,7 @@ struct ObjClass;
 struct ObjClass *get_class(struct VM *vm, Value val);
 
 typedef Value (*NativeFn)(struct VM *vm, Value *args, int arg_count);
+typedef Value (*NativeKwFn)(struct VM *vm, Value *args, int arg_count, Value kw_names);
 
 /* Heap object structs */
 typedef struct {
@@ -206,6 +207,7 @@ typedef struct ObjFunction {
     bool is_native;
     bool is_leaf;
     NativeFn native_fn;
+    NativeKwFn native_kw;   /* kw-aware native; non-null enables keyword args */
     int (*cfunc)(struct APIState *L);
     int upvalue_count;
     UpvalueDesc *upvalue_descriptors;
@@ -245,6 +247,7 @@ ObjInstance *new_instance(struct ObjClass *klass, int field_capacity);
 ObjClass    *new_class(const char *name, const char *base_name);
 ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
+ObjFunction *new_native_kw_function(const char *name, NativeKwFn fn);
 Value make_exception_instance(struct VM *vm, void *cls, const char *message);
 
 ObjUpvalue  *new_upvalue(int stack_index);

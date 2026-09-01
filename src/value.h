@@ -73,7 +73,12 @@ typedef Value (*MOP_Idx)(struct VM *vm, Value self, Value key);
 typedef void  (*MOP_IdxSet)(struct VM *vm, Value self, Value key, Value val);
 typedef Value (*MOP_Attr)(struct VM *vm, Value self, const char *name);
 typedef int   (*MOP_AttrSet)(struct VM *vm, Value self, const char *name, Value val);
-typedef Value (*MOP_Call)(struct VM *vm, Value self, Value *args, int argc);
+/* Vectorcall: args are contiguous [pos_0..pos_k, kw_val_0..kw_val_m] and
+ * kw_names is a List of name strings with one entry per trailing kw value
+ * (positional = argc - kw_count), or make_null() for a positional-only call.
+ * Every callable kind answers this single interface; kw metadata is a plain
+ * Value, so the core never names a frontend type. */
+typedef Value (*MOP_Call)(struct VM *vm, Value self, Value *args, int argc, Value kw_names);
 typedef uint32_t (*MOP_Hash)(Value self);
 typedef int   (*MOP_Len)(struct VM *vm, Value self);
 

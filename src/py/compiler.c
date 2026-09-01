@@ -2104,8 +2104,7 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                 CatchClause *cc = &stmt->data.try_stmt.catch_clauses[ci];
                 int next_clause = -1;
 
-                if (cc->type_name) {
-                    int const_idx = chunk_add_const(c->chunk, make_obj((Object*)new_string(cc->type_name, (int)strlen(cc->type_name))));
+                if (cc->type_names) {
                     int fn_reg   = alloc_reg(c);
                     int arg1_reg = alloc_reg(c);
                     int arg2_reg = alloc_reg(c);
@@ -2113,13 +2112,27 @@ static void compile_stmt(Compiler *c, Stmt *stmt) {
                     int fn_idx   = chunk_add_const(c->chunk, make_obj((Object*)new_string("isinstance", 10)));
                     chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)fn_reg,   (uint16_t)fn_idx);
                     emit_move(c, (uint8_t)arg1_reg, (uint8_t)exc_reg);
-                    chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)arg2_reg, (uint16_t)const_idx);
+                    if (cc->type_count == 1) {
+                        /* isinstance(exc, T) */
+                        int const_idx = chunk_add_const(c->chunk, make_obj((Object*)new_string(cc->type_names[0], (int)strlen(cc->type_names[0]))));
+                        chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)arg2_reg, (uint16_t)const_idx);
+                    } else {
+                        /* isinstance(exc, (T1, ..., Tn)) via _build_tuple(T1..Tn);
+                         * args must land contiguously at fn+1.. (call convention). */
+                        int bt_idx = chunk_add_string(c->vm, c->chunk, "_build_tuple");
+                        chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)arg2_reg, (uint16_t)bt_idx);
+                        int saved_base = c->temp_base;
+                        c->temp_base = arg2_reg + 1 + cc->type_count;
+                        for (int ti = 0; ti < cc->type_count; ti++) {
+                            int t_idx = chunk_add_const(c->chunk, make_obj((Object*)new_string(cc->type_names[ti], (int)strlen(cc->type_names[ti]))));
+                            chunk_emit_ABx(c->chunk, c->line, OP_GETGLOBAL, (uint8_t)(arg2_reg + 1 + ti), (uint16_t)t_idx);
+                        }
+                        c->temp_base = saved_base;
+                        emit_ABC(c, OP_CALL, (uint8_t)arg2_reg, (uint8_t)arg2_reg, (uint8_t)cc->type_count);
+                    }
                     emit_ABC(c, OP_CALL, (uint8_t)res_reg, (uint8_t)fn_reg, 2);
                     next_clause = emit_jump(c, OP_JZ, (uint8_t)res_reg);
-                    free_reg(c);
-                    free_reg(c);
-                    free_reg(c);
-                    free_reg(c);
+                    for (int fr = 0; fr < 4; fr++) free_reg(c);
                 }
 
                 if (cc->variable) {

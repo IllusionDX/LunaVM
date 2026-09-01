@@ -951,6 +951,11 @@ VMResult vm_run_chunk(VM *vm, Chunk *chunk) {
  * Handles frame setup, execution, and result extraction.
  * Returns VM_OK on success, VM_EXCEPTION on unhandled error. */
 VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *out) {
+    return vm_call_value_kw(vm, fn_val, args, arg_count, make_null(), out);
+}
+
+VMResult vm_call_value_kw(VM *vm, Value fn_val, Value *args, int arg_count,
+                          Value kw_names, Value *out) {
     int saved_stack_count = vm->stack_count;
     int saved_frame_count = vm->frame_count;
     Type *t = (IS_OBJ(fn_val) && AS_OBJ(fn_val)->type) ? AS_OBJ(fn_val)->type : NULL;
@@ -970,7 +975,7 @@ VMResult vm_call_value(VM *vm, Value fn_val, Value *args, int arg_count, Value *
         vm->native_jump = &jump;
         VMResult result;
         if (setjmp(jump.env) == 0) {
-            if (out) *out = t->call(vm, fn_val, args, arg_count);
+            if (out) *out = t->call(vm, fn_val, args, arg_count, kw_names);
             result = VM_OK;
         } else {
             result = VM_EXCEPTION;
@@ -1156,6 +1161,23 @@ bool vm_call_native(VM *vm, VMNativeFn fn, Value *args, int arg_count, Value *ou
     bool ok = true;
     if (setjmp(jump.env) == 0) {
         *out = fn(vm, args, arg_count);
+    } else {
+        ok = false;
+    }
+
+    vm->native_jump = jump.prev;
+    return ok;
+}
+
+bool vm_call_native_kw(VM *vm, VMNativeKwFn fn, Value *args, int arg_count,
+                       Value kw_names, Value *out) {
+    LunaJump jump;
+    jump.prev = vm->native_jump;
+    vm->native_jump = &jump;
+
+    bool ok = true;
+    if (setjmp(jump.env) == 0) {
+        *out = fn(vm, args, arg_count, kw_names);
     } else {
         ok = false;
     }

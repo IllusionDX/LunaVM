@@ -241,8 +241,11 @@ void free_stmt(Stmt *stmt) {
         free(stmt->data.try_stmt.try_body);
 
         for (int i = 0; i < stmt->data.try_stmt.catch_count; i++) {
-            if (stmt->data.try_stmt.catch_clauses[i].type_name)
-                free(stmt->data.try_stmt.catch_clauses[i].type_name);
+            if (stmt->data.try_stmt.catch_clauses[i].type_names) {
+                for (int t = 0; t < stmt->data.try_stmt.catch_clauses[i].type_count; t++)
+                    free(stmt->data.try_stmt.catch_clauses[i].type_names[t]);
+                free(stmt->data.try_stmt.catch_clauses[i].type_names);
+            }
             free(stmt->data.try_stmt.catch_clauses[i].variable);
             for (int j = 0; j < stmt->data.try_stmt.catch_clauses[i].body_count; j++) {
                 free_stmt(stmt->data.try_stmt.catch_clauses[i].body[j]);

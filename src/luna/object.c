@@ -120,7 +120,7 @@ static void luna_string_setitem(struct VM *vm, Value self, Value key, Value val)
 
 static Value luna_string_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int luna_string_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_string_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value luna_string_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 
 /* ---- MOP call vtables (Part 5) ----
  * Bytecode callables (function/closure/bound_method) run synchronously through
@@ -129,7 +129,7 @@ static Value luna_string_call(struct VM *vm, Value self, Value *args, int argc) 
  * `!= VM_OK`, not `!`. On failure the exception is already in vm->last_exception;
  * we re-propagate via longjmp exactly like op_throw (goto op_throw), preserving
  * Luna's frame-based exception unwinding instead of swallowing it as null. */
-static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     if (!IS_FUNCTION(self)) return make_null();
     ObjFunction *fn = (ObjFunction*)AS_OBJ(self);
     if (fn->is_native) {
@@ -138,6 +138,11 @@ static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc
         Value result;
         if (fn->cfunc) {
             result = api_cfunc_dispatch(vm, fn->cfunc, scratch, argc);
+        } else if (fn->native_kw) {
+            if (!vm_call_native_kw(vm, fn->native_kw, scratch, argc, kw_names, &result)) {
+                if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                return make_null();
+            }
         } else {
             if (!vm_call_native(vm, fn->native_fn, scratch, argc, &result)) {
                 if (vm->native_jump) longjmp(vm->native_jump->env, 1);
@@ -147,14 +152,14 @@ static Value luna_function_call(struct VM *vm, Value self, Value *args, int argc
         return result;
     }
     Value out;
-    if (vm_call_value(vm, self, args, argc, &out) != VM_OK) {
+    if (vm_call_value_kw(vm, self, args, argc, kw_names, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
         return make_null();
     }
     return out;
 }
 
-static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     if (!IS_CLOSURE(self)) return make_null();
     ObjClosure *cl = (ObjClosure *)AS_OBJ(self);
     if (cl->function->is_native) {
@@ -166,6 +171,13 @@ static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc)
         for (int i = 0; i < argc; i++) scratch[i] = args[i];
         Value result;
         if (cl->function->cfunc) return api_cfunc_dispatch(vm, cl->function->cfunc, scratch, argc);
+        if (cl->function->native_kw) {
+            if (!vm_call_native_kw(vm, cl->function->native_kw, scratch, argc, kw_names, &result)) {
+                if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                return make_null();
+            }
+            return result;
+        }
         if (!vm_call_native(vm, cl->function->native_fn, scratch, argc, &result)) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
@@ -173,21 +185,21 @@ static Value luna_closure_call(struct VM *vm, Value self, Value *args, int argc)
         return result;
     }
     Value out;
-    if (vm_call_value(vm, self, args, argc, &out) != VM_OK) {
+    if (vm_call_value_kw(vm, self, args, argc, kw_names, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
         return make_null();
     }
     return out;
 }
 
-static Value luna_bound_method_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value luna_bound_method_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     if (!IS_BOUND_METHOD(self)) return make_null();
     ObjBoundMethod *bm = (ObjBoundMethod*)AS_OBJ(self);
     Value scratch[256];
     scratch[0] = bm->self; /* implicit self */
     for (int i = 0; i < argc; i++) scratch[i + 1] = args[i];
     Value out;
-    if (vm_call_value(vm, make_obj((Object*)bm->fn), scratch, argc + 1, &out) != VM_OK) {
+    if (vm_call_value_kw(vm, make_obj((Object*)bm->fn), scratch, argc + 1, kw_names, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
         return make_null();
     }
@@ -425,7 +437,7 @@ static void luna_list_setitem(struct VM *vm, Value self, Value key, Value val) {
 
 static Value luna_list_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int luna_list_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_list_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value luna_list_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value luna_list_tostring(struct VM *vm, Value self) { (void)vm; return self; }  /* approximate */
 static uint32_t luna_list_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int luna_list_len(struct VM *vm, Value self) { (void)vm; return ((ObjList*)AS_OBJ(self))->count; }
@@ -464,7 +476,7 @@ static int luna_dict_setattr(struct VM *vm, Value self, const char *name, Value 
     dict_set((ObjDict*)AS_OBJ(self), make_obj((Object*)new_string(name, (int)strlen(name))), val);
     return 1;
 }
-static Value luna_dict_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value luna_dict_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value luna_dict_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_dict_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int luna_dict_len(struct VM *vm, Value self) { (void)vm; return ((ObjDict*)AS_OBJ(self))->entry_count; }
@@ -505,7 +517,7 @@ static int luna_instance_setattr(struct VM *vm, Value self, const char *name, Va
     return 1;
 }
 
-static Value luna_instance_call(struct VM *vm, Value self, Value *args, int argc) {
+static Value luna_instance_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) {
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     if (!inst->klass) return make_null();
     ObjFunction *fn = NULL;
@@ -519,13 +531,20 @@ static Value luna_instance_call(struct VM *vm, Value self, Value *args, int argc
     Value out;
     if (fn->is_native) {
         if (fn->cfunc) return api_cfunc_dispatch(vm, fn->cfunc, scratch, argc + 1);
+        if (fn->native_kw) {
+            if (!vm_call_native_kw(vm, fn->native_kw, scratch, argc + 1, kw_names, &out)) {
+                if (vm->native_jump) longjmp(vm->native_jump->env, 1);
+                return make_null();
+            }
+            return out;
+        }
         if (!vm_call_native(vm, fn->native_fn, scratch, argc + 1, &out)) {
             if (vm->native_jump) longjmp(vm->native_jump->env, 1);
             return make_null();
         }
         return out;
     }
-    if (vm_call_value(vm, make_obj((Object*)fn), scratch, argc + 1, &out) != VM_OK) {
+    if (vm_call_value_kw(vm, make_obj((Object*)fn), scratch, argc + 1, kw_names, &out) != VM_OK) {
         if (vm->native_jump) longjmp(vm->native_jump->env, 1);
         return make_null();
     }
@@ -593,7 +612,7 @@ static Value luna_vector_getitem(struct VM *vm, Value self, Value key) { (void)v
 static void luna_vector_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
 static Value luna_vector_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int luna_vector_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_vector_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value luna_vector_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value luna_vector_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_vector_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int luna_vector_len(struct VM *vm, Value self) { (void)vm; return 4; }
@@ -636,7 +655,7 @@ static Value luna_matrix_getitem(struct VM *vm, Value self, Value key) { (void)v
 static void luna_matrix_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
 static Value luna_matrix_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int luna_matrix_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_matrix_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value luna_matrix_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value luna_matrix_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_matrix_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int luna_matrix_len(struct VM *vm, Value self) { (void)vm; return 16; }
@@ -707,7 +726,7 @@ static Value luna_int64_getitem(struct VM *vm, Value self, Value key) { (void)vm
 static void luna_int64_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
 static Value luna_int64_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int luna_int64_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_int64_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value luna_int64_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value luna_int64_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_int64_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int luna_int64_len(struct VM *vm, Value self) { (void)vm; return 1; }
@@ -727,7 +746,7 @@ static Value luna_default_getitem(struct VM *vm, Value self, Value key) { (void)
 static void luna_default_setitem(struct VM *vm, Value self, Value key, Value val) { (void)vm; (void)self; (void)key; (void)val; }
 static Value luna_default_getattr(struct VM *vm, Value self, const char *name) { (void)vm; (void)self; (void)name; return make_null(); }
 static int luna_default_setattr(struct VM *vm, Value self, const char *name, Value val) { (void)vm; (void)self; (void)name; (void)val; return 0; }
-static Value luna_default_call(struct VM *vm, Value self, Value *args, int argc) { (void)vm; (void)self; (void)args; (void)argc; return make_null(); }
+static Value luna_default_call(struct VM *vm, Value self, Value *args, int argc, Value kw_names) { (void)vm; (void)self; (void)args; (void)argc; (void)kw_names; return make_null(); }
 static Value luna_default_tostring(struct VM *vm, Value self) { (void)vm; return self; }
 static uint32_t luna_default_hash(Value self) { return (uint32_t)(uintptr_t)AS_OBJ(self); }
 static int luna_default_len(struct VM *vm, Value self) { (void)vm; return 0; }
@@ -1610,6 +1629,7 @@ ObjFunction *new_function(const char *name) {
     f->is_native = false;
     f->is_leaf = false;
     f->native_fn = NULL;
+    f->native_kw = NULL; /* MUST be NULL: malloc() garbage would route every call through the kw dispatcher */
     f->cfunc = NULL; /* MUST be NULL for native functions: malloc() garbage can match a non-null dispatch check in vm_opcodes.inc, causing silent failures */
     f->params = NULL;
     f->body = NULL;

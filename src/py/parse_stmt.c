@@ -351,22 +351,39 @@ static Stmt *parse_try_statement(Parser *parser) {
 
     while (match(parser, TOK_EXCEPT)) {
         advance(parser);
-        char *type_name = NULL;
+        /* except:  |  except T:  |  except T as v:
+         * except (T1, T2):  |  except (T1, T2) as v:  |  except T1, T2: */
+        char **type_names = NULL;
+        int type_count = 0;
+        int type_capacity = 0;
         char *var_name = strdup("e");
-        if (match(parser, TOK_AS)) {
-            /* except as var: */
-            advance(parser); /* consume 'as' */
-            if (match(parser, TOK_IDENTIFIER)) {
-                free(var_name);
-                var_name = strdup(peek(parser)->value);
-                advance(parser);
-            } else {
-                parser_error(parser, "Expected variable name after 'as'");
+        bool have_type = false;
+        if (!match(parser, TOK_COLON)) {
+            bool paren = false;
+            if (match(parser, TOK_LPAREN)) { paren = true; advance(parser); }
+            for (;;) {
+                if (match(parser, TOK_IDENTIFIER)) {
+                    if (type_count >= type_capacity) {
+                        type_capacity = type_capacity ? type_capacity * 2 : 4;
+                        type_names = (char **)realloc(type_names, type_capacity * sizeof(char *));
+                    }
+                    type_names[type_count++] = strdup(peek(parser)->value);
+                    advance(parser);
+                    have_type = true;
+                } else {
+                    break;
+                }
+                if (match(parser, TOK_COMMA)) {
+                    advance(parser);
+                    if (paren && match(parser, TOK_RPAREN)) { advance(parser); break; }
+                    if (!paren) break;   /* except T1, T2: legacy multi-name form */
+                    continue;
+                }
+                if (paren && match(parser, TOK_RPAREN)) { advance(parser); break; }
+                break;
             }
-        } else if (match(parser, TOK_IDENTIFIER)) {
-            /* except Type:  or  except Type as var: */
-            type_name = strdup(peek(parser)->value);
-            advance(parser);
+        }
+        if (have_type) {
             if (match(parser, TOK_AS)) {
                 advance(parser); /* consume 'as' */
                 if (match(parser, TOK_IDENTIFIER)) {
@@ -376,6 +393,16 @@ static Stmt *parse_try_statement(Parser *parser) {
                 } else {
                     parser_error(parser, "Expected variable name after 'as'");
                 }
+            }
+        } else if (match(parser, TOK_AS)) {
+            /* except as var: */
+            advance(parser); /* consume 'as' */
+            if (match(parser, TOK_IDENTIFIER)) {
+                free(var_name);
+                var_name = strdup(peek(parser)->value);
+                advance(parser);
+            } else {
+                parser_error(parser, "Expected variable name after 'as'");
             }
         }
         if (match(parser, TOK_COLON)) {
@@ -389,7 +416,8 @@ static Stmt *parse_try_statement(Parser *parser) {
         if (match_eol(parser)) advance(parser);
 
         if (catch_count >= catch_capacity) { catch_capacity *= 2; catch_clauses = realloc(catch_clauses, catch_capacity * sizeof(CatchClause)); }
-        catch_clauses[catch_count].type_name = type_name;
+        catch_clauses[catch_count].type_names = type_names;
+        catch_clauses[catch_count].type_count = type_count;
         catch_clauses[catch_count].variable = var_name;
         catch_clauses[catch_count].body = catch_body;
         catch_clauses[catch_count].body_count = catch_body_count;

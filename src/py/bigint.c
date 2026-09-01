@@ -993,7 +993,7 @@ static Value bigint_int_binary(VM *vm, VMOperation op, ObjBigInt *x, ObjBigInt *
         case VM_OP_MUL: return bigint_to_value(bigint_mul(x, y));
         case VM_OP_DIV:
             if (bigint_is_zero(y)) {
-                bigint_raise(vm, py_fe(vm)->runtime_error_class, "division by zero");
+                bigint_raise(vm, py_fe(vm)->zero_division_error_class, "division by zero");
                 return make_null();
             }
             {
