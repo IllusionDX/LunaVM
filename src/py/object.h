@@ -33,7 +33,6 @@ typedef enum {
     OBJ_MODULE,
     OBJ_BUFFER = 12,
     OBJ_BIGINT = 13,  /* arbitrary-precision int (PyLong-style, base 2^30) */
-    OBJ_USERDATA,
 } ObjType;
 
 /* Object and Type are defined in the core value model (src/value.h).
@@ -55,7 +54,6 @@ typedef enum {
 #define IS_BOUND_METHOD(v) IS_OBJ_KIND(v, OBJ_BOUND_METHOD)
 #define IS_MODULE(v)       IS_OBJ_KIND(v, OBJ_MODULE)
 #define IS_BUFFER(v)       IS_OBJ_KIND(v, OBJ_BUFFER)
-#define IS_USERDATA(v)     IS_OBJ_KIND(v, OBJ_USERDATA)
 #define IS_BIGINT(v)   IS_OBJ_KIND(v, OBJ_BIGINT)
 
 /* MOP typedefs and the `Type` vtable struct are defined in the core value
@@ -153,16 +151,6 @@ typedef struct ObjBuffer {
     size_t  cursor;
 } ObjBuffer;
 
-typedef void (*UserdataFinalizer)(void *data);
-
-typedef struct ObjUserdata {
-    Object           obj;
-    char            *tag;
-    void            *data;
-    UserdataFinalizer finalizer;
-    bool             finalized;
-} ObjUserdata;
-
 typedef struct ObjInstance {
     Object              obj;
     char               *class_name;
@@ -235,8 +223,6 @@ ObjInstance *new_instance(struct ObjClass *klass, int field_capacity);
 ObjClass    *new_class(const char *name, const char *base_name);
 ObjFunction *new_function(const char *name);
 ObjFunction *new_native_function(const char *name, NativeFn fn);
-ObjUserdata *new_userdata_tagged(const char *tag, void *data, UserdataFinalizer finalizer);
-#define new_userdata(data, finalizer) new_userdata_tagged("userdata", (data), (finalizer))
 Value make_exception_instance(struct VM *vm, void *cls, const char *message);
 
 ObjUpvalue  *new_upvalue(int stack_index);

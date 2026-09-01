@@ -1,11 +1,11 @@
-/* stdlib_net.c — Built-in net module for Luna.
+/* stdlib_net.c — Built-in socket module.
  *
- * Cross-platform TCP/UDP sockets using OBJ_USERDATA finalizers.
+ * Cross-platform TCP/UDP sockets.
  *
- *   net.tcp()              -> Socket(AF_INET, SOCK_STREAM)
- *   net.udp()              -> Socket(AF_INET, SOCK_DGRAM)
- *   net.Socket(family, type) -> generic socket
- *   net.resolve(hostname)  -> IP string
+ *   socket.Socket(family, type) -> generic socket
+ *   socket.dial("tcp"|"udp", host, port)
+ *   socket.listen("tcp"|"udp", port)
+ *   socket.resolve(hostname)    -> IP string
  *
  * Socket methods:
  *   s.connect(host, port)
@@ -18,6 +18,9 @@
  *   s.set_blocking(bool)
  *   s.is_connected()       -> bool
  *   s.get_address()        -> "ip:port" string
+ *
+ * Socket handles are ObjInstance references into a static index table
+ * (raw SOCKET/fd values never enter the VM as Values).
  */
 
 #include <stdlib.h>
@@ -62,6 +65,34 @@ typedef struct LunaSocket {
 } LunaSocket;
 
 static ObjClass *socket_class = NULL;
+
+#define MAX_SOCKET_HANDLES 64
+static LunaSocket *g_sockets[MAX_SOCKET_HANDLES];
+static bool g_socket_used[MAX_SOCKET_HANDLES];
+
+static void socket_close_fd(LunaSocket *s);
+
+static int socket_alloc(LunaSocket *s) {
+    for (int i = 0; i < MAX_SOCKET_HANDLES; i++) {
+        if (!g_socket_used[i]) {
+            g_socket_used[i] = true;
+            g_sockets[i] = s;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void socket_release(int idx) {
+    if (idx < 0 || idx >= MAX_SOCKET_HANDLES || !g_socket_used[idx]) return;
+    LunaSocket *s = g_sockets[idx];
+    g_sockets[idx] = NULL;
+    g_socket_used[idx] = false;
+    if (s) {
+        socket_close_fd(s);
+        free(s);
+    }
+}
 
 #ifdef _WIN32
 static int winsock_initialized = 0;
@@ -117,12 +148,6 @@ static void socket_close_fd(LunaSocket *s) {
     s->listening = 0;
 }
 
-static void socket_finalizer(void *data) {
-    LunaSocket *s = (LunaSocket*)data;
-    socket_close_fd(s);
-    free(s);
-}
-
 /* ==================================================================
  * Helpers
  * ================================================================== */
@@ -146,28 +171,25 @@ static int as_int_checked(VM *vm, Value v, const char *fn, int idx) {
     return (int)value_to_double(v);
 }
 
-static ObjUserdata *socket_userdata_from_instance(VM *vm, Value self, const char *fn) {
+/* Resolve the LunaSocket for a Socket instance. Throws when the value is not
+ * a Socket or its handle is closed/invalid. */
+static LunaSocket *socket_handle_from_instance(VM *vm, Value self, const char *fn) {
     if (!IS_INSTANCE(self) || !AS_OBJ(self)) {
         luna_throw(vm, py_fe(vm)->type_error_class, "%s() expects a Socket instance", fn);
+        return NULL;
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
     Value handle = instance_get_field(inst, "_handle");
-    if (!IS_USERDATA(handle) || !AS_OBJ(handle)) {
+    if (!IS_INT(handle)) {
         luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed socket", fn);
+        return NULL;
     }
-    ObjUserdata *ud = (ObjUserdata*)AS_OBJ(handle);
-    if (!ud->data) {
+    int idx = AS_INT(handle);
+    if (idx < 0 || idx >= MAX_SOCKET_HANDLES || !g_socket_used[idx] || !g_sockets[idx]) {
         luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed socket", fn);
+        return NULL;
     }
-    if (!ud->tag || strcmp(ud->tag, "net.Socket") != 0) {
-        luna_throw(vm, py_fe(vm)->type_error_class, "%s() invalid socket handle", fn);
-    }
-    return ud;
-}
-
-static LunaSocket *socket_handle_from_instance(VM *vm, Value self, const char *fn) {
-    ObjUserdata *ud = socket_userdata_from_instance(vm, self, fn);
-    return (LunaSocket*)ud->data;
+    return g_sockets[idx];
 }
 
 static void clear_socket_handle(ObjInstance *inst) {
@@ -207,8 +229,13 @@ static void setup_socket_handle(ObjInstance *inst, int family, int type) {
     sock->listening = 0;
     sock->blocking = 1;
 
-    ObjUserdata *ud = new_userdata_tagged("net.Socket", sock, socket_finalizer);
-    instance_set_field(inst, "_handle", make_obj((Object*)ud));
+    int idx = socket_alloc(sock);
+    if (idx < 0) {
+        socket_close_fd(sock);
+        free(sock);
+        return;
+    }
+    instance_set_field(inst, "_handle", make_int(idx));
 }
 
 static Value socket_init(VM *vm, Value *args, int n) {
@@ -225,7 +252,7 @@ static Value socket_init(VM *vm, Value *args, int n) {
 
     if (ensure_winsock() != 0) {
         luna_throw(vm, py_fe(vm)->runtime_error_class,
-            "net: failed to initialize networking");
+            "socket: failed to initialize networking");
     }
 
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
@@ -389,9 +416,15 @@ static Value socket_accept(VM *vm, Value *args, int n) {
     client_sock->listening = 0;
     client_sock->blocking = s->blocking;
 
-    ObjUserdata *ud = new_userdata_tagged("net.Socket", client_sock, socket_finalizer);
+    int idx = socket_alloc(client_sock);
+    if (idx < 0) {
+        socket_close_fd(client_sock);
+        free(client_sock);
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "accept(): too many open sockets");
+        return make_null();
+    }
     ObjInstance *inst = new_instance(socket_class, 4);
-    instance_set_field(inst, "_handle", make_obj((Object*)ud));
+    instance_set_field(inst, "_handle", make_int(idx));
 
     /* Client IP string */
     char ip_str[INET_ADDRSTRLEN];
@@ -510,14 +543,14 @@ static Value socket_close(VM *vm, Value *args, int n) {
     }
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
     Value handle = instance_get_field(inst, "_handle");
-    if (!IS_USERDATA(handle) || !AS_OBJ(handle)) {
+    if (!IS_INT(handle)) {
         return make_bool(false);
     }
-    ObjUserdata *ud = (ObjUserdata*)AS_OBJ(handle);
-    if (ud->data) {
-        socket_finalizer(ud->data);
-        ud->data = NULL;
+    int idx = AS_INT(handle);
+    if (idx < 0 || idx >= MAX_SOCKET_HANDLES || !g_socket_used[idx]) {
+        return make_bool(false);
     }
+    socket_release(idx);
     clear_socket_handle(inst);
     return make_bool(true);
 }
@@ -593,10 +626,10 @@ static Value socket_get_address(VM *vm, Value *args, int n) {
  * Module-level functions
  * ================================================================== */
 
-static Value net_dial(VM *vm, Value *args, int n) {
+static Value socket_dial(VM *vm, Value *args, int n) {
     if (n < 3) {
         luna_throw(vm, py_fe(vm)->argument_error_class,
-            "net.dial() requires protocol, host and port arguments");
+            "socket.dial() requires protocol, host and port arguments");
     }
     require_string(vm, args[0], "dial", 1);
     require_string(vm, args[1], "dial", 2);
@@ -612,7 +645,7 @@ static Value net_dial(VM *vm, Value *args, int n) {
         type = SOCK_DGRAM;
     } else {
         luna_throw(vm, py_fe(vm)->argument_error_class,
-            "net.dial() protocol must be 'tcp' or 'udp'");
+            "socket.dial() protocol must be 'tcp' or 'udp'");
     }
 
     ObjInstance *inst = new_instance(socket_class, 4);
@@ -648,10 +681,10 @@ static Value net_dial(VM *vm, Value *args, int n) {
     return sock_val;
 }
 
-static Value net_listen(VM *vm, Value *args, int n) {
+static Value socket_listen_factory(VM *vm, Value *args, int n) {
     if (n < 2) {
         luna_throw(vm, py_fe(vm)->argument_error_class,
-            "net.listen() requires protocol and port arguments");
+            "socket.listen() requires protocol and port arguments");
     }
     require_string(vm, args[0], "listen", 1);
     int port = as_int_checked(vm, args[1], "listen", 2);
@@ -666,7 +699,7 @@ static Value net_listen(VM *vm, Value *args, int n) {
         type = SOCK_DGRAM;
     } else {
         luna_throw(vm, py_fe(vm)->argument_error_class,
-            "net.listen() protocol must be 'tcp' or 'udp'");
+            "socket.listen() protocol must be 'tcp' or 'udp'");
     }
 
     ObjInstance *inst = new_instance(socket_class, 4);
@@ -709,10 +742,10 @@ static Value net_listen(VM *vm, Value *args, int n) {
     return sock_val;
 }
 
-static Value net_resolve(VM *vm, Value *args, int n) {
+static Value socket_resolve(VM *vm, Value *args, int n) {
     if (n < 1) {
         luna_throw(vm, py_fe(vm)->argument_error_class,
-            "net.resolve() requires a hostname argument");
+            "socket.resolve() requires a hostname argument");
     }
     require_string(vm, args[0], "resolve", 1);
     const char *host = as_cstring(args[0]);
@@ -740,7 +773,7 @@ static void module_add_native(ObjModule *mod, const char *name, NativeFn fn) {
     dict_set(mod->exports, key, make_obj((Object*)f));
 }
 
-void vm_register_net_module(VM *vm) {
+void vm_register_socket_module(VM *vm) {
     /* Socket class */
     socket_class = new_class("Socket", NULL);
 
@@ -757,18 +790,18 @@ void vm_register_net_module(VM *vm) {
     class_add_native_method(socket_class, "get_address",   socket_get_address);
 
     /* Module */
-    ObjModule *mod = new_module("net");
+    ObjModule *mod = new_module("socket");
 
-    module_add_native(mod, "dial",    net_dial);
-    module_add_native(mod, "listen",  net_listen);
-    module_add_native(mod, "resolve", net_resolve);
+    module_add_native(mod, "dial",    socket_dial);
+    module_add_native(mod, "listen",  socket_listen_factory);
+    module_add_native(mod, "resolve", socket_resolve);
 
-    /* Socket class — exported directly so `new net.Socket(...)` works via OP_NEW */
+    /* Socket class — exported directly so `new socket.Socket(...)` works via OP_NEW */
     Value socket_key = make_obj((Object*)new_string("Socket", 6));
     Value socket_val = make_obj((Object*)socket_class);
     dict_set(mod->exports, socket_key, socket_val);
 
-    /* Constants — clean names, not POSIX jargon */
+    /* Constants */
     dict_set(mod->exports,
              make_obj((Object*)new_string("IPV4", 4)),
              make_int(AF_INET));
@@ -783,6 +816,6 @@ void vm_register_net_module(VM *vm) {
              make_int(SOCK_DGRAM));
 
     dict_set(py_fe(vm)->module_cache,
-             make_obj((Object*)new_string("net", 3)),
+             make_obj((Object*)new_string("socket", 6)),
              make_obj((Object*)mod));
 }

@@ -37,7 +37,7 @@ void py_mark_roots(VM *vm) {
         fe->string_class, fe->list_class, fe->dict_class, fe->enum_class,
         fe->buffer_class, fe->function_class,
         fe->closure_class, fe->bound_method_class, fe->class_class,
-        fe->module_class, fe->userdata_class, fe->int_class, fe->float_class
+        fe->module_class, fe->int_class, fe->float_class
     };
     for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
         if (roots[i]) vm_mark_value(vm, make_obj(roots[i]));
@@ -1221,7 +1221,7 @@ extern void vm_register_time_module(VM *vm);
 extern void vm_register_os_module(VM *vm);
 extern void vm_register_buffer_module(VM *vm);
 extern void vm_register_string_module(VM *vm);
-extern void vm_register_net_module(VM *vm);
+extern void vm_register_socket_module(VM *vm);
 extern void vm_register_json_module(VM *vm);
 extern uint64_t py_time_monotonic_us(void);
 
@@ -1296,7 +1296,7 @@ void py_init_vm(VM *vm) {
     vm_register_os_module(vm);
     vm_register_buffer_module(vm);
     vm_register_string_module(vm);
-    vm_register_net_module(vm);
+    vm_register_socket_module(vm);
     vm_register_json_module(vm);
 }
 
@@ -1320,7 +1320,6 @@ static int py_type_of(Value v) {
         case OBJ_INSTANCE: return LUNA_TINSTANCE;
         case OBJ_DICT:     return LUNA_TTABLE;
         case OBJ_LIST:     return LUNA_TTABLE;
-        case OBJ_USERDATA: return LUNA_TUSERDATA;
         case OBJ_BUFFER:   return LUNA_TBUFFER;
         case OBJ_BIGINT:   return LUNA_TINTEGER;
         default:           return LUNA_TNIL;
@@ -1347,18 +1346,6 @@ static const char *py_cstring(Value v, size_t *len) {
     return s->chars;
 }
 
-static Value py_new_userdata(void *data, const char *tag, void (*finalizer)(void *)) {
-    return make_obj((Object *)new_userdata_tagged(tag, data, finalizer));
-}
-
-static void *py_userdata_data(Value v) {
-    return ((ObjUserdata *)AS_OBJ(v))->data;
-}
-
-static const char *py_userdata_tag(Value v) {
-    return ((ObjUserdata *)AS_OBJ(v))->tag;
-}
-
 /* Exact int64_t view of a py integer; false when a bigint does not fit. */
 static bool py_integer_value(Value v, int64_t *out) {
     if (IS_INT(v)) { *out = AS_INT(v); return true; }
@@ -1378,9 +1365,6 @@ static const FrontendObject py_frontend_object = {
     .new_cfunction = py_new_cfunction,
     .is_cfunction = py_is_cfunction,
     .cstring = py_cstring,
-    .new_userdata = py_new_userdata,
-    .userdata_data = py_userdata_data,
-    .userdata_tag = py_userdata_tag,
     .integer_value = py_integer_value,
     .make_integer = py_make_integer,
 };

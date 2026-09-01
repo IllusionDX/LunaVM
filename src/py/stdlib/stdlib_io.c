@@ -1,8 +1,11 @@
-/* stdlib_io.c — Stream utilities (Go-inspired).
+/* stdlib_io.c — Stream utilities.
  *
  * io.read_all(src)  — read all data from any source with read_all() method
  * io.copy(dst, src) — copy all data from src to dst using read()/write()
  * io.pipe()         — in-memory pipe, returns [reader, writer]
+ *
+ * Pipes are ObjInstance handles referencing a shared PipeData through a static
+ * index table (raw pointers never enter the VM as Values).
  */
 
 #include <stdlib.h>
@@ -29,11 +32,42 @@ static char *dup_cstr(const char *s) {
     return out;
 }
 
-static void pipe_finalizer(void *data) {
-    PipeData *pd = (PipeData*)data;
-    if (!pd) return;
-    free(pd->buf);
-    free(pd);
+#define MAX_PIPE_HANDLES 64
+static PipeData *g_pipes[MAX_PIPE_HANDLES];
+static bool g_pipe_used[MAX_PIPE_HANDLES];
+
+static int pipe_alloc(PipeData *pd) {
+    for (int i = 0; i < MAX_PIPE_HANDLES; i++) {
+        if (!g_pipe_used[i]) {
+            g_pipe_used[i] = true;
+            g_pipes[i] = pd;
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Resolve the shared PipeData for a pipe reader/writer instance. Throws when
+ * the value is not a pipe instance or its handle is invalid. */
+static PipeData *pipe_resolve(VM *vm, Value self, const char *fn, bool *is_pipe) {
+    *is_pipe = false;
+    if (!IS_INSTANCE(self) || !AS_OBJ(self)) {
+        luna_throw(vm, py_fe(vm)->type_error_class, "%s() requires a pipe instance", fn);
+        return NULL;
+    }
+    ObjInstance *inst = (ObjInstance *)AS_OBJ(self);
+    Value h = instance_get_field(inst, "_handle");
+    if (!IS_INT(h)) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed pipe", fn);
+        return NULL;
+    }
+    int idx = AS_INT(h);
+    if (idx < 0 || idx >= MAX_PIPE_HANDLES || !g_pipe_used[idx]) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed pipe", fn);
+        return NULL;
+    }
+    *is_pipe = true;
+    return g_pipes[idx];
 }
 
 /* ============================================================ */
@@ -119,18 +153,15 @@ static Value io_copy(VM *vm, Value *args, int n) {
 
 /* ============================================================ */
 /* io.pipe() — in-memory pipe                                    */
-/* Returns [reader, writer] — both are tagged userdata objs.     */
+/* Returns [reader, writer] as instances sharing a pipe slot.    */
 /* ============================================================ */
 
 static Value pipe_read(VM *vm, Value *args, int n) {
     (void)vm;
     (void)n;
-    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
-    Value h = instance_get_field(inst, "_handle");
-    if (!IS_USERDATA(h)) return make_null();
-    ObjUserdata *ud = (ObjUserdata*)AS_OBJ(h);
-    PipeData *pd = (PipeData*)ud->data;
-    if (!pd || pd->closed) return make_null();
+    bool is_pipe = false;
+    PipeData *pd = pipe_resolve(vm, args[0], "read", &is_pipe);
+    if (!is_pipe || !pd || pd->closed) return make_null();
     if (pd->read_pos >= pd->write_pos) return make_null();
     return make_obj((Object*)new_string(pd->buf + pd->read_pos,
         (int)(pd->write_pos - pd->read_pos)));
@@ -139,12 +170,9 @@ static Value pipe_read(VM *vm, Value *args, int n) {
 static Value pipe_read_all(VM *vm, Value *args, int n) {
     (void)vm;
     (void)n;
-    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
-    Value h = instance_get_field(inst, "_handle");
-    if (!IS_USERDATA(h)) return make_null();
-    ObjUserdata *ud = (ObjUserdata*)AS_OBJ(h);
-    PipeData *pd = (PipeData*)ud->data;
-    if (!pd) return make_null();
+    bool is_pipe = false;
+    PipeData *pd = pipe_resolve(vm, args[0], "read_all", &is_pipe);
+    if (!is_pipe || !pd) return make_null();
     if (pd->read_pos >= pd->write_pos) {
         return make_obj((Object*)new_string("", 0));
     }
@@ -159,14 +187,11 @@ static Value pipe_write(VM *vm, Value *args, int n) {
         luna_throw(vm, py_fe(vm)->argument_error_class,
             "pipe.write() requires a value argument");
     }
-    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
-    Value h = instance_get_field(inst, "_handle");
-    if (!IS_USERDATA(h)) return make_null();
-    ObjUserdata *ud = (ObjUserdata*)AS_OBJ(h);
-    PipeData *pd = (PipeData*)ud->data;
-    if (!pd) {
-        luna_throw(vm, py_fe(vm)->runtime_error_class,
-            "pipe.write(): pipe is closed");
+    bool is_pipe = false;
+    PipeData *pd = pipe_resolve(vm, args[0], "write", &is_pipe);
+    if (!is_pipe || !pd) return make_null();
+    if (pd->closed) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "pipe.write(): pipe is closed");
     }
 
     char *text = value_to_string(args[1]);
@@ -187,13 +212,13 @@ static Value pipe_write(VM *vm, Value *args, int n) {
 static Value pipe_close(VM *vm, Value *args, int n) {
     (void)vm;
     (void)n;
+    if (!IS_INSTANCE(args[0])) return make_bool(false);
     ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
     Value h = instance_get_field(inst, "_handle");
-    if (!IS_USERDATA(h)) return make_bool(false);
-    ObjUserdata *ud = (ObjUserdata*)AS_OBJ(h);
-    PipeData *pd = (PipeData*)ud->data;
-    if (!pd) return make_bool(false);
-    pd->closed = true;
+    if (!IS_INT(h)) return make_bool(false);
+    int idx = AS_INT(h);
+    if (idx < 0 || idx >= MAX_PIPE_HANDLES || !g_pipe_used[idx]) return make_bool(false);
+    if (g_pipes[idx]) g_pipes[idx]->closed = true;
     return make_bool(true);
 }
 
@@ -210,6 +235,15 @@ static Value io_pipe(VM *vm, Value *args, int n) {
     pd->read_pos = 0;
     pd->write_pos = 0;
     pd->closed = false;
+
+    int idx = pipe_alloc(pd);
+    if (idx < 0) {
+        free(pd->buf);
+        free(pd);
+        luna_throw(vm, py_fe(vm)->runtime_error_class,
+            "io.pipe(): too many open pipes");
+        return make_null();
+    }
 
     ObjClass *pipe_reader_class = new_class("PipeReader", NULL);
     ObjClass *pipe_writer_class = new_class("PipeWriter", NULL);
@@ -248,13 +282,13 @@ static Value io_pipe(VM *vm, Value *args, int n) {
     pipe_writer_class->method_count = 2;
     pipe_writer_class->method_capacity = 2;
 
-    ObjUserdata *ud = new_userdata_tagged("io.Pipe", pd, pipe_finalizer);
+    Value handle = make_int(idx);
 
     ObjInstance *reader = new_instance(pipe_reader_class, 4);
-    instance_set_field(reader, "_handle", make_obj((Object*)ud));
+    instance_set_field(reader, "_handle", handle);
 
     ObjInstance *writer = new_instance(pipe_writer_class, 4);
-    instance_set_field(writer, "_handle", make_obj((Object*)ud));
+    instance_set_field(writer, "_handle", handle);
 
     ObjList *pair = new_list(2);
     list_add(pair, make_obj((Object*)reader));

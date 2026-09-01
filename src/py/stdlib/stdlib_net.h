@@ -4,6 +4,6 @@
 
 #include "vm.h"
 
-void vm_register_net_module(VM *vm);
+void vm_register_socket_module(VM *vm);
 
 #endif /* LUNA_STDLIB_NET_H */

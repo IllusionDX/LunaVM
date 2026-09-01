@@ -313,7 +313,6 @@ static Value bn_type(VM *vm, Value *args, int n) {
                 case OBJ_CLOSURE:    t = "closure";    break;
                 case OBJ_ENUM:       t = "enum";       break;
                 case OBJ_CLASS:      t = "class";      break;
-                case OBJ_USERDATA:   t = "userdata";   break;
                 default:             t = "object";     break;
             }
         }
@@ -725,7 +724,6 @@ void vm_register_canonical_classes(VM *vm) {
     py_fe(vm)->bound_method_class = new_class("BoundMethod", NULL);
     py_fe(vm)->class_class = new_class("Class", NULL);
     py_fe(vm)->module_class = new_class("Module", NULL);
-    py_fe(vm)->userdata_class = new_class("Userdata", NULL);
 }
 
 

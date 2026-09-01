@@ -23,7 +23,6 @@
 /* Forward declarations for helpers used by the lifecycle/formatting vtable
  * (defined later in this file, but referenced by the per-type free funcs). */
 static void intern_remove(ObjString *s);
-static void userdata_run_finalizer(ObjUserdata *ud);
 
 /* ---- helpers available to vtable functions ---- */
 
@@ -917,15 +916,6 @@ Type py_bigint_type = {
     .call = py_default_call, .tostring = py_bigint_tostring, .hash = py_bigint_hash, .len = py_bigint_len
 };
 
-Type py_userdata_type = {
-    .name = "userdata", .kind = OBJ_USERDATA,
-    .add = py_default_add, .sub = py_default_sub, .mul = py_default_mul, .div = py_default_div, .mod = py_default_mod,
-    .neg = py_default_neg, .cmp = py_default_cmp,
-    .getitem = py_default_getitem, .setitem = py_default_setitem,
-    .getattr = py_default_getattr, .setattr = py_default_setattr,
-    .call = py_default_call, .tostring = py_default_tostring, .hash = py_default_hash, .len = py_default_len
-};
-
 /* Indexed by ObjType. */
 Type *py_types[] = {
     [OBJ_STRING]       = &py_string_type,
@@ -942,7 +932,6 @@ Type *py_types[] = {
     [OBJ_MODULE]       = &py_module_type,
     [OBJ_BUFFER]       = &py_buffer_type,
     [OBJ_BIGINT]       = &py_bigint_type,
-    [OBJ_USERDATA]     = &py_userdata_type,
 };
 
 /* ============================================================
@@ -1251,17 +1240,9 @@ static char* py_buffer_to_cstr(Value self) {
     return strdup(out);
 }
 
-/* userdata */
-static void py_userdata_free(Object *obj) {
-    ObjUserdata *ud = (ObjUserdata*)obj;
-    userdata_run_finalizer(ud);
-    free(ud->tag);
-    free(ud);
-}
-
 /* One-time wiring: the frontend owns this kind switch; the core stays generic. */
 void py_wire_lifecycle(void) {
-    for (int k = 0; k <= OBJ_USERDATA; k++) {
+    for (int k = 0; k <= OBJ_BIGINT; k++) {
         Type *t = py_types[k];
         /* ObjType intentionally has reserved values; there is no Type for
          * those slots in py_types[]. */
@@ -1299,8 +1280,6 @@ void py_wire_lifecycle(void) {
                 t->mark = py_module_mark; t->to_cstr = py_module_to_cstr; break;
             case OBJ_BUFFER:
                 t->free = py_buffer_free; t->to_cstr = py_buffer_to_cstr; break;
-            case OBJ_USERDATA:
-                t->free = py_userdata_free; break;
             default: break;
         }
     }
@@ -1333,8 +1312,6 @@ uint32_t hash_value(Value v) {
         if (!obj) return 0;
         if (obj->type->kind == OBJ_STRING)
             return ((ObjString *)obj)->hash;
-        if (obj->type->kind == OBJ_USERDATA)
-            return (uint32_t)(uintptr_t)((ObjUserdata*)obj)->data;
         return (uint32_t)(uintptr_t)obj;
     }
     return 0;
@@ -1628,20 +1605,6 @@ ObjFunction *new_native_function(const char *name, NativeFn fn) {
     return f;
 }
 
-ObjUserdata *new_userdata_tagged(const char *tag, void *data, UserdataFinalizer finalizer) {
-    ObjUserdata *ud = malloc(sizeof(ObjUserdata));
-    if (!ud) { fprintf(stderr, "OOM\n"); exit(1); }
-    py_init_object((Object*)ud, OBJ_USERDATA, sizeof(ObjUserdata));
-    ud->tag = strdup(tag ? tag : "userdata");
-    ud->data = data;
-    ud->finalizer = finalizer;
-    ud->finalized = false;
-    ud->obj.finalizer_next = userdata_objects;
-    if (userdata_objects) userdata_objects->finalizer_prev = (Object*)ud;
-    userdata_objects = (Object*)ud;
-    return ud;
-}
-
 ObjUpvalue *new_upvalue(int stack_index) {
     ObjUpvalue *uv = malloc(sizeof(ObjUpvalue));
     if (!uv) { fprintf(stderr, "OOM\n"); exit(1); }
@@ -1758,16 +1721,6 @@ Value make_exception_instance(struct VM *vm, void *cls_obj, const char *message)
 /* Memory management                                             */
 /* ============================================================ */
 
-static void userdata_run_finalizer(ObjUserdata *ud) {
-    if (!ud || ud->finalized) return;
-    ud->finalized = true;
-    if (ud->finalizer && ud->data) {
-        ud->finalizer(ud->data);
-    }
-    ud->data = NULL;
-}
-
-
 /* Free container memory without releasing children.
  * Used exclusively by the GC sweep. This function only frees raw memory. */
 void free_object_container(Object *obj) {
@@ -1782,14 +1735,6 @@ void free_object_container(Object *obj) {
     }
     if (obj->next) {
         obj->next->prev = obj->prev;
-    }
-    if (obj->finalizer_prev) {
-        obj->finalizer_prev->finalizer_next = obj->finalizer_next;
-    } else if (userdata_objects == obj) {
-        userdata_objects = obj->finalizer_next;
-    }
-    if (obj->finalizer_next) {
-        obj->finalizer_next->finalizer_prev = obj->finalizer_prev;
     }
     obj->finalizer_next = NULL;
     obj->finalizer_prev = NULL;
@@ -2300,7 +2245,6 @@ struct ObjClass *get_class(VM *vm, Value val) {
         case OBJ_BOUND_METHOD: return py_fe(vm)->bound_method_class;
         case OBJ_CLASS:        return py_fe(vm)->class_class;
         case OBJ_MODULE:       return py_fe(vm)->module_class;
-        case OBJ_USERDATA:     return py_fe(vm)->userdata_class;
         case OBJ_BIGINT:       return py_fe(vm)->int_class;
         case OBJ_INSTANCE:     return ((ObjInstance*)AS_OBJ(val))->klass;
         default:               return NULL;

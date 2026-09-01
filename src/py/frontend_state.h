@@ -33,7 +33,6 @@ typedef struct PyFrontend {
     ObjClass *bound_method_class;
     ObjClass *class_class;
     ObjClass *module_class;
-    ObjClass *userdata_class;
 
     /* Virtual classes for immediate numbers (bool maps to int) */
     ObjClass *int_class;

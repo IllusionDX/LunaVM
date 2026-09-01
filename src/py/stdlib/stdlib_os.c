@@ -1,12 +1,17 @@
-/* stdlib_os.c — Built-in os module for Luna (Go-inspired).
+/* stdlib_os.c — Built-in os module for the Python frontend.
  *
- * File I/O:   open()/File(), read_file(), write_file(), append_file(),
- *             exists(); File methods: read_line(), read_all(), write(), flush(), close()
+ * File I/O:   open()/File(), read(), write(), close(), seek(), flush(),
+ *             read_line(), read_all(); also read_file(), write_file(),
+ *             append_file(), exists()
  * Directory:  getcwd(), chdir(), listdir(), mkdir()
  * Filesystem: rename(), remove(), stat()
- * System:     execute(), getpid(), hostname(), username(), tmpdir()
+ * System:     execute()/system(), getpid(), hostname(), username(), tmpdir()
  * Env:        getenv(), setenv()
  * Paths:      path_join(...), sep, pathsep
+ *
+ * File handles are wrapped as ObjInstance of a canonical File class. The
+ * FILE* lives in a static index table; the instance's "handle" field holds
+ * the integer slot (raw pointers are not Values, so they never enter the VM).
  */
 
 #include <stdlib.h>
@@ -37,6 +42,60 @@
 
 #define SEP_CHAR '/'
 
+#define MAX_FILE_HANDLES 64
+static FILE *g_file_handles[MAX_FILE_HANDLES];
+static bool  g_file_used[MAX_FILE_HANDLES];
+
+static int file_alloc(FILE *fp) {
+    for (int i = 0; i < MAX_FILE_HANDLES; i++) {
+        if (!g_file_used[i]) {
+            g_file_used[i] = true;
+            g_file_handles[i] = fp;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void file_release(int idx) {
+    if (idx < 0 || idx >= MAX_FILE_HANDLES || !g_file_used[idx]) return;
+    if (g_file_handles[idx]) fclose(g_file_handles[idx]);
+    g_file_handles[idx] = NULL;
+    g_file_used[idx] = false;
+}
+
+/* Resolve the FILE* for a File instance. Throws when the value is not a File
+ * or its handle is closed/invalid. */
+static FILE *file_resolve(VM *vm, Value self, const char *fn) {
+    if (!IS_INSTANCE(self) || !AS_OBJ(self)) {
+        luna_throw(vm, py_fe(vm)->type_error_class, "%s() expects a File instance", fn);
+        return NULL;
+    }
+    ObjInstance *inst = (ObjInstance *)AS_OBJ(self);
+    Value h = instance_get_field(inst, "handle");
+    if (!IS_INT(h)) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed file handle", fn);
+        return NULL;
+    }
+    int idx = AS_INT(h);
+    if (idx < 0 || idx >= MAX_FILE_HANDLES || !g_file_used[idx] || !g_file_handles[idx]) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed file handle", fn);
+        return NULL;
+    }
+    return g_file_handles[idx];
+}
+
+/* Close a File instance, releasing its slot. Returns whether it was open. */
+static bool file_close_instance(ObjInstance *inst) {
+    Value h = instance_get_field(inst, "handle");
+    if (!IS_INT(h)) return false;
+    int idx = AS_INT(h);
+    if (idx < 0 || idx >= MAX_FILE_HANDLES || !g_file_used[idx]) return false;
+    file_release(idx);
+    instance_set_field(inst, "handle", make_null());
+    return true;
+}
+
 static void module_add_native(ObjModule *mod, const char *name, NativeFn fn) {
     ObjFunction *f = new_native_function(name, fn);
     Value key = make_obj((Object*)new_string(name, (int)strlen(name)));
@@ -51,6 +110,19 @@ static void require_string(VM *vm, Value v, const char *fn, int idx) {
 
 static const char *as_cstring(Value v) {
     return ((ObjString*)AS_OBJ(v))->chars;
+}
+
+static char *value_to_cstring(VM *vm, Value v, const char *fn, int arg_idx) {
+    if (!IS_STRING(v)) {
+        luna_throw(vm, py_fe(vm)->type_error_class,
+            "%s() argument %d must be a string", fn, arg_idx);
+    }
+    ObjString *s = (ObjString*)AS_OBJ(v);
+    char *buf = malloc((size_t)s->length + 1);
+    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+    memcpy(buf, s->chars, (size_t)s->length);
+    buf[s->length] = '\0';
+    return buf;
 }
 
 /* ==================================================================
@@ -163,115 +235,25 @@ static Value os_mkdir(VM *vm, Value *args, int n) {
 }
 
 /* ==================================================================
- * File I/O — File class + convenience functions (moved from io)
+ * File I/O — File class + convenience functions
  * ================================================================== */
 
-typedef struct LunaFile {
-    FILE *fp;
-    char *path;
-    char *mode;
-} LunaFile;
-
 static ObjClass *file_class = NULL;
-
-static char *dup_cstr(const char *s) {
-    size_t len = strlen(s);
-    char *out = malloc(len + 1);
-    if (!out) { fprintf(stderr, "OOM\n"); exit(1); }
-    memcpy(out, s, len + 1);
-    return out;
-}
-
-static char *value_to_cstring(VM *vm, Value v, const char *fn, int arg_idx) {
-    if (!IS_STRING(v)) {
-        luna_throw(vm, py_fe(vm)->type_error_class,
-            "%s() argument %d must be a string", fn, arg_idx);
-    }
-    ObjString *s = (ObjString*)AS_OBJ(v);
-    char *buf = malloc((size_t)s->length + 1);
-    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
-    memcpy(buf, s->chars, (size_t)s->length);
-    buf[s->length] = '\0';
-    return buf;
-}
-
-static void file_finalizer(void *data) {
-    LunaFile *file = (LunaFile*)data;
-    if (!file) return;
-    if (file->fp) {
-        fclose(file->fp);
-        file->fp = NULL;
-    }
-    free(file->path);
-    free(file->mode);
-    free(file);
-}
-
-static ObjUserdata *file_userdata_from_instance(VM *vm, Value self, const char *fn) {
-    if (!IS_INSTANCE(self) || !AS_OBJ(self)) {
-        luna_throw(vm, py_fe(vm)->type_error_class, "%s() expects a File instance", fn);
-    }
-    ObjInstance *inst = (ObjInstance*)AS_OBJ(self);
-    Value handle = instance_get_field(inst, "_handle");
-    if (!IS_USERDATA(handle) || !AS_OBJ(handle)) {
-        luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed file handle", fn);
-    }
-    ObjUserdata *ud = (ObjUserdata*)AS_OBJ(handle);
-    if (!ud->data) {
-        luna_throw(vm, py_fe(vm)->runtime_error_class, "%s() called on closed file handle", fn);
-    }
-    if (!ud->tag || strcmp(ud->tag, "os.File") != 0) {
-        luna_throw(vm, py_fe(vm)->type_error_class, "%s() invalid file handle", fn);
-    }
-    return ud;
-}
-
-static LunaFile *file_handle_from_instance(VM *vm, Value self, const char *fn) {
-    ObjUserdata *ud = file_userdata_from_instance(vm, self, fn);
-    return (LunaFile*)ud->data;
-}
-
-static void set_file_handle(ObjInstance *inst, FILE *fp, const char *path, const char *mode) {
-    LunaFile *file = malloc(sizeof(LunaFile));
-    if (!file) { fprintf(stderr, "OOM\n"); exit(1); }
-    file->fp = fp;
-    file->path = dup_cstr(path);
-    file->mode = dup_cstr(mode);
-
-    ObjUserdata *ud = new_userdata_tagged("os.File", file, file_finalizer);
-    instance_set_field(inst, "_handle", make_obj((Object*)ud));
-}
-
-static void clear_file_handle(ObjInstance *inst) {
-    Value handle = instance_get_field(inst, "_handle");
-    if (IS_USERDATA(handle) && AS_OBJ(handle)) {
-        ObjUserdata *ud = (ObjUserdata*)AS_OBJ(handle);
-        if (ud->data) {
-            LunaFile *file = (LunaFile*)ud->data;
-            if (file->fp) { fclose(file->fp); file->fp = NULL; }
-        }
-    }
-    instance_set_field(inst, "_handle", make_null());
-}
 
 /* File instance methods */
 
 static Value file_close(VM *vm, Value *args, int n) {
     (void)vm;
     (void)n;
-    ObjInstance *inst = (ObjInstance*)AS_OBJ(args[0]);
-    Value handle = instance_get_field(inst, "_handle");
-    if (!IS_USERDATA(handle) || !AS_OBJ(handle)) {
-        return make_bool(false);
-    }
-    clear_file_handle(inst);
-    return make_bool(true);
+    if (!IS_INSTANCE(args[0])) return make_bool(false);
+    return make_bool(file_close_instance((ObjInstance*)AS_OBJ(args[0])));
 }
 
 static Value file_flush(VM *vm, Value *args, int n) {
     (void)n;
-    LunaFile *file = file_handle_from_instance(vm, args[0], "flush");
-    if (fflush(file->fp) != 0) {
+    FILE *fp = file_resolve(vm, args[0], "flush");
+    if (!fp) return make_null();
+    if (fflush(fp) != 0) {
         luna_throw(vm, py_fe(vm)->runtime_error_class, "flush() failed");
     }
     return make_null();
@@ -281,10 +263,11 @@ static Value file_write(VM *vm, Value *args, int n) {
     if (n < 2) {
         luna_throw(vm, py_fe(vm)->argument_error_class, "write() requires a value argument");
     }
-    LunaFile *file = file_handle_from_instance(vm, args[0], "write");
+    FILE *fp = file_resolve(vm, args[0], "write");
+    if (!fp) return make_int(0);
     char *text = value_to_string(args[1]);
     size_t len = strlen(text);
-    size_t written = fwrite(text, 1, len, file->fp);
+    size_t written = fwrite(text, 1, len, fp);
     free(text);
     if (written != len) {
         luna_throw(vm, py_fe(vm)->runtime_error_class, "write() failed");
@@ -292,11 +275,54 @@ static Value file_write(VM *vm, Value *args, int n) {
     return make_int((int32_t)written);
 }
 
+/* Read up to `count` bytes (default: all remaining). Returns a string. */
+static Value file_read(VM *vm, Value *args, int n) {
+    FILE *fp = file_resolve(vm, args[0], "read");
+    if (!fp) return make_obj((Object*)new_string("", 0));
+
+    long start = ftell(fp);
+    if (start < 0) start = 0;
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read() failed");
+        return make_obj((Object*)new_string("", 0));
+    }
+    long size = ftell(fp);
+    if (size < 0) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read() failed");
+        return make_obj((Object*)new_string("", 0));
+    }
+    long remaining = size - start;
+    if (remaining < 0) remaining = 0;
+    long count = remaining;
+    if (n >= 2 && IS_NUMBER(args[1])) {
+        long want = (long)value_to_double(args[1]);
+        if (want < 0) want = 0;
+        if (want < count) count = want;
+    }
+    if (fseek(fp, start, SEEK_SET) != 0) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read() failed");
+        return make_obj((Object*)new_string("", 0));
+    }
+    char *buf = malloc((size_t)count + 1);
+    if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
+    size_t got = fread(buf, 1, (size_t)count, fp);
+    if (got == 0 && ferror(fp)) {
+        free(buf);
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "read() failed");
+        return make_obj((Object*)new_string("", 0));
+    }
+    buf[got] = '\0';
+    Value out = make_obj((Object*)new_string(buf, (int)got));
+    free(buf);
+    return out;
+}
+
 static Value file_read_line(VM *vm, Value *args, int n) {
     (void)n;
-    LunaFile *file = file_handle_from_instance(vm, args[0], "read_line");
+    FILE *fp = file_resolve(vm, args[0], "read_line");
+    if (!fp) return make_null();
     char buf[1024];
-    if (!fgets(buf, sizeof(buf), file->fp)) {
+    if (!fgets(buf, sizeof(buf), fp)) {
         return make_null();
     }
     size_t len = strlen(buf);
@@ -309,24 +335,25 @@ static Value file_read_line(VM *vm, Value *args, int n) {
 
 static Value file_read_all(VM *vm, Value *args, int n) {
     (void)n;
-    LunaFile *file = file_handle_from_instance(vm, args[0], "read_all");
-    long start = ftell(file->fp);
+    FILE *fp = file_resolve(vm, args[0], "read_all");
+    if (!fp) return make_obj((Object*)new_string("", 0));
+    long start = ftell(fp);
     if (start < 0) start = 0;
-    if (fseek(file->fp, 0, SEEK_END) != 0) {
+    if (fseek(fp, 0, SEEK_END) != 0) {
         luna_throw(vm, py_fe(vm)->runtime_error_class, "read_all() failed");
     }
-    long size = ftell(file->fp);
+    long size = ftell(fp);
     if (size < 0) {
         luna_throw(vm, py_fe(vm)->runtime_error_class, "read_all() failed");
     }
-    if (fseek(file->fp, start, SEEK_SET) != 0) {
+    if (fseek(fp, start, SEEK_SET) != 0) {
         luna_throw(vm, py_fe(vm)->runtime_error_class, "read_all() failed");
     }
 
     char *buf = malloc((size_t)size + 1);
     if (!buf) { fprintf(stderr, "OOM\n"); exit(1); }
-    size_t read = fread(buf, 1, (size_t)size, file->fp);
-    if (read == 0 && ferror(file->fp)) {
+    size_t read = fread(buf, 1, (size_t)size, fp);
+    if (read == 0 && ferror(fp)) {
         free(buf);
         luna_throw(vm, py_fe(vm)->runtime_error_class, "read_all() failed");
     }
@@ -334,6 +361,24 @@ static Value file_read_all(VM *vm, Value *args, int n) {
     Value out = make_obj((Object*)new_string(buf, (int)read));
     free(buf);
     return out;
+}
+
+static Value file_seek(VM *vm, Value *args, int n) {
+    if (n < 2) {
+        luna_throw(vm, py_fe(vm)->argument_error_class, "seek() requires an offset argument");
+    }
+    FILE *fp = file_resolve(vm, args[0], "seek");
+    if (!fp) return make_int(0);
+    long offset = (long)value_to_double(args[1]);
+    int whence = SEEK_SET;
+    if (n >= 3 && IS_NUMBER(args[2])) whence = (int)value_to_double(args[2]);
+    if (fseek(fp, offset, whence) != 0) {
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "seek() failed");
+        return make_int(0);
+    }
+    long pos = ftell(fp);
+    if (pos < 0) pos = 0;
+    return make_int((int32_t)pos);
 }
 
 /* Convenience functions */
@@ -349,13 +394,48 @@ static Value os_open(VM *vm, Value *args, int n) {
         free(path);
         free(mode);
         luna_throw(vm, py_fe(vm)->runtime_error_class, "os.open: failed to open file");
+        return make_null();
     }
-
+    int idx = file_alloc(fp);
+    if (idx < 0) {
+        fclose(fp);
+        free(path);
+        free(mode);
+        luna_throw(vm, py_fe(vm)->runtime_error_class, "os.open: too many open files");
+        return make_null();
+    }
     ObjInstance *inst = new_instance(file_class, 4);
-    set_file_handle(inst, fp, path, mode);
+    instance_set_field(inst, "handle", make_int(idx));
     free(path);
     free(mode);
     return make_obj((Object*)inst);
+}
+
+/* os.close(file) / os.read(file, n) / os.write(file, data) — module-level
+ * wrappers over the File instance methods, mirroring Python's fd API. */
+static Value os_close(VM *vm, Value *args, int n) {
+    (void)vm;
+    if (n < 1) {
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.close() requires a File");
+    }
+    if (!IS_INSTANCE(args[0])) {
+        luna_throw(vm, py_fe(vm)->type_error_class, "os.close() expects a File instance");
+    }
+    return make_bool(file_close_instance((ObjInstance*)AS_OBJ(args[0])));
+}
+
+static Value os_read(VM *vm, Value *args, int n) {
+    if (n < 1) {
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.read() requires a File");
+    }
+    return file_read(vm, args, n);
+}
+
+static Value os_write(VM *vm, Value *args, int n) {
+    if (n < 2) {
+        luna_throw(vm, py_fe(vm)->argument_error_class, "os.write() requires a File and data");
+    }
+    return file_write(vm, args, n);
 }
 
 static Value os_exists(VM *vm, Value *args, int n) {
@@ -502,15 +582,12 @@ static Value os_stat(VM *vm, Value *args, int n) {
 
     ObjDict *d = new_dict();
 
-    /* size */
     dict_set(d, make_obj((Object*)new_string("size", 4)),
              make_int((int64_t)st.st_size));
 
-    /* is_dir */
     dict_set(d, make_obj((Object*)new_string("is_dir", 6)),
              make_bool(is_dir));
 
-    /* mtime */
     dict_set(d, make_obj((Object*)new_string("mtime", 5)),
              make_double((double)st.st_mtime));
 
@@ -644,7 +721,6 @@ static Value os_tmpdir(VM *vm, Value *args, int n) {
     if (len == 0 || len > sizeof(buf)) {
         luna_throw(vm, py_fe(vm)->runtime_error_class, "os.tmpdir(): system call failed");
     }
-    /* Remove trailing backslash if present */
     size_t slen = strlen(buf);
     if (slen > 0 && (buf[slen - 1] == '\\' || buf[slen - 1] == '/')) {
         buf[slen - 1] = '\0';
@@ -761,19 +837,24 @@ void vm_register_os_module(VM *vm) {
     /* File class */
     file_class = new_class("File", NULL);
 
+    class_add_native_method(file_class, "read",      file_read);
     class_add_native_method(file_class, "read_line", file_read_line);
     class_add_native_method(file_class, "read_all",  file_read_all);
     class_add_native_method(file_class, "write",     file_write);
     class_add_native_method(file_class, "flush",     file_flush);
+    class_add_native_method(file_class, "seek",      file_seek);
     class_add_native_method(file_class, "close",     file_close);
 
-    /* File I/O convenience */
-    module_add_native(mod, "File",        os_open);
-    module_add_native(mod, "open",        os_open);
-    module_add_native(mod, "read_file",   os_read_file);
-    module_add_native(mod, "write_file",  os_write_file);
+    /* File I/O */
+    module_add_native(mod, "File",       os_open);
+    module_add_native(mod, "open",       os_open);
+    module_add_native(mod, "close",      os_close);
+    module_add_native(mod, "read",       os_read);
+    module_add_native(mod, "write",      os_write);
+    module_add_native(mod, "read_file",  os_read_file);
+    module_add_native(mod, "write_file", os_write_file);
     module_add_native(mod, "append_file", os_append_file);
-    module_add_native(mod, "exists",      os_exists);
+    module_add_native(mod, "exists",     os_exists);
 
     /* Directory */
     module_add_native(mod, "getcwd",  os_getcwd);
@@ -791,6 +872,7 @@ void vm_register_os_module(VM *vm) {
     module_add_native(mod, "exit",     os_exit);
     module_add_native(mod, "platform", os_platform);
     module_add_native(mod, "execute",  os_execute);
+    module_add_native(mod, "system",   os_execute);
     module_add_native(mod, "getpid",   os_getpid);
     module_add_native(mod, "hostname", os_hostname);
     module_add_native(mod, "username", os_username);
