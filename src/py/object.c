@@ -636,7 +636,14 @@ static Value py_class_call(struct VM *vm, Value self, Value *args, int argc) {
         Value v = args[0];
         if (IS_DOUBLE(v)) return v;
         if (IS_INT(v)) return make_double((double)AS_INT(v));
-        if (IS_BIGINT(v)) return make_double(bigint_to_f64((ObjBigInt *)AS_OBJ(v)));
+        if (IS_BIGINT(v)) {
+            double d = bigint_to_f64((ObjBigInt *)AS_OBJ(v));
+            if (isinf(d)) {
+                luna_throw(vm, py_fe(vm)->overflow_error_class,
+                    "int too large to convert to float");
+            }
+            return make_double(d);
+        }
         if (IS_BOOL(v)) return make_double(AS_BOOL(v) ? 1.0 : 0.0);
         if (IS_STRING(v)) {
             char *end = NULL;

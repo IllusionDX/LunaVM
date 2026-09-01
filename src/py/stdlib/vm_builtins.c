@@ -204,14 +204,6 @@ static Value bn_isinstance(VM *vm, Value *args, int n) {
     return make_bool(false);
 }
 
-static Value bn_str(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (!n) return make_obj((Object *)new_string("",0));
-    char *s = value_to_string(args[0]);
-    Value v = make_obj((Object *)new_string(s,(int)strlen(s)));
-    free(s); return v;
-}
-
 static Value bn_repr(VM *vm, Value *args, int n) {
     (void)vm;
     if (!n) return make_obj((Object *)new_string("", 0));
@@ -242,56 +234,6 @@ static Value bn_repr(VM *vm, Value *args, int n) {
     Value v = make_obj((Object *)new_string(s, (int)strlen(s)));
     free(s);
     return v;
-}
-
-static Value bn_int(VM *vm, Value *args, int n) {
-    if (!n) return make_int(0);
-    Value v = args[0];
-    if (IS_INT(v)) return v;
-    if (IS_BIGINT(v)) return v;
-    if (IS_BOOL(v)) return make_int(AS_BOOL(v) ? 1 : 0);
-    if (IS_DOUBLE(v)) {
-        Value out;
-        if (bigint_from_f64(AS_DOUBLE(v), &out)) return out;
-        luna_throw(vm, py_fe(vm)->value_error_class,
-            isnan(AS_DOUBLE(v)) ? "cannot convert float NaN to integer"
-                                : "cannot convert float infinity to integer");
-    }
-    if (IS_STRING(v)) {
-        ObjString *s = (ObjString *)AS_OBJ(v);
-        Value out;
-        if (bigint_from_decimal(s->chars, (size_t)s->length, &out)) return out;
-        char msg[128];
-        snprintf(msg, sizeof(msg), "invalid literal for int() with base 10: '%.64s'", s->chars);
-        luna_throw(vm, py_fe(vm)->value_error_class, msg);
-    }
-    luna_throw(vm, py_fe(vm)->type_error_class,
-        "int() argument must be a string, a bytes-like object or a real number");
-    return make_int(0);
-}
-
-static Value bn_float(VM *vm, Value *args, int n) {
-    (void)vm;
-    if (!n) return make_double(0.0);
-    if (IS_DOUBLE(args[0])) return args[0];
-    if (IS_INT(args[0])) return make_double((double)AS_INT(args[0]));
-    if (IS_BIGINT(args[0])) {
-        double d = bigint_to_f64((ObjBigInt *)AS_OBJ(args[0]));
-        if (isinf(d)) {
-            luna_throw(vm, py_fe(vm)->overflow_error_class,
-                "int too large to convert to float");
-        }
-        return make_double(d);
-    }
-    if (IS_BOOL(args[0])) return make_double(AS_BOOL(args[0]) ? 1.0 : 0.0);
-    if (IS_STRING(args[0])) {
-        const char *s = ((ObjString*)AS_OBJ(args[0]))->chars;
-        if (strcmp(s, "nan") == 0 || strcmp(s, "NaN") == 0) return make_double(0.0/0.0);
-        if (strcmp(s, "inf") == 0 || strcmp(s, "infinity") == 0 || strcmp(s, "Infinity") == 0) return make_pos_inf();
-        if (strcmp(s, "-inf") == 0 || strcmp(s, "-infinity") == 0 || strcmp(s, "-Infinity") == 0) return make_neg_inf();
-        return make_double(atof(s));
-    }
-    return make_double(0.0);
 }
 
 static Value bn_len(VM *vm, Value *args, int n) {
